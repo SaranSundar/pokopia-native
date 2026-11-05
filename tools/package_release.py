@@ -2,10 +2,14 @@
 """package_release.py: the release's two downloads, one per computer, into dist/<version>/ (nothing is uploaded; the release is made by hand).
 
   python tools/package_release.py [--version 1.1.0] [--windows-src DIR] [--windows-build DIR] [--out dist]
+         [--linux-build DIR --linux-llvm DIR --linux-vulkan-sdk DIR --linux-sdl3 DIR [--linux-ampere FILE]] [--only linux] [--beta]
 
   Pokopia-Native-for-Windows.zip   this repository's tools for Windows (the window, nxs2.py, the iPhone toolchain's patches) and windows/bin: the Windows
                                    game's prebuilt tools (nxanalyze, nxlift with LLVM, nxrt, SDL3, lld-link, SPIRV-Tools), their notices and a manifest
   Pokopia-Native-for-Mac.zip       this repository's tools for a Mac (the window app, nxs2.py, ampere-lower's source, the Mac translator)
+  Pokopia-Native-for-Linux.zip     this repository's tools for Linux and the Steam Deck (nxs2.py, the translator, ampere-lower built for Linux) and
+                                   linux/bin: the Linux game's prebuilt tools (nxanalyze, nxlift with LLVM, nxrt, libSDL3.so.0, ld.lld, SPIRV-Tools);
+                                   made when --linux-build is given (docs/LINUX.md). --beta names it Pokopia-Native-for-Linux-beta.zip
   SHA256SUMS.txt, CONTENTS.txt     checksums and the file list of both
 
 The asset names carry no version, so the README's links (releases/latest/download/<name>) keep working from one release to the next; the version is in
@@ -19,6 +23,12 @@ import argparse, hashlib, io, os, pathlib, re, struct, subprocess, sys, time, zi
 HERE = pathlib.Path(__file__).resolve().parents[1]
 WIN_ONLY = ('windows/', 'host/windows/', 'ampere-lower/windows/', 'Pokopia Native Builder.cmd')
 MAC_ONLY = ('Pokopia Native Builder.app/', 'host/dmsh_xlate_bin/')
+LINUX_ONLY = ('linux/', 'ampere-lower/linux/')
+# The Linux download: the source tree (windows/, the runtime's source), the translator's portable IL (host/windows/dmsh_xlate_bin, run with dotnet) and
+# ampere-lower's source; not the Windows binaries, the Mac app or the Windows window
+NOT_LINUX = ('windows/bin/', 'ampere-lower/windows/', 'Pokopia Native Builder.cmd', 'Pokopia Native Builder.app/', 'host/dmsh_xlate_bin/',
+             'host/windows/build_app.patch', 'host/windows/fork-extras.patch')
+ELF_OK = re.compile(r'^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|libpthread\.so\.0|librt\.so\.1|ld-linux-x86-64\.so\.2|libSDL3\.so\.0|libgcc_s\.so\.1|libstdc\+\+\.so\.6)$')
 NEVER = ('.github/workflows/',)   # the CI files are the repository's, not the players'
 GAME_DERIVED = re.compile(r'(^|/)(_local|extract|shader/corpus|shader/maxwell|shdump|dumps|objcache)(/|$)|\.(nso|img|nca|nsp|xci|bin\.patched)$|(^|/)(main|sdk|subsdk0|rtld)$', re.I)
 VC_RUNTIME = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')   # the SPIRV-Tools of the Vulkan SDK are built with the DLL runtime: app-local copies
@@ -86,6 +96,38 @@ def kit_files(src, bld, a):
     return k
 
 
+def elf_needed(path):
+    """The shared libraries an ELF file needs (DT_NEEDED) and the newest GLIBC_ symbol version it asks for"""
+    b = pathlib.Path(path).read_bytes()
+    if b[:4] != b'\x7fELF' or b[4] != 2: return [], None
+    shoff, = struct.unpack_from('<Q', b, 0x28); shentsize, shnum = struct.unpack_from('<HH', b, 0x3a)
+    secs = [struct.unpack_from('<IIQQQQIIQQ', b, shoff + i * shentsize) for i in range(shnum)]   # name type flags addr offset size link info align entsize
+    need = []
+    for name, typ, flags, addr, off, size, link, info, align, ent in secs:
+        if typ != 6: continue   # SHT_DYNAMIC
+        strtab = secs[link]
+        for k in range(0, size, 16):
+            tag, val = struct.unpack_from('<qQ', b, off + k)
+            if tag == 0: break
+            if tag == 1: o = strtab[4] + val; need.append(b[o:b.index(b'\0', o)].decode())
+    vers = sorted({tuple(int(x) for x in m.group(1).split(b'.')) for m in re.finditer(rb'GLIBC_(2\.\d+)', b)})
+    return need, ('.'.join(map(str, vers[-1])) if vers else None)
+
+
+def linux_kit_files(src, a):
+    """{name in linux/bin: (source path, where it comes from)}"""
+    bld = pathlib.Path(a.linux_build)
+    k = {n: (bld / 'bin' / n, 'windows-native Linux build (scripts/build.sh)') for n in ('nxanalyze', 'nxlift', 'nxrt')}
+    k['libSDL3.so.0'] = (pathlib.Path(a.linux_sdl3) / 'lib/libSDL3.so.0', 'SDL 3.4.18, built from its source release')
+    k['hle_inventory.tsv'] = (src / 'src/nxrt/gen/out/hle_inventory.tsv', 'windows-native source (the runtime\'s registry: nxanalyze --hle)')
+    k['play.sh'] = (src / 'scripts/play.sh', 'windows-native source (the launcher)')
+    for f in sorted((src / 'src/nxshader').glob('*.py')): k[f'nxshader/{f.name}'] = (f, 'windows-native source (the shader tool)')
+    k['nxshader/dmsh_abi.h'] = (src / 'src/nxrt/gfx/dmsh_abi.h', 'windows-native source (the shader ABI nxshader reflects against)')
+    k['ld.lld'] = (pathlib.Path(a.linux_llvm) / 'bin/lld', 'LLVM 23.1.4 for Linux (lld, run as ld.lld)')
+    for n in ('spirv-opt', 'spirv-val'): k[n] = (pathlib.Path(a.linux_vulkan_sdk) / 'bin' / n, 'Vulkan SDK 1.4.363 for Linux (SPIRV-Tools)')
+    return k
+
+
 def notices(src, a):
     """THIRD-PARTY-NOTICES.txt of windows/bin: every component in the Windows tools, its licence text from the source it came with"""
     rd = lambda p: pathlib.Path(p).read_text(encoding='utf-8', errors='replace').strip()
@@ -133,6 +175,13 @@ def main():
     ap.add_argument('--spirv-tools', default=None, help='the folder with spirv-opt.exe and spirv-val.exe (default: the newest Vulkan SDK\'s Bin)')
     ap.add_argument('--vc-redist', default=None, help='the Visual C++ runtime DLLs for them (default: Visual Studio 2022\'s Redist folder; "none" to leave them out)')
     ap.add_argument('--sdl3', default=None, help='the SDL3 development package (its LICENSE.txt; default: <windows-src>/../toolchains/SDL3-3.4.18)')
+    ap.add_argument('--linux-build', default=None, help='windows-native\'s Linux release build folder (linux-Release): makes the Linux download')
+    ap.add_argument('--linux-llvm', default=None, help='LLVM 23.1.4 for Linux (its bin/lld becomes linux/bin/ld.lld)')
+    ap.add_argument('--linux-vulkan-sdk', default=None, help='the Vulkan SDK for Linux\'s x86_64 folder (bin/spirv-opt, bin/spirv-val)')
+    ap.add_argument('--linux-sdl3', default=None, help='the SDL 3.4.18 install prefix (lib/libSDL3.so.0, and its LICENSE.txt beside the source)')
+    ap.add_argument('--linux-ampere', default=None, help='ampere-lower built for Linux (default: ampere-lower/linux/ampere-lower here)')
+    ap.add_argument('--only', choices=('windows', 'mac', 'linux'), action='append', help='only these downloads (repeatable; default: all that can be made)')
+    ap.add_argument('--beta', action='store_true', help='the Linux download as Pokopia-Native-for-Linux-beta.zip (for testers, not the release)')
     ap.add_argument('--out', default=str(HERE / 'dist'))
     ap.add_argument('--rules', help='a private file (never published) of "never<TAB>regex" lines (names and values no packaged file may contain) and '
                     '"allow<TAB>path<TAB>regex" lines (a known, accepted match: an upstream author\'s address, a build machine\'s generic account)')
@@ -159,14 +208,30 @@ def main():
     if a.vc_redist == 'none': a.vc_redist = ''
     if not a.sdl3: a.sdl3 = str(src.parent / 'toolchains' / 'SDL3-3.4.18')
 
-    kit = kit_files(src, bld, a)
+    want = set(a.only or ('windows', 'mac') + (('linux',) if a.linux_build else ()))
+    kit = kit_files(src, bld, a) if 'windows' in want else {}
     missing = [f'{n} ({p})' for n, (p, _) in kit.items() if not p.is_file()]
     if missing: sys.exit('missing for windows/bin:\n  ' + '\n  '.join(missing))
-    for n in ('nxanalyze.exe', 'nxlift.exe', 'nxrt.exe', 'lld-link.exe'):   # our tools carry the C runtime (CMakeLists.txt: /MT): nothing to install on the player's PC
+    for n in ('nxanalyze.exe', 'nxlift.exe', 'nxrt.exe', 'lld-link.exe') if kit else ():   # our tools carry the C runtime (CMakeLists.txt: /MT): nothing to install on the player's PC
         bad = [d for d in pe_imports(kit[n][0]) if d.startswith(('msvcp', 'vcruntime', 'api-ms-win-crt', 'ucrtbase'))]
         if bad: sys.exit(f'{kit[n][0]} imports {", ".join(bad)}: build windows-native with the static C runtime (its CMakeLists.txt default) and package again')
-    if not a.vc_redist:
+    if kit and not a.vc_redist:
         print('note: no Visual C++ runtime DLLs beside spirv-opt / spirv-val: they need the Visual C++ Redistributable on the player\'s PC')
+    lkit = {}
+    if 'linux' in want:
+        if not (a.linux_build and a.linux_llvm and a.linux_vulkan_sdk and a.linux_sdl3): sys.exit('the Linux download needs --linux-build, --linux-llvm, --linux-vulkan-sdk and --linux-sdl3')
+        lkit = linux_kit_files(src, a)
+        amp = pathlib.Path(a.linux_ampere) if a.linux_ampere else HERE / 'ampere-lower/linux/ampere-lower'
+        lkit['../ampere-lower/linux/ampere-lower'] = (amp, 'ampere-lower (GPL-3.0-or-later; its source in ampere-lower/), built for Linux with its build.sh')
+        missing = [f'{n} ({p})' for n, (p, _) in lkit.items() if not p.is_file()]
+        if missing: sys.exit('missing for linux/bin:\n  ' + '\n  '.join(missing))
+        newest = (2, 35)   # the kit runs where glibc 2.35 does (Ubuntu 22.04, Debian 12, SteamOS 3): docs/LINUX-PLAN.md L-D7
+        for n, (p, _) in lkit.items():
+            need, glibc = elf_needed(p)
+            bad = [d for d in need if not ELF_OK.match(d)]
+            if bad: sys.exit(f'{p} needs {", ".join(bad)}: the Linux kit may only need the C library, libSDL3.so.0 and the C++ runtime every distribution has')
+            if glibc and tuple(map(int, glibc.split('.'))) > newest: sys.exit(f'{p} needs glibc {glibc}: build the Linux tools on Ubuntu 22.04 (glibc 2.35)')
+        personal.append(re.compile(rb'/home/[A-Za-z0-9._-]{1,40}/', re.I))
 
     # the repository's files: tracked, or untracked and not ignored; the worktree's content (a release is packaged from a clean, committed tree)
     names = sorted(set(git('ls-files', '-co', '--exclude-standard', '-z').decode('utf-8').split('\0')) - {''})
@@ -181,7 +246,7 @@ def main():
     bad = [n for n in names if GAME_DERIVED.search(n)]
     if bad: sys.exit('refusing: these paths look game-derived:\n  ' + '\n  '.join(bad))
 
-    out = pathlib.Path(a.out) / version; out.mkdir(parents=True, exist_ok=True)
+    out = pathlib.Path(a.out) / (version + ('-linux-beta' if a.beta else '')); out.mkdir(parents=True, exist_ok=True)
     manifest = ['# windows/bin of pokopia-native ' + version + f' (source {head[:12]}{" + uncommitted changes" if dirty else ""}): file, bytes, sha256, origin']
     kit_blobs = {}
     for n, (p, origin) in sorted(kit.items()):
@@ -192,14 +257,32 @@ def main():
                                'Nothing in this folder comes from the game. MANIFEST.txt lists every file with its checksum and origin; THIRD-PARTY-NOTICES.txt\n'
                                'has the licences. Source: the windows/ folder of https://github.com/xFractals/pokopia-native (where published).\n').encode()
     kit_blobs['MANIFEST.txt'] = ('\n'.join(manifest) + '\n').encode()
-    biggest = max(len(d) for d in kit_blobs.values())
+    if not kit: kit_blobs = {}
+    lkit_blobs, lmodes = {}, {}
+    if lkit:
+        lman = ['# linux/bin of pokopia-native ' + version + f' (source {head[:12]}{" + uncommitted changes" if dirty else ""}): file, bytes, sha256, origin']
+        for n, (p, origin) in sorted(lkit.items()):
+            data = p.read_bytes(); lkit_blobs[n] = data; lmodes[n] = 0o755 if data[:4] == b'\x7fELF' or n.endswith('.sh') else 0o644
+            lman.append(f'{n}\t{len(data)}\t{hashlib.sha256(data).hexdigest()}\t{origin}')
+        lkit_blobs['THIRD-PARTY-NOTICES.txt'] = notices(src, a).replace('windows/bin', 'linux/bin').replace('Windows game', 'Linux game').replace('for Windows PCs', 'for Linux').encode('utf-8')
+        lkit_blobs['README.txt'] = (f'pokopia-native {version}: the Linux game\'s tools. nxs2.py uses them from here for "build --linux" (docs/LINUX.md).\n'
+                                    'Nothing in this folder comes from the game. MANIFEST.txt lists every file with its checksum and origin; THIRD-PARTY-NOTICES.txt\n'
+                                    'has the licences. Source: the windows/ folder of https://github.com/xFractals/pokopia-native (where published).\n').encode()
+        lkit_blobs['MANIFEST.txt'] = ('\n'.join(lman) + '\n').encode()
+        for n in ('THIRD-PARTY-NOTICES.txt', 'README.txt', 'MANIFEST.txt'): lmodes[n] = 0o644
+    biggest = max(len(d) for d in list(kit_blobs.values()) + list(lkit_blobs.values()))
 
     sums, contents = [], []
-    for plat, asset, skip in (('windows', 'Pokopia-Native-for-Windows.zip', MAC_ONLY + NEVER), ('mac', 'Pokopia-Native-for-Mac.zip', WIN_ONLY + NEVER)):
-        top = f'pokopia-native-{version}-{plat}/'
+    plats = [('windows', 'Pokopia-Native-for-Windows.zip', MAC_ONLY + LINUX_ONLY + NEVER), ('mac', 'Pokopia-Native-for-Mac.zip', WIN_ONLY + LINUX_ONLY + NEVER),
+             ('linux', f'Pokopia-Native-for-Linux{"-beta" if a.beta else ""}.zip', NOT_LINUX + NEVER)]
+    for plat, asset, skip in [x for x in plats if x[0] in want]:
+        top = f'pokopia-native-{version}{"-beta" if a.beta and plat == "linux" else ""}-{plat}/'
         files = [n for n in names if not n.startswith(skip) and n != skip]
-        entries = [(n, (HERE / n).read_bytes(), 0o755 if modes.get(n, 0o100644) & 0o111 else 0o644) for n in files]
+        entries = [(n, (HERE / n).read_bytes(), 0o755 if modes.get(n, 0o100644) & 0o111 or n.endswith('.sh') else 0o644) for n in files]
         if plat == 'windows': entries += [(f'windows/bin/{n}', d, 0o644) for n, d in kit_blobs.items()]
+        if plat == 'linux':
+            entries = [e for e in entries if not e[0].startswith('linux/bin/')]
+            entries += [(n[3:] if n.startswith('../') else f'linux/bin/{n}', d, lmodes[n]) for n, d in lkit_blobs.items()]
         for n, d, _ in entries:
             if len(d) > biggest: sys.exit(f'refusing: {n} is larger than any tool ({len(d)} bytes)')
             for rx in personal:   # in text and inside binaries (UTF-8 and UTF-16): a build machine's user folder, the private --rules list
@@ -209,7 +292,7 @@ def main():
         entries.sort(key=lambda e: e[0])
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-            z.comment = f'pokopia-native {version} for {"Windows PCs" if plat == "windows" else "Macs"}; source {head}{" (dirty)" if dirty else ""}'.encode()
+            z.comment = f'pokopia-native {version}{" beta" if a.beta and plat == "linux" else ""} for {dict(windows="Windows PCs", mac="Macs", linux="Linux and the Steam Deck")[plat]}; source {head}{" (dirty)" if dirty else ""}'.encode()
             dirs = sorted({top + '/'.join(n.split('/')[:i]) + '/' for n, _, _ in entries for i in range(1, n.count('/') + 1)} | {top})
             for d in dirs:
                 zi = zipfile.ZipInfo(d, stamp); zi.external_attr = (0o40755 << 16) | 0x10; zi.create_system = 3; z.writestr(zi, b'')

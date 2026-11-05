@@ -12,6 +12,7 @@ games on Apple systems, with this project's Switch 2 changes), the game's shader
        --mac-app         a double-clickable Mac app (the game files cloned inside it)
        --ipa             an unsigned IPA with the entitlements the game needs (sign it with your own team)
        --windows         Windows: the game recompiled for this PC, with a launcher (out/Play Pokopia <version>.cmd)
+       --linux           Linux and the Steam Deck: the game recompiled for this computer, with a launcher (out/play-pokopia-<version>.sh)
        --xcode --team-id ID   an Xcode project signed with your Apple developer team (then: nxs2.py sign)
        --dumps DIR...    shader dumps from an earlier run (DM_NVN_SHDUMP folders) to include from the start
        --no-ios          Mac libraries only (faster; --ipa / --xcode need the iOS ones)
@@ -19,12 +20,14 @@ games on Apple systems, with this project's Switch 2 changes), the game's shader
   nxs2.py refresh <build dir> [DIR...]      add the shaders recorded while playing (Mac run, Mac app, iPhone) and rebuild the outputs
   nxs2.py sign <build dir> --team-id ID     archive and export the development IPA from the prepared Xcode project
   nxs2.py status <build dir>                what the build folder holds and what it still lacks
-  nxs2.py import-save <build dir> <folder>  Windows: a save from Eden, the phone or a Mac (a folder with B00, G00, S00) becomes the one the game plays
+  nxs2.py import-save <build dir> <folder>  Windows and Linux: a save from Eden, the phone or a Mac (a folder with B00, G00, S00) becomes the one the game plays
 
 Needs: a Mac with Apple silicon, Xcode (27.x) with its command line tools (an iPhone build also needs the iOS
 platform), Python 3.12 or newer with capstone (5.x), lz4 and fontTools, the .NET 10 runtime (the shader
 translator), xcodegen for the iPhone build. On Windows the iPhone build needs the toolchain in docs/WINDOWS.md and the
-Windows game the tools of the "for Windows PCs" download (windows/bin). `nxs2.py doctor` lists what is missing.
+Windows game the tools of the "for Windows PCs" download (windows/bin). On Linux (x86-64, the Steam Deck included) the Linux game needs Python 3.10
+or newer with lz4, fontTools and Pillow, the .NET 10 runtime, git, a Vulkan driver, and the tools of the "for Linux" download (linux/bin; docs/LINUX.md).
+`nxs2.py doctor` lists what is missing.
 """
 import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shutil, struct, subprocess, sys, time
 
@@ -36,13 +39,16 @@ UPSTREAM_COMMIT = 'c1df4dd'   # the nxnative commit host/nxnative-switch2.patch 
 FORK = 'https://github.com/zenvyzenshiro/NXNativeWindows'   # nxnative's Windows port: its win/ folder builds the iPhone app with LLVM, Metal Developer Tools for Windows and .NET
 FORK_COMMIT = '269d61ff974b2e8e073d7357466ae130c3f6812f'   # fetched by its full id (a sparse checkout of its win/ folder only)
 WIN = sys.platform == 'win32'
+LINUX = sys.platform.startswith('linux')   # the Linux game (docs/LINUX.md): no Apple stages, the tools of the "for Linux" download
 HERE = pathlib.Path(__file__).resolve().parent
 PROFILE_SRC = HERE / 'profile' / TITLE
 TOOLS = HERE / 'tools'
-AMPERE = HERE / 'ampere-lower' / ('windows/ampere-lower.exe' if WIN else 'ampere-lower')
+AMPERE = HERE / 'ampere-lower' / ('windows/ampere-lower.exe' if WIN else
+                                   'linux/ampere-lower' if LINUX and (HERE / 'ampere-lower/linux/ampere-lower').is_file() else 'ampere-lower')   # Linux: the download's build, else setup's
 NX = pathlib.Path(os.environ.get('NXNATIVE') or HERE / 'nxnative')
 PY = sys.executable
 WIN_KIT = HERE / 'windows' / 'bin'   # the Windows game's tools as the "for Windows PCs" download ships them (tools/package_release.py makes it)
+LINUX_KIT = HERE / 'linux' / 'bin'   # the Linux game's tools as the "for Linux" download ships them
 T0 = time.time()
 
 # the shader tables a profile has before the package is made (as nxnative's NSP script writes them for a provisional profile)
@@ -194,6 +200,7 @@ class Build:
         self.cache = self.shader / 'cache'; self.ios = self.shader / 'ios'
         self.outputs = self.out / 'out'; self.rundir = self.out / 'run'; self.phone = self.out / 'phone'
         self.win = self.out / 'windows'   # the Windows game: program.db, game.dll, the Vulkan shaders, the runtime, play.json
+        self.lin = self.out / 'linux'     # the Linux game: the same, with game.so
         self.icon = self.out / 'icon.png'   # the apps' icon, made by nxs2.py icon from your own game; none = the blank default
         vf = self.out / 'version.txt'   # the game version the apps carry, from the dump's build line (build writes it, refresh reads it)
         self.version = vf.read_text().strip() if vf.is_file() else '1.0.5'
@@ -290,6 +297,7 @@ def doctor(need_ios=True, quiet=False, need_windows=True):
         if not cond: bad.append(name)
     if not quiet: print(f'pokopia-native {TOOL_VERSION}')
     if WIN: return doctor_windows(ok, bad, need_ios, need_windows)
+    if LINUX: return doctor_linux(ok, bad, need_windows)
     ok('macOS on Apple silicon', sys.platform == 'darwin' and platform.machine() == 'arm64', 'the host runs the game\'s arm64 code natively: an Apple silicon Mac is required')
     ok(f'Python 3.12+ (running {platform.python_version()})', sys.version_info >= (3, 12), 'brew install python@3.12, then run nxs2.py with python3.12')
     for mod, pip in (('capstone', 'capstone>=5,<6'), ('lz4', 'lz4'), ('fontTools', 'fonttools')):
@@ -375,8 +383,8 @@ def doctor_windows(ok, bad, need_ios=True, need_windows=True):
         sysdir = pathlib.Path(os.environ.get('WINDIR', r'C:\Windows')) / 'System32'
         ok('Vulkan (vulkan-1.dll, installed with the graphics driver)', (sysdir / 'vulkan-1.dll').is_file(),
            'install the current driver for your graphics card (NVIDIA, AMD or Intel); the game needs a Vulkan 1.3 GPU')
-        t = win_tools()
-        ok(f'the Windows game tools ({t.get("dir") or "windows\\bin"})', not t.get('missing'),
+        t = win_tools(); kit = t.get('dir') or 'windows\\bin'   # outside the f-string: Python before 3.12 refuses a backslash there (Linux runs this file on 3.10)
+        ok(f'the Windows game tools ({kit})', not t.get('missing'),
            f'missing {", ".join(t.get("missing", []))}: they come with the "for Windows PCs" download (windows\\bin); a source checkout builds them with '
            'windows\\scripts\\build.cmd, or NXW_TOOLS=<folder> names them')
     return bad
@@ -434,6 +442,7 @@ def setup(args):
     if not WIN: (bin_dst / 'dmsh_xlate').chmod(0o755)
     if WIN and not args.no_ios: setup_windows(want)
     elif WIN: say('the iPhone toolchain is skipped (--no-ios): this setup builds the Windows game; run setup without --no-ios for the iPhone app')
+    elif LINUX and AMPERE.parent.name == 'linux': say('ampere-lower: the download\'s Linux build')
     elif not AMPERE.is_file() or AMPERE.stat().st_mtime < (HERE / 'ampere-lower/main.cpp').stat().st_mtime:
         say('building ampere-lower (the Switch 2 shader lowering)')
         run(['sh', HERE / 'ampere-lower/build.sh'], HERE / 'setup-ampere.log')
@@ -966,7 +975,9 @@ def copy_if_changed(src, dst):
 
 
 def win_save_dir(b):
-    """The save the Windows game plays, from the build's play.json (the default: %APPDATA%\\Pokopia Native\\<version>\\save)"""
+    """The save the Windows game plays, from the build's play.json (the default: %APPDATA%\\Pokopia Native\\<version>\\save); on Linux the Linux game's
+    (the default: ~/.local/share/pokopia-native/<version>/save)"""
+    if LINUX: return linux_save_dir(b)
     cfg = b.win / 'play.json'
     raw = json.loads(cfg.read_text(encoding='utf-8')).get('save') if cfg.is_file() else None
     return pathlib.Path(os.path.expandvars(raw or rf'{SAVES_ROOT}\{b.version}\save'))
@@ -1021,10 +1032,214 @@ def st_windows(b, jobs):
     return st_win_play(b, t)
 
 
+# ---------------------------------------------------------------- the Linux game (docs/LINUX.md; windows-native's docs/LINUX-PLAN.md)
+LINUX_KIT_FILES = ('nxanalyze', 'nxlift', 'nxrt', 'libSDL3.so.0', 'ld.lld', 'spirv-opt', 'spirv-val', 'hle_inventory.tsv', 'play.sh',
+                   'nxshader/nxshader.py', 'nxshader/dmsh_abi.h')
+
+
+def linux_tools():
+    """{file: path} of the Linux game's tools, plus 'dir' and 'missing': the download's kit (linux/bin, or NXW_TOOLS=<a folder laid out the same way), else a
+    source checkout's own build (windows/'s scripts/build.sh puts it in ~/pkn-linux/build/linux-Release, or NXW_BUILD_ROOT), with ld.lld and SPIRV-Tools from
+    the PATH."""
+    kit = pathlib.Path(os.environ['NXW_TOOLS']) if os.environ.get('NXW_TOOLS') else LINUX_KIT
+    if (kit / 'nxrt').is_file():
+        t = {n: kit / n for n in LINUX_KIT_FILES}; t['dir'] = kit
+    else:
+        src = HERE / 'windows'; rel = pathlib.Path(os.environ.get('NXW_BUILD_ROOT') or pathlib.Path.home() / 'pkn-linux/build') / 'linux-Release'
+        t = {n: rel / 'bin' / n for n in ('nxanalyze', 'nxlift', 'nxrt', 'libSDL3.so.0')}
+        t.update({'hle_inventory.tsv': src / 'src/nxrt/gen/out/hle_inventory.tsv', 'play.sh': src / 'scripts/play.sh',
+                  'nxshader/nxshader.py': src / 'src/nxshader/nxshader.py', 'nxshader/dmsh_abi.h': src / 'src/nxrt/gfx/dmsh_abi.h', 'dir': rel / 'bin'})
+        for n in ('ld.lld', 'spirv-opt', 'spirv-val'): t[n] = shutil.which(n)
+    t['missing'] = [n for n in LINUX_KIT_FILES if not (t.get(n) and pathlib.Path(t[n]).is_file())]
+    return t
+
+
+def cpu_flags():
+    try: return set(next(l for l in open('/proc/cpuinfo', encoding='utf-8') if l.startswith('flags')).split(':', 1)[1].split())
+    except Exception: return set()
+
+
+def vulkan_loader():
+    import ctypes.util
+    return ctypes.util.find_library('vulkan') is not None or any(pathlib.Path(d, 'libvulkan.so.1').is_file() for d in
+                                                                ('/usr/lib', '/usr/lib64', '/usr/lib/x86_64-linux-gnu', '/lib/x86_64-linux-gnu'))
+
+
+def linux_font(*patterns):
+    """A TrueType file fontconfig picks for the first pattern that has one (the shared-font stand-ins want .ttf)"""
+    if not shutil.which('fc-match'): return None
+    for pat in patterns:
+        r = subprocess.run(['fc-match', '-f', '%{file}', pat], capture_output=True, text=True)
+        f = pathlib.Path(r.stdout.strip())
+        if r.returncode == 0 and f.is_file() and f.suffix.lower() == '.ttf': return f
+    return None
+
+
+def doctor_linux(ok, bad, need_game=True):
+    """Linux builds the Linux game only: our tools from linux/bin, Python's shader steps, the .NET translator, a Vulkan driver."""
+    ok('Linux on x86-64', platform.machine().lower() in ('x86_64', 'amd64'), 'the Linux tools are x86-64 builds (the Steam Deck is one)')
+    ok(f'Python 3.10+ (running {platform.python_version()})', sys.version_info >= (3, 10), 'your distribution\'s python3 package (3.10 or newer)')
+    for mod, pip in (('lz4', 'lz4'), ('fontTools', 'fonttools'), ('PIL', 'pillow')):
+        try: __import__(mod); have = True
+        except ImportError: have = False
+        ok(f'python module {mod}', have, f'{PY} -m pip install --user "{pip}"   (or in a venv: docs/LINUX.md)')
+    d = dotnet_root(); have_rt = False
+    if d:
+        r = subprocess.run([str(d / 'dotnet'), '--list-runtimes'], capture_output=True, text=True)
+        have_rt = any(l.startswith('Microsoft.NETCore.App 10.') for l in r.stdout.splitlines())
+    ok('.NET 10 runtime (the shader translator)', have_rt, 'curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --runtime dotnet   (no root needed; docs/LINUX.md)')
+    ok('git', shutil.which('git') is not None, 'your distribution\'s git package (SteamOS has it)')
+    ok('a standard font (fontconfig: DejaVu Sans, Noto Sans or Liberation Sans)', bool(os.environ.get('STD_FONT')) or linux_font('DejaVu Sans', 'Noto Sans', 'Liberation Sans', 'sans-serif') is not None,
+       'STD_FONT=<a Unicode .ttf>')
+    if need_game:
+        fl = cpu_flags()
+        ok('a CPU with AVX2 and FMA3 (the recompiled game needs them)', {'avx2', 'fma'} <= fl, 'Intel Haswell (2013) or AMD Excavator (2015) and newer; the Steam Deck has them')
+        ok('Vulkan (libvulkan.so.1 and a driver: Mesa RADV, Intel ANV or NVIDIA)', vulkan_loader(), 'your distribution\'s vulkan loader and Mesa Vulkan drivers (SteamOS has them)')
+        t = linux_tools()
+        ok(f'the Linux game tools ({t.get("dir") or "linux/bin"})', not t.get('missing'),
+           f'missing {", ".join(t.get("missing", []))}: they come with the "for Linux" download (linux/bin); a source checkout builds them with '
+           'windows/scripts/build.sh, or NXW_TOOLS=<folder> names them')
+        try:
+            maps = int(open('/proc/sys/vm/max_map_count').read())
+            if maps < 262144: print(f'  note     vm.max_map_count is {maps}: if the game stops with "out of memory mappings", raise it (docs/LINUX.md)')
+        except Exception: pass
+    return bad
+
+
+def lin_env(t):
+    """nxshader's environment: SPIRV-Tools from the kit, ampere-lower, the translator through dotnet"""
+    e = {'NXSHADER_TOOLS': str(pathlib.Path(t['spirv-opt']).parent), 'AMPERE_LOWER': str(AMPERE), 'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONUTF8': '1'}
+    d = dotnet_root()
+    if d: e['DOTNET_ROOT'] = str(d); e['PATH'] = f'{d}:{os.environ.get("PATH", "")}'
+    return e
+
+
+def st_lin_analyze(b, t):
+    """program.db (nxanalyze), bound to the take-overs of the runtime this build ships (its registry), then checked against it, as for Windows. Seconds."""
+    db = b.lin / 'analyze' / 'program.db'
+    key = fingerprint(*(b.exefs / m for m in b.modules), digest(t['nxanalyze']), digest(t['hle_inventory.tsv']))
+    if b.fresh('lin_analyze', key) and db.is_file(): return say('analysis: up to date')
+    say('analysing the game\'s code (nxanalyze)')
+    run([t['nxanalyze'], b.exefs, '--out', db.parent, '--hle', t['hle_inventory.tsv'], '--no-defaults'], b.logs / 'lin_analyze.log', show=r'functions|HLE binding')
+    run([t['nxanalyze'], '--check-takeovers', db, t['hle_inventory.tsv']], b.logs / 'lin_takeovers.log', show=r'^takeover check')
+    b.stamp('lin_analyze', key)
+
+
+def st_lin_shaders(b, t, jobs):
+    """The game's shaders as Vulkan SPIR-V in linux/shaders (nxshader, as for Windows: the same translator, so the same modules)."""
+    n = max(1, min(4, jobs)); rep = b.logs / 'lin_shaders.txt'
+    say(f'translating the shaders for Vulkan (nxshader, {n} worker{"s" if n > 1 else ""})')
+    if rep.is_file(): rep.unlink()
+    run([PY, '-I', t['nxshader/nxshader.py'], '--cache', b.lin / 'shaders', '--installer', HERE, 'build', b.out, '--jobs', n, '--report', rep],
+        b.logs / 'lin_shaders.log', env=lin_env(t), ok=(0, 1), heartbeat=60, show=r'^shaders |^spirv-val')
+    m = re.search(r'spirv-val \(vulkan1\.3\): (\d+) pass, (\d+) fail', rep.read_text(encoding='utf-8') if rep.is_file() else '')
+    if not m or not int(m.group(1)): raise Fail(f'no shader was translated; see {b.logs / "lin_shaders.log"}')
+    if int(m.group(2)): say(f'  {m.group(2)} shaders failed validation: their draws are skipped and logged ({rep})')
+
+
+def st_lin_fonts(b):
+    """Stand-ins for the console's shared fonts from this computer's own fonts (nothing from the console): the standard font a copy of DejaVu Sans,
+    Noto Sans or Liberation Sans (STD_FONT names another), the button icons drawn by nxnative's make_ext_font.py with their bold face (LETTER_FONT)."""
+    d = b.lin / 'fonts'; d.mkdir(parents=True, exist_ok=True)
+    std = pathlib.Path(os.environ['STD_FONT']) if os.environ.get('STD_FONT') else linux_font('DejaVu Sans', 'Noto Sans', 'Liberation Sans', 'sans-serif')
+    if not std or not std.is_file(): raise Fail('no standard font found by fontconfig (fc-match): set STD_FONT=<a Unicode .ttf>')
+    if not (d / 'standard.ttf').is_file(): shutil.copyfile(std, d / 'standard.ttf')
+    letter = os.environ.get('LETTER_FONT') or linux_font('DejaVu Sans:bold', 'Noto Sans:bold', 'Liberation Sans:bold', 'sans-serif:bold')
+    if not (d / 'nintendo_ext.ttf').is_file() and letter:
+        run([PY, NX / 'dm/tools/make_ext_font.py', d / 'nintendo_ext.ttf', letter], b.logs / 'make_ext_font.log', env=b.env())
+
+
+def st_lin_lift(b, t, jobs):
+    """game.so: every function of the game's code recompiled for x86-64 (nxlift: LLVM, objects cached by their IR in linux/objcache), linked by ld.lld into
+    a shared object whose runtime imports bind to nxrt when it loads. Low priority, at most 4 workers: about 15 minutes at 4, 30 at 2."""
+    so = b.lin / 'game.so'; db = b.lin / 'analyze' / 'program.db'
+    key = fingerprint(db, digest(t['nxlift']), digest(t['ld.lld']))
+    if b.fresh('lin_lift', key) and so.is_file(): return say('game.so: up to date')
+    n = max(1, min(4, jobs))
+    say(f'recompiling the game\'s code for this computer (nxlift, {n} worker{"s" if n > 1 else ""} at low priority: about {60 // n} minutes)')
+    run([t['nxlift'], b.exefs, '--db', db, '--out', b.lin / 'lift', '--cache', b.lin / 'objcache', '--jobs', n, '--so', so, '--lld', t['ld.lld']],
+        b.logs / 'lin_lift.log', heartbeat=60, show=r'^nxlift:')
+    if not so.is_file(): raise Fail(f'nxlift wrote no {so}; see {b.logs / "lin_lift.log"}')
+    b.stamp('lin_lift', key)
+
+
+def linux_save_dir(b):
+    """The save the Linux game plays, from the build's play.json (default ~/.local/share/pokopia-native/<version>/save)"""
+    cfg = b.lin / 'play.json'
+    raw = json.loads(cfg.read_text(encoding='utf-8')).get('save') if cfg.is_file() else None
+    return pathlib.Path(os.path.expanduser(os.path.expandvars(raw or lin_default_dirs(b)[0])))
+
+
+def lin_default_dirs(b):
+    """(save, work) as play.json writes them: through $HOME (the build folder can move to another account), or XDG_DATA_HOME / XDG_CACHE_HOME when set"""
+    data = os.environ.get('XDG_DATA_HOME') or '$HOME/.local/share'; cache = os.environ.get('XDG_CACHE_HOME') or '$HOME/.cache'
+    return f'{data}/pokopia-native/{b.version}/save', f'{cache}/pokopia-native/{b.version}'
+
+
+def st_lin_play(b, t):
+    """The runtime beside the game (linux/runtime: nxrt, libSDL3.so.0, play.sh, and for the run-time shaders nxshader with SPIRV-Tools, ampere-lower, the
+    translator and the installer's lowering steps), linux/play.json, the launcher out/play-pokopia-<version>.sh and a desktop entry beside it."""
+    rt = b.lin / 'runtime'
+    for n in ('nxrt', 'libSDL3.so.0', 'play.sh', 'spirv-opt', 'spirv-val'): copy_if_changed(t[n], rt / n)
+    nxs = pathlib.Path(t['nxshader/nxshader.py']).parent
+    for f in sorted(nxs.glob('*.py')): copy_if_changed(f, rt / 'nxshader' / f.name)
+    copy_if_changed(next(p for p in (nxs / 'dmsh_abi.h', nxs.parent / 'nxrt/gfx/dmsh_abi.h') if p.is_file()), rt / 'nxshader' / 'dmsh_abi.h')
+    for rel in RUNTIME_INSTALLER: copy_if_changed(HERE / rel, rt / 'installer' / rel)
+    copy_if_changed(AMPERE, rt / 'installer/ampere-lower/ampere-lower')
+    for f in sorted((HERE / 'host/windows/dmsh_xlate_bin').iterdir()): copy_if_changed(f, rt / 'installer/host/windows/dmsh_xlate_bin' / f.name)   # the same IL as Windows
+    for n in ('nxrt', 'play.sh', 'spirv-opt', 'spirv-val', 'installer/ampere-lower/ampere-lower'): (rt / n).chmod(0o755)
+    seed = pathlib.Path(os.environ['NXW_PIPELINE_SEED']) if os.environ.get('NXW_PIPELINE_SEED') else PROFILE_SRC / f'pipelines.{b.version}.tsv'
+    if seed.is_file(): copy_if_changed(seed, b.lin / 'pipelines-seed.tsv')
+    save, work = lin_default_dirs(b)
+    cfg = {'pokopia_native': TOOL_VERSION, 'game_version': b.version, 'exe': 'runtime/nxrt', 'exefs': '../extract/ExeFS', 'game': 'game.so',
+           'romfs': '../extract/RomFS.img', 'save': save, 'work': work, 'shaders': 'shaders', 'shader_build': '..', 'fonts': 'fonts',
+           'pipeline_seed': 'pipelines-seed.tsv' if seed.is_file() else '', 'python': PY, 'shader_tool': 'runtime/nxshader/nxshader.py',
+           'installer': 'runtime/installer', 'spirv_tools': 'runtime'}
+    old = b.lin / 'play.json'
+    if old.is_file():   # a save or work folder the player chose stays
+        prev = json.loads(old.read_text(encoding='utf-8')); cfg.update({k: prev[k] for k in ('save', 'work') if prev.get(k)})
+    old.write_text(json.dumps(cfg, indent=1) + '\n', encoding='utf-8')
+    b.outputs.mkdir(parents=True, exist_ok=True)
+    sh = b.outputs / f'play-pokopia-{b.version}.sh'
+    sh.write_text(f'''#!/bin/sh
+# Pokemon Pokopia {b.version} on Linux, built from your own dump by pokopia-native {TOOL_VERSION} (nxs2.py build --linux). Run it to play.
+# The save is {cfg["save"]} (linux/play.json names it; nxs2.py import-save brings one from Eden, the phone or a Mac).
+# A choice comes first: alone, Link Play here, or over the internet (POKOPIA_ASK=1 brings it back after "don't ask again"). play.sh's switches can
+# follow: --fullscreen, --window 1600x900, --silent, --pad-check; --save and --work with other folders for a second player; --link-play, --join,
+# --internet, --room and --relay instead of the choice (docs/LINUX.md). In Steam: Add a Non-Steam Game, then this file.
+here=$(cd "$(dirname "$0")" && pwd)
+exec "$here/../linux/runtime/play.sh" --config "$here/../linux/play.json" "$@"
+''', encoding='utf-8')
+    sh.chmod(0o755)
+    desk = b.outputs / f'pokopia-{b.version}.desktop'   # double-clickable in a file manager, and what Steam's "Add a Non-Steam Game" lists once installed
+    desk.write_text(f'[Desktop Entry]\nType=Application\nName=Pokemon Pokopia {b.version}\nComment=pokopia-native {TOOL_VERSION}, built from your own dump\n'
+                    f'Exec="{sh}"\nTerminal=false\nCategories=Game;\n' + (f'Icon={b.icon}\n' if b.icon.is_file() else ''), encoding='utf-8')
+    desk.chmod(0o755)
+    say(f'Linux game: {sh}  (save: {linux_save_dir(b)})')
+    return sh
+
+
+def st_linux(b, jobs):
+    """The Linux game from the extracted dump and the shader package: analysis, shaders, fonts, the recompiled game.so, the runtime and the launcher."""
+    t = linux_tools()
+    if t['missing']: raise Fail(f'the Linux game tools are incomplete in {t.get("dir")}: missing {", ".join(t["missing"])} (nxs2.py doctor)')
+    say(f'Linux tools: {t["dir"]}')
+    st_lin_analyze(b, t); st_lin_shaders(b, t, jobs); st_lin_fonts(b); st_lin_lift(b, t, jobs)
+    return st_lin_play(b, t)
+
+
+def run_linux(args):
+    b = Build(args.build); sh = b.outputs / f'play-pokopia-{b.version}.sh'
+    if not sh.is_file(): raise Fail(f'{b.out} has no Linux game yet: nxs2.py build <dump> --linux')
+    say(f'starting {sh.name}')
+    sys.exit(subprocess.call([str(sh)] + list(args.env)))
+
+
 def eden_saves():
     """Eden's saves of this game, newest first (read, never written): <Eden data>\\nand\\user\\save\\0000000000000000\\<user>\\<title id>, or the title-0
     folder Eden files it under when it cannot read the title ID from an extracted dump. EDEN_DIR names the data folder (default %APPDATA%\\eden)."""
-    root = pathlib.Path(os.environ.get('EDEN_DIR') or pathlib.Path(os.environ.get('APPDATA', '')) / 'eden') / 'nand/user/save/0000000000000000'
+    default = pathlib.Path(os.environ.get('XDG_DATA_HOME') or pathlib.Path.home() / '.local/share') / 'eden' if LINUX else pathlib.Path(os.environ.get('APPDATA', '')) / 'eden'
+    root = pathlib.Path(os.environ.get('EDEN_DIR') or default) / 'nand/user/save/0000000000000000'
     c = [d for u in sorted(root.glob('*')) if u.is_dir() for d in (u / TITLE, u / '0000000000000000')
          if (d / 'G00' / 'CMNDAT.BIN').is_file() and (d / 'S00' / 'SYDAT.BIN').is_file()]
     return sorted(c, key=lambda d: max(f.stat().st_mtime for f in d.rglob('*') if f.is_file()), reverse=True)
@@ -1046,6 +1261,8 @@ def import_save(args):
     if not ((src / 'G00').is_dir() and (src / 'S00').is_dir()): raise Fail(f'{src} holds no Pokopia save (no G00 and S00 folders)')
     if src == dst or dst in src.parents: raise Fail(f'{src} is the save the game plays already')
     if WIN and 'nxrt.exe' in subprocess.run(['tasklist', '/FI', 'IMAGENAME eq nxrt.exe'], capture_output=True, text=True).stdout and not args.force:
+        raise Fail('the game is running: close it first (or --force)')
+    if LINUX and shutil.which('pgrep') and subprocess.run(['pgrep', '-x', 'nxrt'], capture_output=True).returncode == 0 and not args.force:
         raise Fail('the game is running: close it first (or --force)')
     pieces = [p for p in (dst, *(dst.with_name(dst.name + s) for s in ('.work', '.new', '.old', '.commit'))) if p.exists()]
     if pieces:
@@ -1095,7 +1312,7 @@ def report(b):
 
 def status(args):
     b = Build(args.build)
-    apple = not (WIN and (b.win / 'play.json').is_file() and not b.patched.is_dir())   # a Windows-game-only folder has no Apple stages to report
+    apple = not ((WIN and (b.win / 'play.json').is_file() or LINUX) and not b.patched.is_dir())   # a Windows- or Linux-game-only folder has no Apple stages to report
     for name, p in (('ExeFS', b.exefs / 'main'), ('RomFS image', b.romfs_img), ('rewritten modules', b.patched / 'main.patched.bin'), ('Mac host', b.host),
                     ('fonts', b.font / 'nintendo_ext.ttf'), ('shader corpus', b.ctl / 'hostkeys.tsv'), ('lowered shaders', b.maxwell / 'results.tsv'),
                     ('shader package', b.pkg), ('shader map', b.profile / 'shader_map.tsv')):
@@ -1112,6 +1329,11 @@ def status(args):
         print(f'  {"ok     " if vk.is_dir() else "missing"}  Windows: Vulkan shaders ({sum(1 for _ in vk.glob("*.spv")) if vk.is_dir() else 0} modules)')
         dumps = b.win / 'shaders' / 'dumps'
         print(f'  save     {win_save_dir(b)}\n  Windows: {sum(1 for _ in dumps.glob("*.ctl")) if dumps.is_dir() else 0} run-time shaders recorded and translated so far')
+    if (b.lin / 'play.json').is_file():
+        for name, p in (('Linux: program.db', b.lin / 'analyze/program.db'), ('Linux: game.so', b.lin / 'game.so'), ('Linux: runtime', b.lin / 'runtime/nxrt')):
+            print(f'  {"ok     " if p.exists() else "missing"}  {name}')
+        dumps = b.lin / 'shaders' / 'dumps'
+        print(f'  save     {linux_save_dir(b)}\n  Linux: {sum(1 for _ in dumps.glob("*.ctl")) if dumps.is_dir() else 0} run-time shaders recorded and translated so far')
     for p in sorted(b.outputs.glob('*')) if b.outputs.is_dir() else []: print(f'  output   {p}')
     if apple and (b.profile / 'shader_map.tsv').is_file(): report(b)
 
@@ -1128,11 +1350,15 @@ def need_setup(ipa=True):
 
 def build(args):
     if args.windows and not WIN: raise Fail('the Windows game is built on Windows (the "for Windows PCs" download): its recompiler and runtime are Windows programs')
+    if args.linux and not LINUX: raise Fail('the Linux game is built on Linux (the "for Linux" download): its recompiler and runtime are Linux programs')
+    if LINUX and (args.mac_app or args.xcode or args.ipa): raise Fail('on Linux the output is the Linux game (--linux); the Mac and iPhone apps need a Mac (or a Windows PC for the IPA)')
+    if LINUX and not args.linux: raise Fail('on Linux the output is the Linux game: add --linux')
     if WIN and (args.mac_app or args.xcode): raise Fail('the Mac app and the Xcode project need a Mac; on Windows the outputs are the Windows game (--windows) and the iPhone IPA (--ipa)')
     if WIN and not (args.ipa or args.windows): raise Fail('on Windows the outputs are the Windows game (--windows) and the iPhone IPA (--ipa): give one or both')
-    need_ios = bool(args.ipa) if WIN else not args.no_ios
-    bad = doctor(need_ios=need_ios, quiet=True, need_windows=bool(args.windows))
-    if bad: doctor(need_ios=need_ios, need_windows=bool(args.windows)); raise Fail('install the missing tools above (nxs2.py doctor), then build again')
+    need_ios = bool(args.ipa) if WIN else False if LINUX else not args.no_ios
+    game = bool(args.windows or args.linux)
+    bad = doctor(need_ios=need_ios, quiet=True, need_windows=game)
+    if bad: doctor(need_ios=need_ios, need_windows=game); raise Fail('install the missing tools above (nxs2.py doctor), then build again')
     need_setup(ipa=bool(args.ipa))
     exefs, romfs, ver, disp = find_dump(args)
     if args.out: out = pathlib.Path(args.out).expanduser()
@@ -1146,28 +1372,30 @@ def build(args):
     if free < 15 and not b.romfs_img.is_file(): say(f'WARNING: {free:.0f} GB free where the build folder is; one game version needs about 12 GB')
     st_profile(b)
     st_extract(b, exefs, romfs)
-    apple = not WIN or args.ipa   # the Apple stages: the code rewritten for Apple's kernel, the Metal shader libraries
+    apple = (not WIN and not LINUX) or args.ipa   # the Apple stages: the code rewritten for Apple's kernel, the Metal shader libraries
     if apple: st_rewrite(b)
-    if not WIN: st_host(b, jobs); st_font(b)   # the Mac host and its fonts: on Windows the iPhone app's fonts come from win/toolchain.py
+    if not WIN and not LINUX: st_host(b, jobs); st_font(b)   # the Mac host and its fonts: on Windows the iPhone app's fonts come from win/toolchain.py
     st_corpus(b, romfs, args.dumps or default_dump_dirs(b))   # the dumps refresh would take: a new version's rebuilt corpus keeps the run-time shaders
     st_lower(b, jobs)
     st_package(b)
     if apple: st_chain(b, need_ios)
     if args.windows: st_windows(b, jobs)
+    if args.linux: st_linux(b, jobs)
     if args.mac_app: st_mac_app(b)
     if args.ipa: st_ipa_windows(b) if WIN else st_ipa(b)
     if args.xcode:
         if not args.team_id: raise Fail('--xcode needs --team-id <your Apple developer team ID>')
         st_xcode(b, args.team_id)
-    if not (args.mac_app or args.ipa or args.xcode or args.windows): say('no output asked for (--mac-app, --ipa, --xcode); the build folder is complete for nxs2.py run')
+    if not (args.mac_app or args.ipa or args.xcode or args.windows or args.linux): say('no output asked for (--mac-app, --ipa, --xcode); the build folder is complete for nxs2.py run')
     if apple: report(b)
     if args.windows: say(f'the Windows game: double-click "{b.outputs / f"Play Pokopia {b.version}.cmd"}" (or nxs2.py run "{b.out}")')
+    if args.linux: say(f'the Linux game: run "{b.outputs / f"play-pokopia-{b.version}.sh"}" (or nxs2.py run "{b.out}")')
     say('done')
 
 
 def default_dump_dirs(b):
     dirs = [b.rundir / 'shdump', pathlib.Path.home() / 'Library/Application Support/nxnative' / TITLE / 'shdump',
-            b.win / 'shaders' / 'dumps']   # the Windows game records the run-time shaders in the same form (and translates them for itself on the spot)
+            b.win / 'shaders' / 'dumps', b.lin / 'shaders' / 'dumps']   # the Windows and Linux games record the run-time shaders in the same form (and translate them on the spot)
     if b.phone.is_dir(): dirs += sorted(p for p in b.phone.glob('*/shdump') if p.is_dir())
     return [d for d in dirs if d.is_dir()]
 
@@ -1321,6 +1549,7 @@ def main():
     s.add_argument('--exefs'); s.add_argument('--romfs'); s.add_argument('--out', help=f'the build folder (default: <dump>/../{TITLE}_native)')
     s.add_argument('--mac-app', action='store_true'); s.add_argument('--ipa', action='store_true'); s.add_argument('--xcode', action='store_true')
     s.add_argument('--windows', action='store_true', help='Windows: the game recompiled for this PC, with its launcher (out/Play Pokopia <version>.cmd)')
+    s.add_argument('--linux', action='store_true', help='Linux: the game recompiled for this computer, with its launcher (out/play-pokopia-<version>.sh)')
     s.add_argument('--team-id'); s.add_argument('--dumps', nargs='*', default=[]); s.add_argument('--no-ios', action='store_true')
     s.add_argument('-j', '--jobs', type=int, help='worker processes at once (default: all cores on a Mac, a quarter of them, at most 8, on a PC)')
     s.add_argument('--full-speed', action='store_true', help='every CPU thread (fastest; a long all-core load, see docs/WINDOWS.md)')
@@ -1328,7 +1557,8 @@ def main():
     s = sub.add_parser('refresh'); s.add_argument('build'); s.add_argument('dumps', nargs='*'); s.add_argument('--team-id')
     s.add_argument('-j', '--jobs', type=int); s.add_argument('--full-speed', action='store_true'); s.set_defaults(f=refresh)
     s = sub.add_parser('run'); s.add_argument('build'); s.add_argument('--lang', default='en-US')
-    s.add_argument('env', nargs='*', help='Mac: extra DM_* switches, KEY=VALUE; Windows: switches for play.ps1'); s.set_defaults(f=run_windows if WIN else run_mac)
+    s.add_argument('env', nargs='*', help='Mac: extra DM_* switches, KEY=VALUE; Windows: switches for play.ps1; Linux: switches for play.sh')
+    s.set_defaults(f=run_windows if WIN else run_linux if LINUX else run_mac)
     s = sub.add_parser('import-save', help='Windows: a save from Eden, the phone or a Mac becomes the one the Windows game plays (the old one is kept)')
     s.add_argument('build'); s.add_argument('folder', nargs='?', help='a folder holding B00, G00 and S00 (or a save/ folder with them)')
     s.add_argument('--eden', action='store_true', help="Eden's own save of this game (read only)"); s.add_argument('--force', action='store_true')
