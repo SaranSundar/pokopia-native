@@ -1,4 +1,4 @@
-# Pokémon Pokopia, running natively on your Mac, iPhone and Windows PC
+# Pokémon Pokopia, running natively on your Mac, iPhone and Windows PC with Cross-Device Saves and Multiplayer
 
 I got Pokémon Pokopia (the Switch 2 game) running natively on my Mac and on my iPhone. Not through an emulator: the
 game's own code runs on the Apple chip, and the graphics go through Metal. After a lot of work on the shaders it looks
@@ -10,7 +10,7 @@ your Mac it builds a Mac app and an iPhone app. On a Windows PC it builds the ga
 PC, and the iPhone app too. Everything that comes from the game is created on your machine and stays in your build
 folder. Nothing from the game is in here.
 
-This works for both versions 2.0.0 (v327680) and 2.0.1 (v655360) as of 11/3/2026. The tool is version **1.1.0**.
+This works for both versions 1.0.5 (v327680) and 2.0.1 (v655360) as of 11/3/2026. The tool is version **1.2.1**.
 
 ## Which download do I need?
 
@@ -38,6 +38,7 @@ Playing together (Link Play) works between Windows, Mac and iPhone, on the same 
 
 Older versions and the release notes: [all releases](https://github.com/xFractals/pokopia-native/releases).
 Already have an older version set up? [Updating from an older version](#updating-from-an-older-version) keeps your save.
+Bringing your save from an emulator or another device? [Moving your save](#moving-your-save).
 
 Before anything else:
 
@@ -54,7 +55,7 @@ is the right version and refuses anything else, and it needs no keys of any kind
 
 Hey guys, I really hope you enjoy this. I just have to give a massive shout-out to the people at NxNative, this wouldn't be possible without them. I'd never tried to do any of this until last week, when they went viral, and once I found out, I kept going. This all started after 0x2593 posted their fork of Eden for NS2, shout out to them as well, that was a great help for getting this going. After running the first emulation of Pokopia, I just knew I needed to fix it and put it on my phone and Mac. Right now all of the PC emulators with Pokopia have issues with the shaders. My work on this native build allowed me to dig deeper and fix all of those issues. If you want to play emulated Pokopia with Eden, that's my other repository "pokopia-fixes" (https://github.com/xFractals/Eden-NS2), which is a fork of https://github.com/0x2593/Eden-NS2. Go check it out if you want, hopefully it gets merged into main soon. Anyways Enjoy!
 
-Also, if you find any bugs, please feel free to let me know or submit a PR. More than happy to take a look. I've played up to after the first wake-up and encountered zero issues.
+Also, if you find any bugs, please feel free to submit an issue request or a PR; it's much appreciated!
 
 ## Gameplay on the iPhone
 
@@ -62,13 +63,11 @@ Captures from my phone, straight from the build this tool makes. I checked every
 Switch 2 footage of the game. The Switch side-by-sides are not posted here because that footage is not mine to repost;
 when I have captures from my own console they will go up next to these.
 
-https://github.com/user-attachments/assets/1fde210a-48bf-44a9-a100-3989711f7366
-
 ![Night, campfire with Professor Tangrowth](docs/images/iphone-night.png)
 
 ![Day, the first area](docs/images/iphone-day.png)
 
-![Opening, meeting Professor Tangrowth](docs/images/iphone-intro-12.png)
+<img width="1007" height="485" alt="Screenshot 2026-11-04 205343" src="https://github.com/user-attachments/assets/238eb6b2-a815-4ac7-aeea-7c4d99479f19" />
 
 ![Opening, the workbench at night](docs/images/iphone-intro-18.png)
 
@@ -91,15 +90,26 @@ Mac compiling 3,800 shaders. After that, rebuilds take a couple of minutes.
   of graphics memory once macOS and your other apps have taken their share (see [Common problems](#common-problems)).
 - **Xcode 27** installed, with its command line tools and the Metal toolchain (Xcode → Settings → Components). For the
   iPhone build you also need the iOS platform from that same screen, and `xcodegen` (`brew install xcodegen`).
-- **Python 3.12 or newer**: `brew install python@3.12`, then `python3.12 -m pip install "capstone>=5,<6" lz4 fonttools pillow`
-  (Pillow only for the app icon).
+- **Python 3.12 or newer, with the builder's own environment.** Homebrew's Python takes no pip packages of its own
+  ("externally-managed-environment"), so the builder's go into a private environment. Once, in Terminal:
+  ```bash
+  brew install python@3.12 python-tk@3.12
+  python3.12 -m venv ~/.pokopia-native/venv
+  ~/.pokopia-native/venv/bin/python -m pip install "capstone>=5,<6" lz4 fonttools pillow
+  ```
+  (Pillow only for the app icon.) **Pokopia Native Builder.app** uses that environment by itself. For the commands in
+  this README, run `source ~/.pokopia-native/venv/bin/activate` first in each Terminal window: `python3.12` and `pip`
+  are then the environment's.
 - The **.NET 10 runtime** (the shader translator is .NET): `brew install --cask dotnet-sdk`.
 - **Your dump.** The game's files as your dumping tool wrote them, with the update:
   ```
   <your folder>/updates/<version>/exefs/   main  main.npdm  rtld  sdk  subsdk0
   <your folder>/updates/<version>/romfs/   LD_C0_R.BIN  LI_C0_R.IDX  motor_asset_re/  movie_asset/
   ```
-  A folder that holds `exefs/` and `romfs/` directly works too. Two updates of Pokémon Pokopia (title
+  A folder that holds `exefs/` and `romfs/` directly works too, and so does a **`.nup` file** (a NUP container of
+  an already-decrypted dump: pick it with **.nup file…** in the window, or give its path to `nxs2.py build`). The
+  builder unpacks the update it needs into the build folder (about 7–10 GB more), once; it needs Python's `zstandard`
+  module: `python3.12 -m pip install zstandard`. Two updates of Pokémon Pokopia (title
   `0400A3A01EE4C000`) are supported, and the tool tells which one you have from the build IDs: **v327680** and
   **2.0.1 (v655360)**. Both get everything, including the mouse and drag look. The base game alone is not enough, and
   another version will not build until it is added, because the patch recipe and the camera address are per version.
@@ -123,8 +133,24 @@ is missing.
   the comfortable size for now.
 - **Mouse look stops while you hold movement keys on a MacBook's trackpad.** The trackpad ignores your finger while keys
   are held down (palm rejection), so the game never sees the movement. An external mouse or a controller works.
+- **Mac: Pokopia Native Builder does nothing, and its log says `nxs2_gui.py: No such file`** (macOS 27, with a path
+  containing `AppTranslocation`). macOS ran the app from a temporary copy away from its folder, because the downloaded
+  folder is still marked as downloaded. Since 1.2.0 the app finds its folder by itself. With an older download, move the
+  whole unzipped folder somewhere else (into Documents, say) and open the app from there, or run
+  `xattr -dr com.apple.quarantine <the unzipped folder>` in Terminal.
+- **Mac: `pip install` fails with "externally-managed-environment".** Homebrew's Python takes no pip packages of its own:
+  make the builder's environment as in "What you need" and install the packages there. The Builder app picks it up by
+  itself from 1.2.1 on.
+- **Windows: `pip install lz4` fails with "Microsoft Visual C++ 14.0 or greater is required".** Your Python is 3.15,
+  and lz4 has no ready-made package for it yet, so pip tries to compile it (the Visual C++ Redistributable is not what
+  it asks for). Install Python 3.14 from python.org beside it and run `py -3.14 -m pip install lz4 fonttools pillow`;
+  `Pokopia Native Builder.cmd` then uses 3.14 by itself.
+- **Windows: Setup or Build stops with "No such file or directory" (or "cannot write in…") for a file in its own
+  folder.** Windows Security's Controlled folder access, or an antivirus, is blocking Python in Documents, Desktop,
+  Downloads or Pictures. Move the unzipped folder and the build folder somewhere else, such as `C:\Pokopia Native`, or
+  allow `python.exe` under Ransomware protection → Allow an app through Controlled folder access.
 - **Your dump is a single file** (.nsp, .xci or something else). The builder takes the game's files as folders, an
-  `exefs/` and a `romfs/` (see "Your dump" above); have your dumping tool extract them.
+  `exefs/` and a `romfs/`, or a `.nup` (see "Your dump" above); have your dumping tool extract the others.
 
 ## Updating from an older version
 
@@ -142,6 +168,42 @@ The game files on the phone only need copying again if you moved to another upda
 say): run `tools/phone_setup.py --romfs "<build folder>/extract/RomFS.img"` once more. Same game update, same dump:
 nothing to copy. Backing your save up first never hurts (Finder's file sharing for the phone, your Library folder on
 the Mac). Link Play needs the same pokopia-native version on every device, so update them all.
+
+## Moving your save
+
+A Pokopia save is three folders: **`B00`, `G00` and `S00`**. Moving a save means copying those three folders from one
+place to another, and the same save works everywhere: in an emulator, the Windows game, the Mac app and the iPhone app.
+
+**Before you copy:** close the game on both sides, and keep a copy of the save you are about to replace (a copy
+replaces it; saves don't merge). A save that game version 2.0.1 has written may not load in 1.0.5.
+
+| Where | Its save folder (the one holding `B00`, `G00` and `S00`) |
+|---|---|
+| **Eden**, and emulators built on it such as **Eglantine** | Right-click Pokémon Pokopia in the game list → **Open Save Data Location**. On Windows Eden's is usually `%APPDATA%\eden\nand\user\save\0000000000000000\<a long user ID>\0400A3A01EE4C000`; a portable install keeps it in the `user` folder next to the program. |
+| **Windows game** | `%APPDATA%\Pokopia Native\<game version>\save`, for example `…\Pokopia Native\2.0.1\save` |
+| **Mac app** | `~/Library/Application Support/nxnative/0400A3A01EE4C000/save` (Finder → Go → Go to Folder…) |
+| **iPhone app** | the `save` folder in the app's Documents, through file sharing (below) |
+
+**Into the Windows game:** **Import save…** in the builder window. **Yes** takes Eden's save on this PC by itself; **No**
+lets you choose any save folder: another emulator's, or one you copied off the iPhone or the Mac. The save that was
+there is kept beside it as `save.before-<date>`.
+
+**Into the Mac app:** quit it, then copy the three folders into its save folder above (make the `save` folder if it is
+not there yet).
+
+**Into or out of the iPhone app:** fully close the app on the phone first (swipe it away in the app switcher), and open
+it again when you're done.
+- **With a Mac:** connect the phone and select it in Finder → **Files** → the Pokopia app. Drag its `save` folder out
+  (that's your backup, or the save to move). To put one in, drag a folder named `save` holding `B00`, `G00` and `S00`
+  onto the app and choose to replace.
+- **With Windows:** the **Apple Devices** app from the Microsoft Store (or iTunes) → your iPhone → **Files** → the
+  Pokopia app, the same way.
+
+**Into an emulator:** open its save folder with **Open Save Data Location** (start the game there once first if the
+folder doesn't exist yet) and copy the three folders in.
+
+**Link Play:** a copied save is still the same save, and the game won't let two copies of one save play together. For
+co-op each player needs a save of their own.
 
 ## The Apple developer thing (iPhone only, read this)
 
@@ -228,7 +290,7 @@ the graphics replayed on Vulkan and SDL3 for the window, input and sound. No emu
 is in the download; the recompiled game and its shaders are made on your PC and stay in your build folder.
 
 You need Windows 10 or 11 (64-bit) with an AVX2 CPU (2013 or newer), a Vulkan 1.3 graphics card, about 12 GB of disk,
-Python 3.12 with `lz4 fonttools pillow`, the .NET 10 runtime and git. No compiler and no installer: the download brings
+Python 3.12–3.14 with `lz4 fonttools pillow` (not 3.15 yet, see [Common problems](#common-problems)), the .NET 10 runtime and git. No compiler and no installer: the download brings
 its own tools. Then:
 
 ```
@@ -294,6 +356,21 @@ host has reached the point in the game where Link Play opens.
      the code.
 4. In the game: **Link Play → Local connection**, then look for towns.
 
+**Interact everywhere** (experimental, new in 1.2.0)
+
+Outside Palette Town the game puts everyone in a Link Play session in Spectator Mode: certain moves and items can't be used,
+and visitors can't build. **Interact everywhere** lifts that: in every town, a session gets the rules Palette Town has with
+Spectator Mode off, so visitors can water, pick up and place things, and build alongside the host.
+
+- Turn it on **on every device**: iPhone and Mac: the launcher's **Interact everywhere** (under Link Play); Windows: the
+  **Interact everywhere (experimental)** box in the window before the game starts. A device with it on only sees hosts that
+  have it on too.
+- The game still shows its own words: the host's settings show Spectator Mode On (greyed out), and the visitor is told everyone
+  will be restricted. The session is not restricted.
+- As in any Link Play visit, the town and its progress (challenges, building) belong to the host, and what a visitor picks up
+  goes home with them.
+- It is experimental: keep a copy of your save before a long session.
+
 Good to know:
 
 - **Internet play must match on every device.** With Internet play on, a device only sees hosts that have it on too
@@ -356,7 +433,8 @@ and that feels like a console. I wanted it to feel like a PC or a phone game, so
 
 - **Mac:** click the game picture and the mouse is captured. Move it to look around; left click is A, right click is
   B, the middle button resets the camera. **Esc** gives the mouse back. Keyboard: WASD moves, J K U I are A B X Y, Q E
-  are L R, Z C are ZL ZR, Return is + and Tab is −.
+  are L R, Z C are ZL ZR, Return is + and Tab is −. (On Windows these keys can be changed in the Controls tab of the
+  window before the game starts, docs/WINDOWS.md; the Mac and the iPhone keep this layout.)
 - **iPhone:** drag anywhere on the right half of the screen that isn't a button, and the camera follows your finger.
 
 **Sensitivity and invert** are in the app's launcher under Controls ("Look sensitivity", "Invert look up and down"),

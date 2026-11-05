@@ -13,7 +13,8 @@ unusual and worth knowing before you start:
 
 ## 1. Build and sign
 
-With your team ID (ten characters, in your Apple developer account under Membership):
+With your team ID (ten characters, in your Apple developer account under Membership), in a Terminal where the builder's
+environment is active (`source ~/.pokopia-native/venv/bin/activate`; the README's "What you need" sets it up):
 
 ```bash
 python3.12 nxs2.py build "<your dump folder>" --xcode --team-id <TEAM>
@@ -37,6 +38,7 @@ obtains; a free profile does not carry Extended Virtual Addressing.
 On the Mac, with the phone plugged in, unlocked and trusted, Developer Mode on (Settings → Privacy & Security):
 
 ```bash
+source ~/.pokopia-native/venv/bin/activate   # pymobiledevice3 goes into the builder's environment too
 pip install pymobiledevice3
 pymobiledevice3 apps install "<build folder>/out/PokemonPokopia-signed.ipa"
 ```

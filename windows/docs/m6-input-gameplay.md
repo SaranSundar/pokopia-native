@@ -20,7 +20,11 @@ frame's images beside the log, depth images too, with their raw values) and `pas
 scripts drive Windows and the Mac host.
 
 **The SDL3 front end (DESIGN D14).** It runs on the window's thread, which now also starts SDL's controller subsystem. Behaviour follows nxnative's Mac front end:
-- **Keyboard**, by key position (SDL scancodes), player 1 through `dm_input_set`: the Mac's layout (table in §7).
+- **Keyboard**, by key position (SDL scancodes), player 1 through `dm_input_set`: the Mac's layout (table in §7). Since 1.2.0 a map can replace it:
+  `DM_KEYMAP=<file>` names `"<action>": <SDL scancode>` pairs (actions: the 16 buttons by name, `StickUp/Left/Down/Right`, `Shake`; `front_map.h`
+  `front_keymap_parse`: Esc, F11 and a key used twice are refused, an action whose default key another took has none). `play.ps1`'s window writes it from
+  its Controls tab (`%APPDATA%\Pokopia Native\controls.json`, scan codes turned into the same positions), and the log lists the map in use. Windows only;
+  the Mac and the iPhone keep the layout.
 - **Mouse look:** a click on the picture captures the mouse (SDL relative mode). Its movement goes to `dm_look_add_at` with the event's age, so Pokopia's
   profile entry `look_cam` writes the camera directly, as on the Mac. The default is 0.05° per mouse count (raw input, no pointer acceleration); `DM_LOOK_SENS` and
   `DM_LOOK_SCALE` override it. While captured, left is A, right is B and middle is the right stick's press. Esc or losing focus releases the mouse. Without pointer

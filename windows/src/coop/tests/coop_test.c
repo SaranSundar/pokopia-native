@@ -878,13 +878,50 @@ static void test_mdns(void) {
 
 #include "coop_test_inet.c"   // step 1d: internet play and the relay
 
+// "Interact everywhere": the sites by build, the callback's register change, and a fingerprint every port computes alike (nxnative's cheat names, then the mod)
+static void env_set(const char *name, const char *v) {   // NULL removes it
+#ifdef _WIN32
+    _putenv_s(name, v ? v : "");
+#else
+    if (v) setenv(name, v, 1); else unsetenv(name);
+#endif
+}
+static uint64_t fnv_names(const char *const *names, int n) {   // ldn_glue.c's formula before coop_mods_add existed
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (int i = 0; i < n; i++) { for (const char *p = names[i]; *p; p++) { h ^= (uint8_t)*p; h *= 0x100000001b3ull; } h ^= 0xFF; h *= 0x100000001b3ull; }
+    return h;
+}
+static void test_interact(void) {
+    fprintf(stderr, "== interact\n");
+    const coop_site *s = NULL;
+    CHECK_EQ(coop_interact_sites("76a489f3bd3642fa5e18bd83d32c98bacc5f7d0e", &s), 1);
+    CHECK(s && s->id == COOP_SITE_MASK && s->off == 0xb1030 && s->fn == 0xb0f60 && s->word == 0xf2c0002du);
+    CHECK_EQ(coop_interact_sites("816c5358e8178d802fcec4a7ce5a741a", &s), 0);   // 1.0.5: none
+    CHECK(s == NULL);
+    CHECK_EQ(coop_interact_sites(NULL, &s), 0);
+    uint64_t x[31] = {0};
+    x[13] = 0x87800000; x[22] = 0;
+    coop_interact_site(COOP_SITE_MASK, x); CHECK_EQ(x[13], 0x5ffffffe);   // the session's Spectator flag clear: Palette Town's Spectator-Off pattern
+    x[13] = 0x87800000; x[22] = 1;
+    coop_interact_site(COOP_SITE_MASK, x); CHECK_EQ(x[13], 0x87800000);   // set: unchanged
+    x[13] = 0x87800000; x[22] = 0;
+    coop_interact_site(0, x); CHECK_EQ(x[13], 0x87800000);   // another id: nothing
+    const char *one[] = {COOP_INTERACT_MOD}, *three[] = {"Max money", "Fly", COOP_INTERACT_MOD};
+    CHECK(coop_mods_add(0, COOP_INTERACT_MOD) == fnv_names(one, 1));
+    CHECK(coop_mods_add(0, COOP_INTERACT_MOD) == 0xfd0b8d7d8a364d88ull);   // as the Windows hosts logged it
+    CHECK(coop_mods_add(coop_mods_add(coop_mods_add(0, "Max money"), "Fly"), COOP_INTERACT_MOD) == fnv_names(three, 3));
+    env_set("DM_COOP_INTERACT", "1"); CHECK(coop_interact_on());
+    env_set("DM_COOP_INTERACT", "0"); CHECK(!coop_interact_on());
+    env_set("DM_COOP_INTERACT", NULL); CHECK(!coop_interact_on());
+}
+
 int main(int argc, char **argv) {
     const char *v = getenv("COOP_TEST_VERBOSE"), *m = getenv("COOP_TEST_MDNS");
     g_verbose = v && atoi(v);
     cplat_init();   // the raw sockets need Winsock even while no node exists
     int all = argc < 2;
     int want_config = all, want_addr = all, want_txt = all, want_loop = all, want_lan = all, want_hostile = all, want_mdns = m && atoi(m);
-    int want_crypto = all, want_inet = all, want_relay = all, want_probe = 0;
+    int want_crypto = all, want_inet = all, want_relay = all, want_probe = 0, want_interact = all;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "config")) want_config = 1;
         else if (!strcmp(argv[i], "addr")) want_addr = 1;
@@ -897,7 +934,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "inet")) want_inet = 1;
         else if (!strcmp(argv[i], "relay")) want_relay = 1;
         else if (!strcmp(argv[i], "probe")) want_probe = 1;
-        else { fprintf(stderr, "sections: config addr txt loopback lan hostile mdns crypto inet relay probe\n"); return 2; }
+        else if (!strcmp(argv[i], "interact")) want_interact = 1;
+        else { fprintf(stderr, "sections: config addr txt loopback lan hostile mdns crypto inet relay probe interact\n"); return 2; }
     }
     if (want_config) test_config();
     if (want_addr) test_addr();
@@ -910,6 +948,7 @@ int main(int argc, char **argv) {
     if (want_inet) test_inet();
     if (want_relay) test_relay();
     if (want_probe) test_probe();
+    if (want_interact) test_interact();
     fprintf(stderr, "%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

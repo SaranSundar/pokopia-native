@@ -140,6 +140,23 @@ int main(int argc, char **argv) {
         {SDL_SCANCODE_TAB, DM_BTN_MINUS}, {SDL_SCANCODE_LEFT, DM_BTN_LEFT}, {SDL_SCANCODE_UP, DM_BTN_UP}, {SDL_SCANCODE_RIGHT, DM_BTN_RIGHT}, {SDL_SCANCODE_DOWN, DM_BTN_DOWN},
         {SDL_SCANCODE_SPACE, DM_BTN_SHAKE}};
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) T(front_key_button(keys[i].sc) == keys[i].b);
+    /* a key map (DM_KEYMAP, play.ps1's Controls tab): A on Space takes Space from the shake, the stick on IJKL takes I / J / K from Y, A and B;
+       Esc and F11 are refused, a key asked twice goes to the first action; strings and unknown names are skipped */
+    {
+        front_keymap m; int refused = -1;
+        T(front_keymap_parse(&m, "{\"version\": 1, \"labels\": {\"A\": \"J\"}, \"A\": 44, \"StickUp\": 12, \"StickLeft\": 13, \"StickDown\": 14, \"StickRight\": 15, "
+                                 "\"X\": 41, \"Y\": 68, \"ZR\": 20, \"ZL\": 20, \"Nope\": 30}", &refused) == 6 && refused == 3);
+        T(front_keymap_button(&m, SDL_SCANCODE_SPACE) == DM_BTN_A && front_keymap_button(&m, SDL_SCANCODE_J) == 0);   /* J (the old A) now moves the stick left */
+        T(front_keymap_button(&m, SDL_SCANCODE_Q) == DM_BTN_ZL && front_keymap_button(&m, SDL_SCANCODE_C) == DM_BTN_ZR);   /* ZL comes first: ZR's Q refused, keeps C */
+        T(m.key[2] == SDL_SCANCODE_U && m.key[FRONT_ACT_SHAKE] == SDL_SCANCODE_UNKNOWN && m.key[1] == SDL_SCANCODE_UNKNOWN && m.key[3] == SDL_SCANCODE_UNKNOWN);
+        T(m.key[6] == SDL_SCANCODE_UNKNOWN);   /* L lost Q to ZL */
+        front_kbd k2 = {0};
+        T(front_kbd_key_map(&k2, &m, SDL_SCANCODE_I, 1) && front_kbd_key_map(&k2, &m, SDL_SCANCODE_L, 1));
+        int32_t x2, y2; front_kbd_axes(&k2, &x2, &y2); T(x2 == DM_STICK_MAX && y2 == DM_STICK_MAX);
+        T(!front_kbd_key_map(&k2, &m, SDL_SCANCODE_W, 1));   /* W no longer moves anything */
+        T(front_keymap_parse(&m, "", &refused) == 0 && refused == 0 && front_keymap_button(&m, SDL_SCANCODE_J) == DM_BTN_A);   /* empty: the default layout */
+        T(front_keymap_parse(&m, NULL, NULL) == 0 && m.key[FRONT_ACT_STICK_UP] == SDL_SCANCODE_W);
+    }
     /* controller buttons: by position (a Nintendo pad's labels agree), by label for an Xbox pad, shapes by position */
     T(front_pad_button(SDL_GAMEPAD_BUTTON_EAST, 0, SDL_GAMEPAD_BUTTON_LABEL_B) == DM_BTN_A);
     T(front_pad_button(SDL_GAMEPAD_BUTTON_SOUTH, 0, SDL_GAMEPAD_BUTTON_LABEL_A) == DM_BTN_B);

@@ -21,8 +21,11 @@ stay in your build folder.
 - **Windows 10 or 11, 64-bit**, with a CPU that has **AVX2 and FMA3** (Intel Haswell from 2013 or AMD Excavator from
   2015, and anything newer), and **16 GB of memory** to be comfortable (the game itself took about 5 GB on the test PC).
 - A **graphics card with Vulkan 1.3** and a current driver (NVIDIA, AMD or Intel).
-- **Python 3.12 or newer** from python.org (tick "Add python.exe to PATH"), then
-  `python -m pip install lz4 fonttools pillow`.
+- **Python 3.12, 3.13 or 3.14** from python.org (tick "Add python.exe to PATH"), then
+  `python -m pip install lz4 fonttools pillow` (add `zstandard` if your dump is a `.nup` file). Python 3.15 is too new
+  for now: lz4 and zstandard have no ready-made packages for it yet, so pip tries to compile them and stops with
+  "Microsoft Visual C++ 14.0 or greater is required" (the Visual C++ Redistributable does not help). Install 3.14
+  beside it and use `py -3.14 -m pip install …`; `Pokopia Native Builder.cmd` then picks 3.14 by itself.
 - The **.NET 10 runtime** (the shader translator) from dotnet.microsoft.com, and **git** (git-scm.com: setup fetches nxnative).
 - About **12 GB** free where the build folder goes, per game version.
 - Your dump, as for the other builds (the README's "What you need").
@@ -62,6 +65,12 @@ Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in
 
 - **Keyboard and mouse:** WASD moves; click the picture and the mouse looks around (Esc gives it back); J K U I are
   A B X Y, Q E are L R, Z C are ZL ZR, Return is +, Tab is −; F11 is full screen.
+- **Your own keys:** the window before the game starts has a **Controls** tab: click an action, then press the key you
+  want for it (a key another action had swaps over); **Reset to defaults** brings the layout above back. Keys count by
+  their place on the keyboard, so the map works the same under any keyboard language. It is saved for this PC in
+  `%APPDATA%\Pokopia Native\controls.json`, and the game's log lists the keys it uses. (Hold **Shift** while starting the
+  game if you ticked "Don't ask again".) Esc, F11, Alt and the Windows keys can't be used. The Mac and the iPhone keep
+  their own layout.
 - **Controllers:** Xbox, PlayStation and Switch Pro controllers work as Switch controllers (face buttons by position),
   with rumble and motion. Close Steam or turn off Steam Input for the controller if it does not show up.
 - Switches for the launcher go after its name in a terminal: `-Fullscreen`, `-Window 1600x900`, `-Silent`, `-PadCheck`
@@ -71,7 +80,10 @@ Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in
 title screen alone). The Windows game records each one the first time the game asks for it and translates it on the
 spot, so a few things appear a little late on the first title screen and in the first minutes of play; after that they
 are there from the start. Nothing to do for you, and nothing is skipped for long. (The same recordings also finish the
-iPhone app of this build folder: `nxs2.py refresh` takes them, see the README's shader section.)
+iPhone app of this build folder: `nxs2.py refresh` takes them, see the README's shader section.) The graphics pipelines
+of the title, a new game and the first towns (2.0.1) are built on background threads while the game starts, from a list
+the builder ships (`profile/0400A3A01EE4C000/pipelines.2.0.1.tsv`), so those areas play without first-time freezes;
+places further on build theirs the first time you visit, once.
 
 ### Your save
 
@@ -104,12 +116,16 @@ a save copied from one device to another cannot join itself).
   last time" saves them typing a new one;
 - **Visit a host over the internet**: type the host's address and room code.
 
+Under them, **Interact everywhere (experimental)** lets Link Play players use moves and items and build in every town, not only
+Palette Town (the README's [Playing together](../README.md#playing-together-link-play) explains it). Every player needs it on,
+the iPhone and Mac in their launcher.
+
 It remembers your choice. **Don't ask again** starts the same way every time; hold **Shift** while starting the game to
 see the window again. The settings live in `%APPDATA%\Pokopia Native\linkplay.json`.
 
 From a terminal, switches after the launcher's name skip the window: `-LinkPlay`; `-Join <address>[:<port>]` visits one
 host by address; `-Internet` with `-Room <code>` (a host without one gets a new code); `-Relay <address>[:<port>]` goes
-through a relay you trust.
+through a relay you trust; `-Interact` turns on Interact everywhere.
 
 - **The first time**, Windows Firewall asks whether the game may use networks: allow **Private networks**. Your network
   must be Private (Settings → Network & internet → your connection → Network profile type: Private): on a Public network
@@ -149,7 +165,7 @@ recordings do the same job: `nxs2.py refresh` picks them up.)
 
 | Tool | Where | Why |
 |---|---|---|
-| Python 3.12 or newer | python.org, tick "Add python.exe to PATH" (Tk comes with it) | the build script and the window |
+| Python 3.12, 3.13 or 3.14 (3.15 lacks lz4 packages so far) | python.org, tick "Add python.exe to PATH" (Tk comes with it) | the build script and the window |
 | `python -m pip install "capstone>=5,<6" lz4 fonttools pillow` | | the code rewriter, the shader tools, the fonts, the app icon |
 | .NET 10 runtime | dotnet.microsoft.com | the shader translator |
 | LLVM for Windows | github.com/llvm/llvm-project/releases, `LLVM-<version>-win64.exe` | compiles and links the iPhone app (`clang`, `ld64.lld`) |

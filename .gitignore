@@ -1,5 +1,5 @@
-nxnative/
-nxnativewindows-src/
+/nxnative/
+/nxnativewindows-src/
 __pycache__/
 *.log
 ampere-lower/ampere-lower

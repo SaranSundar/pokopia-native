@@ -72,7 +72,8 @@ class Types:
     def __init__(self, nvn_h=None):
         self.alias = {}       # typedef name -> base text
         self.enums = set()
-        self.fnptr = {'nv_alloc_fn', 'nv_free_fn', 'nv_realloc_fn'}   # hle_nv.c's allocator callbacks
+        self.fnptr = {'nv_alloc_fn', 'nv_free_fn', 'nv_realloc_fn',   # hle_nv.c's allocator callbacks
+                      'ikb_cb0', 'ikb_cb1'}                           # hle_swkbd.c's inline keyboard callbacks (guest addresses)
         self.structs = dict(STRUCTS)
         if nvn_h and os.path.exists(nvn_h):
             self.read_typedefs(open(nvn_h, encoding='utf-8', errors='replace').read())

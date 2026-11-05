@@ -10,6 +10,8 @@
 #pragma once
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <math.h>
 #include <SDL3/SDL_scancode.h>
 #include <SDL3/SDL_gamepad.h>
@@ -20,28 +22,83 @@
 #define FRONT_TRIGGER_PRESS 8192     // a trigger counts as pressed past a quarter of its travel
 #define FRONT_LOOK_SENS 0.05f        // degrees per mouse count (raw input, no pointer acceleration); DM_LOOK_SENS / DM_LOOK_SCALE (hle_hid.c dm_look_sens)
 
+// The keyboard map: one key position per action. Actions 0-15 are the NpadButtons in their bit order, then the left stick's four directions and the shake.
+// DM_KEYMAP=<file> (play.ps1's Controls tab writes it) replaces actions by name, "A": <SDL scancode>, ...; the layout above is the default
+enum { FRONT_ACT_STICK_UP = 16, FRONT_ACT_STICK_LEFT, FRONT_ACT_STICK_DOWN, FRONT_ACT_STICK_RIGHT, FRONT_ACT_SHAKE, FRONT_ACTS };
+static const char *const front_act_names[FRONT_ACTS] = {"A", "B", "X", "Y", "LS", "RS", "L", "R", "ZL", "ZR", "Plus", "Minus", "Left", "Up", "Right", "Down",
+                                                          "StickUp", "StickLeft", "StickDown", "StickRight", "Shake"};
+typedef struct { SDL_Scancode key[FRONT_ACTS]; } front_keymap;
+static inline void front_keymap_default(front_keymap *m) {
+    static const SDL_Scancode d[FRONT_ACTS] = {
+        SDL_SCANCODE_J, SDL_SCANCODE_K, SDL_SCANCODE_U, SDL_SCANCODE_I, SDL_SCANCODE_F, SDL_SCANCODE_G, SDL_SCANCODE_Q, SDL_SCANCODE_E, SDL_SCANCODE_Z, SDL_SCANCODE_C,
+        SDL_SCANCODE_RETURN, SDL_SCANCODE_TAB, SDL_SCANCODE_LEFT, SDL_SCANCODE_UP, SDL_SCANCODE_RIGHT, SDL_SCANCODE_DOWN,
+        SDL_SCANCODE_W, SDL_SCANCODE_A, SDL_SCANCODE_S, SDL_SCANCODE_D, SDL_SCANCODE_SPACE};
+    for (int i = 0; i < FRONT_ACTS; i++) m->key[i] = d[i];
+}
+// Keys a map may not take: Esc releases the mouse, F11 is fullscreen; anything outside the keyboard's usage codes
+static inline int front_key_reserved(long sc) { return sc < SDL_SCANCODE_A || sc > SDL_SCANCODE_RGUI || sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_F11; }
+// A map file's text (JSON written by play.ps1): every "<action>": <number> pair names an action's key; other fields (strings, the version) are skipped. Starts from
+// the default; a reserved key, or a key an earlier action already asked for, is refused. An action not asked for keeps its default key unless an asked one took it
+// (then it has none). Returns the actions set; *refused counts the refusals
+static inline int front_keymap_parse(front_keymap *m, const char *t, int *refused) {
+    front_keymap_default(m);
+    SDL_Scancode want[FRONT_ACTS]; for (int i = 0; i < FRONT_ACTS; i++) want[i] = SDL_SCANCODE_UNKNOWN;
+    int set = 0, bad = 0;
+    for (const char *p = t ? strchr(t, '"') : NULL; p; p = strchr(p, '"')) {
+        const char *q = strchr(p + 1, '"'); if (!q) break;
+        size_t n = (size_t)(q - p - 1); const char *r = q + 1;
+        while (*r == ' ' || *r == '\t' || *r == '\r' || *r == '\n') r++;
+        if (*r != ':') { p = q + 1; continue; }   // a string value, not a name
+        r++; while (*r == ' ' || *r == '\t' || *r == '\r' || *r == '\n') r++;
+        if (*r >= '0' && *r <= '9') {
+            long v = strtol(r, NULL, 10);
+            for (int i = 0; i < FRONT_ACTS; i++)
+                if (strlen(front_act_names[i]) == n && !strncmp(p + 1, front_act_names[i], n)) { if (front_key_reserved(v)) bad++; else want[i] = (SDL_Scancode)v; }
+        }
+        p = r;
+    }
+    for (int i = 0; i < FRONT_ACTS; i++) {   // a key asked twice goes to the first action
+        if (want[i] == SDL_SCANCODE_UNKNOWN) continue;
+        int dup = 0; for (int j = 0; j < i; j++) dup |= want[j] == want[i];
+        if (dup) { bad++; want[i] = SDL_SCANCODE_UNKNOWN; } else { m->key[i] = want[i]; set++; }
+    }
+    for (int i = 0; i < FRONT_ACTS; i++) {
+        if (want[i] != SDL_SCANCODE_UNKNOWN) continue;
+        for (int j = 0; j < FRONT_ACTS; j++) if (want[j] == m->key[i]) { m->key[i] = SDL_SCANCODE_UNKNOWN; break; }
+    }
+    if (refused) *refused = bad;
+    return set;
+}
+// The action a key does under a map; -1 for none
+static inline int front_keymap_action(const front_keymap *m, SDL_Scancode sc) {
+    if (sc == SDL_SCANCODE_UNKNOWN) return -1;
+    for (int i = 0; i < FRONT_ACTS; i++) if (m->key[i] == sc) return i;
+    return -1;
+}
+static inline const front_keymap *front_keymap_builtin(void) {
+    static front_keymap m; static int init;
+    if (!init) { front_keymap_default(&m); init = 1; }
+    return &m;
+}
+
 // The keyboard: buttons held and the four stick keys
 typedef struct { uint64_t btn; int w, a, s, d; } front_kbd;
-// The NpadButton (or DM_BTN_SHAKE) a key presses; 0 for none
-static inline uint64_t front_key_button(SDL_Scancode sc) {
-    switch (sc) {
-    case SDL_SCANCODE_J: return DM_BTN_A;      case SDL_SCANCODE_K: return DM_BTN_B;      case SDL_SCANCODE_U: return DM_BTN_X;     case SDL_SCANCODE_I: return DM_BTN_Y;
-    case SDL_SCANCODE_F: return DM_BTN_LS;     case SDL_SCANCODE_G: return DM_BTN_RS;
-    case SDL_SCANCODE_Q: return DM_BTN_L;      case SDL_SCANCODE_E: return DM_BTN_R;      case SDL_SCANCODE_Z: return DM_BTN_ZL;    case SDL_SCANCODE_C: return DM_BTN_ZR;
-    case SDL_SCANCODE_RETURN: return DM_BTN_PLUS;                                         case SDL_SCANCODE_TAB: return DM_BTN_MINUS;
-    case SDL_SCANCODE_LEFT: return DM_BTN_LEFT; case SDL_SCANCODE_UP: return DM_BTN_UP;  case SDL_SCANCODE_RIGHT: return DM_BTN_RIGHT; case SDL_SCANCODE_DOWN: return DM_BTN_DOWN;
-    case SDL_SCANCODE_SPACE: return DM_BTN_SHAKE;
-    default: return 0;
-    }
+// The NpadButton (or DM_BTN_SHAKE) a key presses under a map; 0 for none (a stick key, or no action)
+static inline uint64_t front_keymap_button(const front_keymap *m, SDL_Scancode sc) {
+    int a = front_keymap_action(m, sc);
+    return a < 0 || (a >= FRONT_ACT_STICK_UP && a < FRONT_ACT_SHAKE) ? 0 : a == FRONT_ACT_SHAKE ? DM_BTN_SHAKE : 1ull << a;
 }
+static inline uint64_t front_key_button(SDL_Scancode sc) { return front_keymap_button(front_keymap_builtin(), sc); }
 // A key event; returns 1 when the keyboard's state changed (it is a key the game takes)
-static inline int front_kbd_key(front_kbd *k, SDL_Scancode sc, int down) {
-    int *stick = sc == SDL_SCANCODE_W ? &k->w : sc == SDL_SCANCODE_A ? &k->a : sc == SDL_SCANCODE_S ? &k->s : sc == SDL_SCANCODE_D ? &k->d : NULL;
+static inline int front_kbd_key_map(front_kbd *k, const front_keymap *m, SDL_Scancode sc, int down) {
+    int a = front_keymap_action(m, sc);
+    int *stick = a == FRONT_ACT_STICK_UP ? &k->w : a == FRONT_ACT_STICK_LEFT ? &k->a : a == FRONT_ACT_STICK_DOWN ? &k->s : a == FRONT_ACT_STICK_RIGHT ? &k->d : NULL;
     if (stick) { if (*stick == !!down) return 0; *stick = !!down; return 1; }
-    uint64_t m = front_key_button(sc); if (!m) return 0;
-    uint64_t b = down ? k->btn | m : k->btn & ~m; if (b == k->btn) return 0;
+    uint64_t mk = front_keymap_button(m, sc); if (!mk) return 0;
+    uint64_t b = down ? k->btn | mk : k->btn & ~mk; if (b == k->btn) return 0;
     k->btn = b; return 1;
 }
+static inline int front_kbd_key(front_kbd *k, SDL_Scancode sc, int down) { return front_kbd_key_map(k, front_keymap_builtin(), sc, down); }
 static inline void front_kbd_axes(const front_kbd *k, int32_t *lx, int32_t *ly) { *lx = (k->d - k->a) * DM_STICK_MAX; *ly = (k->w - k->s) * DM_STICK_MAX; }
 
 // A controller button as NpadButton; by_label: DM_PAD_FACE=labels, label = SDL_GetGamepadButtonLabel's answer for a face button

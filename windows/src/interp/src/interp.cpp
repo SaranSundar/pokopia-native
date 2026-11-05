@@ -29,6 +29,8 @@ struct Dispatch {
 constinit const Dispatch dispatch;
 
 thread_local nxw::interp::Stats g_stats;
+NxwInterpSiteHook g_site_hook;
+uint64_t g_site_lo, g_site_span;
 
 int64_t sext(uint64_t v, unsigned bits) { return int64_t(v << (64 - bits)) >> (64 - bits); }
 
@@ -61,12 +63,19 @@ void call(State& s, NxwGuestCpu* cpu, uint64_t target) {
 
 nxw::interp::Stats& nxw::interp::stats() { return g_stats; }
 
+extern "C" void nxw_interp_set_site_hook(NxwInterpSiteHook hook, uint64_t lo, uint64_t hi) {
+    g_site_hook = hook;
+    g_site_lo = lo;
+    g_site_span = hook ? hi - lo : 0;
+}
+
 extern "C" void nxw_interp_run(NxwGuestCpu* cpu, uint64_t pc) {
     g_stats.entries++;
     State s;
     nxw_sem_enter(&s, cpu);
     const uint64_t caller_lr = s.x[30];   // where a RET to the host caller goes
     for (;;) {
+        if (pc - g_site_lo < g_site_span) g_site_hook(pc, s.x);
         const uint32_t w = *reinterpret_cast<const volatile uint32_t*>(uintptr_t(pc));
         const Op op = nxw::a64::decode(w);
         const SemFn fn = dispatch.fn[unsigned(op)];

@@ -12,6 +12,10 @@ extern "C" {
 void nxw_interp_trampoline(NxwGuestCpu* cpu);
 // Interprets the function at entry until it returns
 void nxw_interp_run(NxwGuestCpu* cpu, uint64_t entry);
+// Site hooks (the runtime's interpreted functions with hooks, rt.c): called with x0-x30 right before an instruction in [lo, hi) runs; a register it
+// writes takes effect. Null: none
+typedef void (*NxwInterpSiteHook)(uint64_t pc, uint64_t* x);
+void nxw_interp_set_site_hook(NxwInterpSiteHook hook, uint64_t lo, uint64_t hi);
 }
 
 namespace nxw::interp {

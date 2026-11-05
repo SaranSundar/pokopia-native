@@ -3,18 +3,18 @@
 set(NXRT_HLE
   hle/hle_sdkinit.c hle/hle_offline.c hle/hle_net.c hle/hle_nvdrv.c hle/hle_account.c hle/hle_friends.c hle/hle_time.c hle/hle_table.c hle/hle_nvn.c
   hle/hle_fs.c hle/hle_oe.c hle/hle_sdk16.c hle/hle_hid.c hle/hle_touch.c hle/hle_haptics.c hle/hle_nv.c hle/hle_vi.c
-  hle/hle_audio.c hle/audio_silent.c hle/hle_audren.c hle/hle_misc.c hle/hle_codec.c hle/save_txn.c)
+  hle/hle_audio.c hle/audio_silent.c hle/hle_audren.c hle/hle_misc.c hle/hle_codec.c hle/save_txn.c hle/hle_swkbd.c)
 add_library(nxrt_core STATIC
   plat/plat_win32.c
   host/addrspace.c host/log.c host/crash.c host/hle_os.c host/thread.c host/hle_thread.c host/hle_svc.c host/rt.c host/hle.c host/loader.cpp
   host/main.c host/ctl_standins.c host/hle_guestthread.c host/prof.c gfx/nvn_tex.c
-  gfx/gfx_select.c gfx/gfx_null.c gfx/nvn_dirty.c gfx/nvn_texio.c gfx/nxs_rt.c
+  gfx/gfx_select.c gfx/gfx_null.c gfx/nvn_dirty.c gfx/nvn_texio.c gfx/nxs_rt.c front/text_input_win.c
   ${NXRT_HLE}
   gen/out/hle_registry.gen.c gen/out/hle_stubs.gen.c)
 target_include_directories(nxrt_core PUBLIC include PRIVATE plat host hle gfx gen/out)
 target_compile_definitions(nxrt_core PUBLIC NXRT_BUILDING PRIVATE _USE_MATH_DEFINES)
 set_target_properties(nxrt_core PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_link_libraries(nxrt_core PUBLIC nxw_abi nxload nxw_interp s2tex PRIVATE bcrypt dbghelp coop)   # coop: Link Play (src/coop, docs/coop-step1b.md)
+target_link_libraries(nxrt_core PUBLIC nxw_abi nxload nxw_interp s2tex PRIVATE bcrypt dbghelp coop user32)   # coop: Link Play (src/coop, docs/coop-step1b.md); user32: the keyboard's box
 # NXRT_PDB=ON: nxrt.exe with nxrt.pdb (CodeView), so the profiler (host/prof.c) names host functions
 option(NXRT_PDB "build nxrt with debug information for the profiler" OFF)
 if(NXRT_PDB)

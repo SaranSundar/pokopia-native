@@ -31,7 +31,7 @@ or newer with lz4, fontTools and Pillow, the .NET 10 runtime, git, a Vulkan driv
 """
 import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shutil, struct, subprocess, sys, time
 
-TOOL_VERSION = '1.1.0'   # this tool's release (co-op needs the same one on every device); the game's own version is separate
+TOOL_VERSION = '1.2.1'   # this tool's release (co-op needs the same one on every device); the game's own version is separate
 TITLE = '0400A3A01EE4C000'
 NAME = 'Pokemon Pokopia'
 UPSTREAM = 'https://github.com/seedds/nxnative'
@@ -47,6 +47,9 @@ AMPERE = HERE / 'ampere-lower' / ('windows/ampere-lower.exe' if WIN else
                                    'linux/ampere-lower' if LINUX and (HERE / 'ampere-lower/linux/ampere-lower').is_file() else 'ampere-lower')   # Linux: the download's build, else setup's
 NX = pathlib.Path(os.environ.get('NXNATIVE') or HERE / 'nxnative')
 PY = sys.executable
+if WIN and pathlib.Path(PY).name.lower() == 'pythonw.exe' and pathlib.Path(PY).with_name('python.exe').is_file():
+    PY = str(pathlib.Path(PY).with_name('python.exe'))   # the tools' Python has a console: started without one, every console tool it runs opens a window
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if WIN else 0   # the tools' consoles stay hidden: their output is captured anyway
 WIN_KIT = HERE / 'windows' / 'bin'   # the Windows game's tools as the "for Windows PCs" download ships them (tools/package_release.py makes it)
 LINUX_KIT = HERE / 'linux' / 'bin'   # the Linux game's tools as the "for Linux" download ships them
 T0 = time.time()
@@ -84,7 +87,8 @@ def run(cmd, log, env=None, cwd=None, ok=(0,), heartbeat=30, show=None):
     last, t_beat, t_start = '', time.time(), time.time()
     with open(log, 'w', encoding='utf-8', errors='replace') as f:
         f.write('$ ' + ' '.join(cmd) + '\n'); f.flush()
-        p = subprocess.Popen(cmd, env=e, cwd=str(cwd) if cwd else None, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
+        p = subprocess.Popen(cmd, env=e, cwd=str(cwd) if cwd else None, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace',
+                             creationflags=NO_WINDOW)
         for line in p.stdout:
             f.write(line); last = line.rstrip()
             if VERBOSE or (show and re.search(show, line)): print('    ' + last[:160], flush=True)
@@ -288,6 +292,15 @@ def windows_env():
 
 
 # ---------------------------------------------------------------- environment
+VENV = pathlib.Path.home() / '.pokopia-native' / 'venv'   # the builder's own Python environment on a Mac (the app's launcher looks there first)
+
+
+def externally_managed():
+    """A Python that refuses pip installs (PEP 668: Homebrew's, a Linux distribution's); a virtual environment never is."""
+    import sysconfig
+    return sys.prefix == sys.base_prefix and pathlib.Path(sysconfig.get_path('stdlib'), 'EXTERNALLY-MANAGED').is_file()
+
+
 def doctor(need_ios=True, quiet=False, need_windows=True):
     """What this machine has of what the build needs. Returns the list of problems (empty = ready). On Windows need_ios is the iPhone IPA's toolchain
     and need_windows the Windows game's tools."""
@@ -300,13 +313,20 @@ def doctor(need_ios=True, quiet=False, need_windows=True):
     if LINUX: return doctor_linux(ok, bad, need_windows)
     ok('macOS on Apple silicon', sys.platform == 'darwin' and platform.machine() == 'arm64', 'the host runs the game\'s arm64 code natively: an Apple silicon Mac is required')
     ok(f'Python 3.12+ (running {platform.python_version()})', sys.version_info >= (3, 12), 'brew install python@3.12, then run nxs2.py with python3.12')
+    managed = externally_managed(); missing = 0
     for mod, pip in (('capstone', 'capstone>=5,<6'), ('lz4', 'lz4'), ('fontTools', 'fonttools')):
         try: __import__(mod); have = True
-        except ImportError: have = False
-        ok(f'python module {mod}', have, f'{PY} -m pip install "{pip}"')
+        except ImportError: have = False; missing += 1
+        ok(f'python module {mod}', have, 'the steps below' if managed else f'{PY} -m pip install "{pip}"')
     try:
-        import capstone; ok('capstone 5.x', capstone.__version__.startswith('5.'), f'{PY} -m pip install "capstone>=5,<6"')
+        import capstone; ok('capstone 5.x', capstone.__version__.startswith('5.'), f'{VENV}/bin/python -m pip install "capstone>=5,<6"' if managed else f'{PY} -m pip install "capstone>=5,<6"')
     except ImportError: pass
+    if missing and managed and not quiet:
+        print(f'  This Python ({sys.executable}) is managed by Homebrew or the system, which keeps pip packages out of it.\n'
+              f'  The builder gets its own environment instead, once, in Terminal:\n'
+              f'    {sys.executable} -m venv {VENV}\n'
+              f'    {VENV}/bin/python -m pip install "capstone>=5,<6" lz4 fonttools pillow\n'
+              f'  then open Pokopia Native Builder again (it uses that environment by itself), or run nxs2.py with {VENV}/bin/python.')
     xc = subprocess.run(['xcode-select', '-p'], capture_output=True, text=True)
     ok('Xcode command line tools (xcode-select -p)', xc.returncode == 0 and xc.stdout.strip() != '', 'install Xcode from developer.apple.com, open it once, then: sudo xcode-select -s /Applications/Xcode.app')
     ok('clang', which('clang') is not None, 'comes with Xcode\'s command line tools')
@@ -352,7 +372,11 @@ def doctor_windows(ok, bad, need_ios=True, need_windows=True):
     for mod, pip in ((('capstone', 'capstone>=5,<6'),) if need_ios else ()) + (('lz4', 'lz4'), ('fontTools', 'fonttools'), ('PIL', 'pillow')):
         try: __import__(mod); have = True
         except ImportError: have = False
-        ok(f'python module {mod}', have, f'{PY} -m pip install "{pip}"')
+        hint = f'{PY} -m pip install "{pip}"'
+        if mod == 'lz4' and sys.version_info >= (3, 15):   # no lz4 wheel for 3.15 yet: pip would compile it and asks for the C++ Build Tools
+            hint = (f'lz4 has no ready-made package for Python {platform.python_version()} yet. Install Python 3.14 from python.org beside it, '
+                    'run py -3.14 -m pip install lz4 fonttools pillow, then start Pokopia Native Builder again: it picks 3.14')
+        ok(f'python module {mod}', have, hint)
     if need_ios:
         try:
             import capstone; ok('capstone 5.x', capstone.__version__.startswith('5.'), f'{PY} -m pip install "capstone>=5,<6"')
@@ -404,10 +428,26 @@ def patch_adds(patch):
     return [b[6:] for a, b in zip(lines, lines[1:]) if a == '--- /dev/null' and b.startswith('+++ b/')]
 
 
+def check_writable(folder, what):
+    """Windows Security's Controlled folder access (ransomware protection) and some antivirus programs stop Python writing in Documents,
+    Desktop, Downloads and Pictures; Python then reports the new file as missing (Errno 2). Said before a step fails halfway."""
+    folder = pathlib.Path(folder)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        t = folder / f'.nxs2-write-test-{os.getpid()}'; t.write_text('ok'); t.unlink()
+    except OSError as e:
+        hint = ('Windows Security\'s "Controlled folder access" or an antivirus is probably blocking Python there. Move the folder somewhere '
+                'outside Documents, Desktop, Downloads and Pictures (for example C:\\Pokopia Native) and run it from there, or allow python.exe in '
+                'Windows Security > Virus & threat protection > Ransomware protection > Allow an app through Controlled folder access.'
+                if WIN else 'check that the folder is yours and not read-only.')
+        raise Fail(f'cannot write in {what} ({folder}: {e.strerror or e}). {hint}')
+
+
 def setup(args):
     """nxnative at the pinned commit with the Switch 2 patch and the rebuilt translator, and ampere-lower built."""
     bad = doctor(need_ios=not args.no_ios, need_windows=False)
     if bad: raise Fail('install the missing tools above, then run setup again')
+    check_writable(HERE, 'the pokopia-native folder')
     if not (NX / '.git').is_dir():
         say(f'fetching nxnative ({UPSTREAM} at {UPSTREAM_COMMIT}) into {NX}')
         run(['git', 'clone', '--filter=blob:none', '--no-checkout', UPSTREAM, NX], HERE / 'setup-clone.log')
@@ -516,6 +556,55 @@ def find_dump(args):
                '\n  '.join(seen) + '\n(a base-game folder is not enough: the game\'s update is needed)')
 
 
+def nup_unpack(path, out):
+    """A .nup (a NUP container of an already-decrypted dump, nupread.py) unpacked into <build folder>/nup as a dump folder: each program's
+    ExeFS (small), then the RomFS of the one this recipe is for, an update's own files over its base's (the format's layering). A second
+    build of the same .nup unpacks nothing."""
+    import nupread
+    dest = out / 'nup'; stamp = dest / '.from'
+    st = path.stat()
+    try:
+        with nupread.Nup(path) as n:
+            key = f'{path}|{st.st_size}|{int(st.st_mtime)}|{n.uuid}'
+            if stamp.is_file() and stamp.read_text() == key:
+                say(f'.nup: {path.name} is unpacked already ({dest})'); return dest
+            progs = sorted((p for p in n.packages if p['kind'] in ('base', 'update') and p['exefs'] is not None),
+                           key=lambda p: (p['kind'] == 'update', p['version']), reverse=True)   # the newest update first, the base last
+            if not progs: raise Fail(f'{path.name} holds no game program (no base or update package with an ExeFS)')
+            if dest.exists():   # another .nup's, or an unpack that did not finish: only a folder this function made is removed
+                if not (stamp.is_file() or (dest / '.unpacking').is_file()): raise Fail(f'{dest} exists and was not made by the builder: choose another build folder')
+                shutil.rmtree(dest)
+            dest.mkdir(parents=True); (dest / '.unpacking').write_text(key)
+            known = {w['main'] for _, _, w in builds()}
+            chosen, seen = None, []
+            for p in progs:
+                root = dest / ('base' if p['kind'] == 'base' else f'updates/{p["version"]}')
+                for rel, fi in n.walk(p['exefs']): n.extract_file(fi, root / 'exefs' / rel)
+                bid = build_id(root / 'exefs/main') if (root / 'exefs/main').is_file() else None
+                seen.append(f'{p["kind"]} {p["version"]}: main build {bid}')
+                if chosen is None and bid in known: chosen = (p, root)
+            if not chosen:
+                raise Fail(f'this recipe is for {NAME} ' + ', '.join(f'{v} (main build {w["main"]})' for v, _, w in builds()) + f'; {path.name} holds:\n  ' + '\n  '.join(seen))
+            p, root = chosen
+            base = next((q for q in n.packages if q['kind'] == 'base' and q['romfs'] is not None and q is not p), None)
+            files = {}
+            for tree in ([p] if p['romfs'] is not None else []) + ([base] if base else []):
+                for rel, fi in n.walk(tree['romfs']): files.setdefault(rel, fi)   # the update's file shadows the base's
+            if not files: raise Fail(f'{path.name}: the game program has no RomFS')
+            need = sum(n.files[fi][2] for fi in files.values()); free = shutil.disk_usage(out).free
+            if free < need + (2 << 30): raise Fail(f'unpacking {path.name} needs about {need / (1 << 30):.0f} GB free where the build folder is; {free / (1 << 30):.0f} GB are')
+            say(f'.nup: unpacking {p["kind"]} {p["version"]} from {path.name}: {len(files)} RomFS files, {need / (1 << 30):.1f} GB')
+            done = 0; step = need // 10 or 1
+            for rel, fi in files.items():
+                n.extract_file(fi, root / 'romfs' / rel)
+                before, done = done, done + n.files[fi][2]
+                if done // step != before // step: say(f'    {done * 100 // need}%')
+    except nupread.NupError as e:
+        raise Fail(str(e))
+    stamp.write_text(key); (dest / '.unpacking').unlink()
+    return dest
+
+
 def nso_short(p):
     """How many bytes an NSO lacks against the segments its header lists (0 = complete)."""
     h = p.read_bytes()[:0x70]; flags = struct.unpack_from('<I', h, 0xC)[0]
@@ -534,9 +623,9 @@ def builds():
 
 # ---------------------------------------------------------------- stages
 def st_profile(b):
-    """The game profile the tools read: game.tsv, the entitlements and the empty shader tables (the package fills them later)."""
+    """The game profile the tools read: game.tsv, the rewriter's patches.py, the entitlements and the empty shader tables (the package fills them later)."""
     b.profile.mkdir(parents=True, exist_ok=True)
-    for name in ('game.tsv', 'pokopia.entitlements', 'runtime_keys.tsv', 'shader_sources.tsv', 'shader_facts.seed.tsv'):
+    for name in ('game.tsv', 'patches.py', 'pokopia.entitlements', 'runtime_keys.tsv', 'shader_sources.tsv', 'shader_facts.seed.tsv'):
         src = PROFILE_SRC / name
         if src.is_file(): shutil.copyfile(src, b.profile / name)
     for name, text in EMPTY_TABLES.items():
@@ -568,7 +657,7 @@ def make_nacp(name, title, version):   # a control record (NACP) with the game's
 
 def st_rewrite(b):
     """The game's code modules rewritten for Apple's kernel (nxnative's patch_nso.py), with their recipe tables."""
-    key = fingerprint(*(b.exefs / m for m in b.modules), NX / 'dm/tools/patch_nso.py', PROFILE_SRC / 'game.tsv')
+    key = fingerprint(*(b.exefs / m for m in b.modules), NX / 'dm/tools/patch_nso.py', PROFILE_SRC / 'game.tsv', PROFILE_SRC / 'patches.py')   # patches.py: the profile's gates
     if b.fresh('rewrite', key) and all((b.patched / f'{m}.patched.bin').is_file() for m in b.modules): return say('rewrite: up to date')
     b.patched.mkdir(parents=True, exist_ok=True)
     env = b.env(DM_REWRITE_J='1' if WIN else str(JOBS))   # the rewriter's worker pool forks (no fork on Windows): one worker runs the same code inline, about a minute
@@ -1361,6 +1450,12 @@ def build(args):
     bad = doctor(need_ios=need_ios, quiet=True, need_windows=game)
     if bad: doctor(need_ios=need_ios, need_windows=game); raise Fail('install the missing tools above (nxs2.py doctor), then build again')
     need_setup(ipa=bool(args.ipa))
+    if args.out: check_writable(pathlib.Path(args.out).expanduser(), 'the build folder')
+    nup = pathlib.Path(args.dump).expanduser().resolve() if args.dump else None
+    if nup and nup.is_file() and nup.suffix.lower() == '.nup':   # a NUP container: unpacked into the build folder, then read like a dump folder
+        args.out = str(pathlib.Path(args.out).expanduser() if args.out else nup.parent / f'{nup.stem}_native')
+        pathlib.Path(args.out).mkdir(parents=True, exist_ok=True)
+        args.dump = str(nup_unpack(nup, pathlib.Path(args.out)))
     exefs, romfs, ver, disp = find_dump(args)
     if args.out: out = pathlib.Path(args.out).expanduser()
     elif args.dump: d = pathlib.Path(args.dump).expanduser().resolve(); out = d.parent / f'{d.name}_native'   # beside the dump, never inside it
@@ -1546,7 +1641,7 @@ def main():
     s = sub.add_parser('doctor'); s.add_argument('--no-ios', action='store_true'); s.add_argument('--no-windows', action='store_true', help="Windows: not the Windows game's tools")
     s.set_defaults(f=lambda a: sys.exit(1 if doctor(not a.no_ios, need_windows=not a.no_windows) else 0))
     s = sub.add_parser('build')
-    s.add_argument('dump', nargs='?', help='the dump folder (<game>/updates/<version>/{exefs,romfs} inside, or exefs/ and romfs/ directly)')
+    s.add_argument('dump', nargs='?', help='the dump folder (<game>/updates/<version>/{exefs,romfs} inside, or exefs/ and romfs/ directly), or a .nup file')
     s.add_argument('--exefs'); s.add_argument('--romfs'); s.add_argument('--out', help=f'the build folder (default: <dump>/../{TITLE}_native)')
     s.add_argument('--mac-app', action='store_true'); s.add_argument('--ipa', action='store_true'); s.add_argument('--xcode', action='store_true')
     s.add_argument('--windows', action='store_true', help='Windows: the game recompiled for this PC, with its launcher (out/Play Pokopia <version>.cmd)')

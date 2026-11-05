@@ -1,8 +1,8 @@
 // The SDL3 front end (DESIGN D14): keyboard, mouse look and controllers → hle_hid.c, on the window's thread (vk_window.c calls in; SDL delivers a window's input and
 // the controllers' events on the thread that pumps them). Behaviour follows nxnative's Mac front end (dm/host/front_mac.m, MIT, © seedds); written from SDL3's
 // public headers (zlib licence). The mapping itself is front_map.h.
-// Keyboard: player 1 (dm_input_set), the Mac's layout. Mouse, while the game profile has pointer look (hle_hid.c dm_look_on; Pokopia: direct look through look_cam):
-// a click on the picture captures the mouse (relative mode: the pointer hides and stays put), its movement turns the camera by DM_LOOK_SENS degrees per count
+// Keyboard: player 1 (dm_input_set), the Mac's layout, or the map DM_KEYMAP names (play.ps1's Controls tab, front_map.h front_keymap_parse). Mouse, while the
+// game profile has pointer look (hle_hid.c dm_look_on; Pokopia: direct look through look_cam): a click on the picture captures the mouse (relative mode: the pointer hides and stays put), its movement turns the camera by DM_LOOK_SENS degrees per count
 // (default FRONT_LOOK_SENS), the left button is A, the right one B and the middle one the right stick's press; Esc, or the window losing focus, lets it go. Without
 // pointer look the left button is the touch screen. Controllers: each is a player of its own (pad_slots.h: the first is player 1, with the keyboard); DM_PAD_MERGE=1
 // makes every controller player 1, DM_KBD_PLAYER=own keeps player 1 for the keyboard alone. DM_PAD_FACE=labels maps face buttons by their printed letters,
@@ -35,6 +35,7 @@ static struct {
     SDL_Window *win;
     int input_on;                 // the window has focus
     front_kbd kbd;
+    front_keymap keymap;          // the keyboard's actions (DM_KEYMAP, else the default layout)
     uint64_t look_btn;            // the mouse buttons while it looks, ORed into the keyboard's
     int look_cap, mouse_touch;
     float sens, inner, outer;
@@ -59,6 +60,28 @@ static float env_f(const char *k, float def) { const char *e = getenv(k); return
 static void push(void) {
     int32_t lx, ly; front_kbd_axes(&F.kbd, &lx, &ly);
     dm_input_set(F.kbd.btn | F.look_btn, lx, ly, 0, 0);
+}
+
+// ---------- The keyboard map: DM_KEYMAP=<file> (play.ps1's Controls tab), else the default layout; the active one is logged ----------
+static void keymap_load(void) {
+    const char *path = getenv("DM_KEYMAP"); char why[MAX_PATH + 80] = "the default layout";
+    front_keymap_default(&F.keymap);
+    if (path && *path) {
+        FILE *f = fopen(path, "rb"); char *t = NULL; long n = 0;
+        if (f && !fseek(f, 0, SEEK_END) && (n = ftell(f)) > 0 && n < (1 << 16) && !fseek(f, 0, SEEK_SET) && (t = calloc(1, (size_t)n + 1)) && fread(t, 1, (size_t)n, f) == (size_t)n) {
+            int refused = 0, set = front_keymap_parse(&F.keymap, t, &refused);
+            snprintf(why, sizeof why, "%s (%d action%s set%s)", path, set, set == 1 ? "" : "s", refused ? ", some refused: a reserved key or a key used twice" : "");
+        } else {
+            LOG("[RED] DM_KEYMAP: cannot read %s: the default layout", path);
+        }
+        free(t); if (f) fclose(f);
+    }
+    char line[1024]; int o = 0;
+    for (int i = 0; i < FRONT_ACTS && o < (int)sizeof line - 40; i++) {
+        const char *k = F.keymap.key[i] == SDL_SCANCODE_UNKNOWN ? "none" : SDL_GetScancodeName(F.keymap.key[i]);
+        o += snprintf(line + o, sizeof line - (size_t)o, "%s%s %s", i ? ", " : "", front_act_names[i], k && *k ? k : "?");
+    }
+    LOG("front end: keyboard from %s: %s; F11 or Alt+Enter fullscreen", why, line);
 }
 
 // ---------- Mouse look ----------
@@ -310,6 +333,7 @@ static void input_resume(void) {
 
 void front_sdl_start(SDL_Window *win) {
     F.win = win; F.input_on = 1;
+    front_text_window(SDL_GetPointerProperty(SDL_GetWindowProperties(win), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL));   // the software keyboard's box goes over it
     snprintf(F.title, sizeof F.title, "%s", SDL_GetWindowTitle(win) ? SDL_GetWindowTitle(win) : "");
     const char *e = getenv("DM_PAD_MERGE"); F.merge = e && atoi(e);
     e = getenv("DM_KBD_PLAYER"); F.kbd_own = !F.merge && e && !strcmp(e, "own");
@@ -328,8 +352,7 @@ void front_sdl_start(SDL_Window *win) {
     dm_haptics_init(rumble_sink, F.rumble_on);   // the game sees vibration devices once a controller that rumbles is a player's (rumble_route)
     static const char kbd = 0;
     if (F.kbd_own) pad_slot_take(&F.slots, &kbd, "keyboard");   // holds player 1 for good
-    LOG("front end: keyboard WASD stick, arrows D-pad, J/K/U/I = A/B/X/Y, Q/E = L/R, Z/C = ZL/ZR, F/G = stick presses, Return/Tab = +/-, Space shakes; "
-        "F11 or Alt+Enter fullscreen");
+    keymap_load();
     if (dm_look_on()) LOG("front end: mouse look available: click the picture to capture the mouse (left A, right B, middle right-stick press), Esc releases it "
                           "(%.3f degrees per count, DM_LOOK_SENS / DM_LOOK_SCALE)", F.sens);
     LOG("front end: controllers: %s; sticks' dead zones %.2f inner, %.2f outer; rumble %s (gain %.2f, minimum %.2f), motion %s%s", F.merge ? "every controller is player 1 (DM_PAD_MERGE)"
@@ -357,7 +380,7 @@ void front_sdl_event(const SDL_Event *e) {
         if (e->key.scancode == SDL_SCANCODE_ESCAPE) { if (down && F.look_cap) { look_capture(0); F.look_btn = 0; push(); } break; }   // Esc lets the mouse go
         if (down && (e->key.mod & SDL_KMOD_ALT)) break;   // Alt+Enter is the window's (fullscreen), Alt+Tab the system's
         if (F.check && down && e->key.scancode >= SDL_SCANCODE_F5 && e->key.scancode <= SDL_SCANCODE_F7) { check_test(e->key.scancode - SDL_SCANCODE_F5 + 1); break; }
-        if (front_kbd_key(&F.kbd, e->key.scancode, down)) push();
+        if (front_kbd_key_map(&F.kbd, &F.keymap, e->key.scancode, down)) push();
         break;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN:

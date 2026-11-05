@@ -11,6 +11,14 @@ set "PYW="
 where py >nul 2>nul && set "PY=py -3" && set "PYW=pyw -3"
 if not defined PY where python >nul 2>nul && set "PY=python" && set "PYW=pythonw"
 if not defined PY goto nopython
+rem lz4 comes ready-made for a new Python only some months after its release (3.15: pip then wants Microsoft's C++ Build
+rem Tools), so when the newest Python lacks it, an installed 3.14, 3.13 or 3.12 that has it is used instead
+set "ALT="
+if not "%PY%"=="py -3" goto pychosen
+py -3 -c "import lz4" >nul 2>nul && goto pychosen
+for %%V in (3.14 3.13 3.12) do if not defined ALT py -%%V -c "import lz4" >nul 2>nul && set "ALT=%%V"
+if defined ALT set "PY=py -%ALT%" && set "PYW=pyw -%ALT%"
+:pychosen
 >> "%LOG%" echo Python command: %PY%
 rem Python itself, its version and Tk, checked in this window first: a launcher without a console shows nothing when they fail ("call": some
 rem installs put a .bat shim on the PATH)

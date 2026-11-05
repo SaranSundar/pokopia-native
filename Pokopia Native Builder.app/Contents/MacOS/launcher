@@ -1,6 +1,7 @@
 #!/bin/zsh
 # Pokopia Native Builder.app: opens the window (nxs2_gui.py) with a Python 3.12+ that has Tk. The app lives inside the
-# repository folder, so the repository root is three levels up. A double-clicked app gets a bare PATH, hence the list.
+# repository folder, so the repository root is three levels up. A double-clicked app gets a bare PATH, hence the list. The builder's
+# own environment comes first (~/.pokopia-native/venv: Homebrew's Python takes no pip packages of its own; README, "What you need").
 # The window's output goes to ~/Library/Logs/pokopia-native/builder.log; if it stops with an error, a dialog shows the end of it.
 HERE="${0:A:h}"; ROOT="${HERE:h:h:h}"
 LOG="$HOME/Library/Logs/pokopia-native/builder.log"
@@ -8,12 +9,45 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 problem() {   # problem <text>: a stop dialog; the text goes in as an argument, so quotes and backslashes in it are safe
   osascript -e 'on run argv' -e 'display dialog (item 1 of argv) buttons {"OK"} default button 1 with icon stop with title "Pokopia Native Builder"' -e 'end run' "$1" >/dev/null 2>&1
 }
-for p in python3.12 python3.13 python3.14 python3 /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12 "$HOME/.local/bin/python3.12"; do
+# App Translocation: an app opened straight from a downloaded (quarantined) folder runs from a random read-only copy that holds the app
+# alone, so the repository is not around it. Security.framework names the app's original place (SecTranslocateCreateOriginalPathForURL);
+# the window then runs from the real folder. Prints that folder, or nothing when the app is not translocated or the call fails.
+original_root() {   # original_root <python>
+  "$1" - "${HERE:h:h}" 2>/dev/null <<'PY'
+import ctypes, ctypes.util, os, sys
+cf = ctypes.cdll.LoadLibrary(ctypes.util.find_library('CoreFoundation')); sec = ctypes.cdll.LoadLibrary(ctypes.util.find_library('Security'))
+cf.CFURLCreateFromFileSystemRepresentation.restype = ctypes.c_void_p
+cf.CFURLCreateFromFileSystemRepresentation.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_bool]
+cf.CFURLGetFileSystemRepresentation.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_char_p, ctypes.c_long]
+sec.SecTranslocateCreateOriginalPathForURL.restype = ctypes.c_void_p
+sec.SecTranslocateCreateOriginalPathForURL.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+app = os.fsencode(sys.argv[1]); url = cf.CFURLCreateFromFileSystemRepresentation(None, app, len(app), True)
+orig = sec.SecTranslocateCreateOriginalPathForURL(url, None) if url else None
+buf = ctypes.create_string_buffer(4096)
+if orig and cf.CFURLGetFileSystemRepresentation(orig, True, buf, len(buf)) and buf.value != app: print(os.path.dirname(os.fsdecode(buf.value)))
+PY
+}
+for p in "$HOME/.pokopia-native/venv/bin/python3" python3.12 python3.13 python3.14 python3 /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12 "$HOME/.local/bin/python3.12"; do
   P=$(command -v "$p" 2>/dev/null) || P="$p"
   [ -x "$P" ] || continue
   if "$P" -c 'import sys, tkinter; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then
     mkdir -p "${LOG:h}"
     { echo "$(date '+%Y-%m-%d %H:%M:%S') $P $("$P" -c 'import sys, tkinter; print(sys.version.split()[0], "Tk", tkinter.TkVersion)' 2>&1), macOS $(sw_vers -productVersion)"; } > "$LOG"
+    if [ ! -f "$ROOT/nxs2_gui.py" ]; then
+      O=$(original_root "$P")
+      echo "nxs2_gui.py is not beside the app ($HERE), original folder: ${O:-unknown}" >> "$LOG"
+      if [ -n "$O" ] && [ -f "$O/nxs2_gui.py" ]; then ROOT="$O"
+      elif [[ "$HERE" == */AppTranslocation/* ]]; then
+        problem "macOS opened the builder from a temporary copy, away from its folder, and the folder could not be found.
+
+Move the whole unzipped folder somewhere else (for example into Documents), then open Pokopia Native Builder from there. Or in Terminal:
+  xattr -dr com.apple.quarantine <the unzipped folder>"
+        exit 1
+      else
+        problem "Pokopia Native Builder has to stay inside the unzipped pokopia-native folder, next to nxs2_gui.py. Open it from that folder."
+        exit 1
+      fi
+    fi
     cd "$ROOT" && "$P" "$ROOT/nxs2_gui.py" >> "$LOG" 2>&1
     rc=$?
     if [ $rc -ne 0 ]; then
@@ -30,8 +64,10 @@ Please attach it to an issue (it holds no game files)."
 done
 problem "Python 3.12 or newer with Tk was not found.
 
-In Terminal:
+In Terminal, once:
   brew install python@3.12 python-tk@3.12
+  python3.12 -m venv ~/.pokopia-native/venv
+  ~/.pokopia-native/venv/bin/python -m pip install \"capstone>=5,<6\" lz4 fonttools pillow
 
 then open Pokopia Native Builder again."
 exit 1

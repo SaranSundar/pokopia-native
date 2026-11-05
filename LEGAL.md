@@ -60,6 +60,8 @@ tool cannot read it and will not try.
 - `windows/`: MIT; the components it builds in or ships beside it are listed with their licences in
   `windows/bin/THIRD-PARTY-NOTICES.txt` of the Windows download (LLVM: Apache-2.0 with LLVM exception; SDL3: zlib;
   astc-encoder and SPIRV-Tools: Apache-2.0; bc7enc_rdo: MIT; nxnative: MIT).
+- `nupread.py`: this project's own MIT code, written from the NUP format specification (github.com/a55uka/nup,
+  `SPEC.md`, MIT). It only reads containers of already-decrypted dumps; no keys are involved.
 - Everything else here: MIT (`LICENSE`), the same licence as nxnative.
 
 ## Trademarks and affiliation
@@ -70,5 +72,11 @@ project is an independent, non-commercial fan project. It is not affiliated with
 them, and the names are used only to say which game it is for.
 
 The screenshots in the README show the game only to document the result. They are not game assets for reuse.
+
+## Rights holders
+
+If you hold rights in anything in this repository or its releases and want it changed or removed, open an issue on
+this repository (or contact the account that owns it through GitHub) and say which files. It will be taken care of
+promptly, without a formal notice needed.
 
 If you fork this project, keep these rules: they are what makes it publishable.

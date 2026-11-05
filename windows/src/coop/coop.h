@@ -180,6 +180,23 @@ int coop_vnet_poll(coop_node *n, coop_pollfd *fds, uint64_t nfds, int timeout_ms
 // Select over Horizon's fd_set (1024 bits as u64 words); every set descriptor must be virtual. Rewrites the sets to the ready ones.
 int coop_vnet_select(coop_node *n, int nfds, uint64_t *rd, uint64_t *wr, uint64_t *ex, int timeout_ms);
 
+// ---------- "Interact everywhere" (coop_interact.c, docs/coop-interact.md): Link Play in story areas without Spectator Mode's restrictions.
+// DM_COOP_INTERACT=1 turns it on. A port calls coop_interact_site(id, x0..x30) right before the instruction at a site runs; a register the
+// callback writes takes effect. Every player in a session must have the same setting: a port adds COOP_INTERACT_MOD to its mods fingerprint ----------
+enum { COOP_SITE_MASK = 1 };
+typedef struct coop_site {
+    const char *build;   // main's build ID, its first 32 hex digits (the rewriter's key)
+    uint32_t fn, off;    // the function holding the site and the site, main offsets
+    uint32_t word;       // the instruction there, checked before attaching
+    int id;              // COOP_SITE_*
+    const char *what;
+} coop_site;
+#define COOP_INTERACT_MOD "Interact everywhere"
+int coop_interact_on(void);
+int coop_interact_sites(const char *main_build, const coop_site **out);   // the sites of this main build (a run of them) and their count; 0: unsupported
+void coop_interact_site(int id, uint64_t *x);
+uint64_t coop_mods_add(uint64_t h, const char *name);   // a mods fingerprint (0: none so far) with one more named mod
+
 #ifdef __cplusplus
 }
 #endif
