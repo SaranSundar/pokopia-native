@@ -33,6 +33,7 @@ static void refresh_size(void) {
 static unsigned __stdcall window_main(void *arg) {
     (void)arg;
     SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "0");
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");   // the name box takes the focus and still hears the controller; the game itself gets nothing while unfocused (front_sdl.c's input_on)
     front_sdl_lock(); int vok = SDL_Init(SDL_INIT_VIDEO); front_sdl_unlock();
     if (!vok) { VKRED("SDL_Init(VIDEO) failed: %s", SDL_GetError()); g_w.fail = 1; SetEvent(g_w.ready); return 0; }
     if (!SDL_Vulkan_LoadLibrary(NULL)) { VKRED("SDL cannot load the Vulkan loader: %s", SDL_GetError()); g_w.fail = 1; SetEvent(g_w.ready); return 0; }

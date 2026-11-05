@@ -18,3 +18,5 @@ float dm_look_sens(float def);
 // 1 OK (out holds the UTF-8 text), 0 cancelled, -1 no window to show it over
 int front_text_input(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap);
 void front_text_window(void *hwnd);   // front_sdl.c: the game window (Windows HWND) the box belongs to; NULL when it closes
+// front_sdl.c, on a controller's button press: while a box is up, A, B or + accepts it (an empty box takes a default text). 1 = a box was up and took the press
+int front_text_pad(uint64_t buttons);

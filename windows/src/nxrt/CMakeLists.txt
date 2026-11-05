@@ -81,6 +81,12 @@ add_test(NAME nxrt.nvn COMMAND nxrt-tests-nvn)
 # M4: audio pacing (the silent sink on the guest clock) and the NTFS save commit killed at every step (DESIGN D13)
 nxrt_executable(nxrt-tests-audio tests/test_audio.c)
 add_test(NAME nxrt.audio COMMAND nxrt-tests-audio)
+# The software keyboard's box answers a controller (front_text_pad): a real box opens over a stand-in window for a moment
+if(WIN32)   # a Win32 dialog; Linux has nxrt.text_input
+  nxrt_executable(nxrt-tests-text-box-win tests/test_text_box_win.c)
+  add_test(NAME nxrt.text_box_win COMMAND nxrt-tests-text-box-win)
+  set_tests_properties(nxrt.text_box_win PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 nxrt_executable(nxrt-tests-save tests/test_save.c)
 add_test(NAME nxrt.save COMMAND nxrt-tests-save)
 # M5 track A: nxnative's NVN recording layer against the null backend (docs/m5-record-shaders.md)

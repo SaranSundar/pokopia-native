@@ -75,13 +75,16 @@ endif()
 
 # Tests (docs/m5-vulkan.md §6): skipped (77) without a Vulkan GPU or without the data they need
 set(NXRT_VK_TEST_INC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} "${_vk_inc}" "${NXRT_SDL3_DIR}/include" ${CMAKE_CURRENT_SOURCE_DIR}/../gfx ${CMAKE_SOURCE_DIR}/src/s2tex)
-foreach(t device dirty tex astc pcache replay)
+foreach(t device dirty tex astc pcache replay windows)
   nxrt_executable(nxrt-tests-vk-${t} tests/t_vk_${t}.c)
   target_include_directories(nxrt-tests-vk-${t} PRIVATE ${NXRT_VK_TEST_INC})
   target_compile_options(nxrt-tests-vk-${t} PRIVATE -fms-extensions -Wno-sign-compare -Wno-missing-field-initializers -Wno-missing-braces)
   add_test(NAME nxrt.vk_${t} COMMAND nxrt-tests-vk-${t})
   set_tests_properties(nxrt.vk_${t} PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache")
 endforeach()
+# The pool windows once more, side by side (no sparse aliasing): a range across a window edge is refused
+add_test(NAME nxrt.vk_windows_side COMMAND nxrt-tests-vk-windows)
+set_tests_properties(nxrt.vk_windows_side PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NXRT_VK_NO_ALIAS=1;NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache")
 target_link_libraries(nxrt-tests-vk-astc PRIVATE nxrt_astcenc nxrt_bc7enc)
 target_sources(nxrt-tests-vk-pcache PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_fill_comp.h)
 target_sources(nxrt-tests-vk-replay PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_cull_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_bind_frag.h

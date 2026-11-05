@@ -380,6 +380,9 @@ void front_sdl_event(const SDL_Event *e) {
         if (e->key.scancode == SDL_SCANCODE_ESCAPE) { if (down && F.look_cap) { look_capture(0); F.look_btn = 0; push(); } break; }   // Esc lets the mouse go
         if (down && (e->key.mod & SDL_KMOD_ALT)) break;   // Alt+Enter is the window's (fullscreen), Alt+Tab the system's
         if (F.check && down && e->key.scancode >= SDL_SCANCODE_F5 && e->key.scancode <= SDL_SCANCODE_F7) { check_test(e->key.scancode - SDL_SCANCODE_F5 + 1); break; }
+#ifndef _WIN32   // a name box waiting in the game window (no dialog could show: text_input_linux.c): the keys of A, B and + answer it
+        if (down && front_text_pad(front_keymap_button(&F.keymap, e->key.scancode))) break;
+#endif
         if (front_kbd_key_map(&F.kbd, &F.keymap, e->key.scancode, down)) push();
         break;
     }
@@ -405,7 +408,11 @@ void front_sdl_event(const SDL_Event *e) {
         break;
     case SDL_EVENT_GAMEPAD_ADDED: pad_added(e->gdevice.which); break;
     case SDL_EVENT_GAMEPAD_REMOVED: pad_removed(e->gdevice.which); break;
-    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP: { fpad *p = pad_by_id(e->gbutton.which); if (p) pad_read(p); break; }
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+        fpad *p = pad_by_id(e->gbutton.which);
+        if (p && e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && front_text_pad(pad_buttons(p))) break;   // the name box is up and has the focus: a player without a keyboard accepts it here
+        if (p) pad_read(p);
+        break; }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: { fpad *p = pad_by_id(e->gaxis.which); if (p) pad_read(p); break; }
     case SDL_EVENT_GAMEPAD_REMAPPED: { fpad *p = pad_by_id(e->gdevice.which); if (p) pad_read(p); break; }
     case SDL_EVENT_GAMEPAD_SENSOR_UPDATE: pad_sensor(&e->gsensor); break;

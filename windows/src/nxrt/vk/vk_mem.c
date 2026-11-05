@@ -13,14 +13,17 @@ void dm_guest_write_prepare(void *addr, size_t len);   // host/crash.c: unprotec
 int dm_guest_readable_run(uint64_t a, uint64_t *end);   // host/hle_svc.c: what VirtualQuery tells on Windows
 #endif
 
-enum { PAGE = 4096, GRAN = 2u << 20, HOT_STREAK = 3, HOT_COOL_FRAMES = 240, MAXPOOL = 4096, RUN_MAX = 1024 };
+enum { PAGE = 4096, GRAN = 2u << 20, HOT_STREAK = 3, HOT_COOL_FRAMES = 240, MAXPOOL = 4096, RUN_MAX = 1024, MAXWIN = 32 };
+// A pool larger than the device's largest buffer (AMD: 2 GiB; the game's biggest pool is 3.4 GiB) gets several buffers, windows over it. With sparse
+// binding and aliasing the windows overlap and share the same memory, so any range up to the overlap fits in one of them; otherwise they are side by side.
 typedef struct {
     uintptr_t lo, hi, base;       // the pool [lo, hi) as given; base = lo rounded down to a page
     uint64_t size, npages;        // bytes the buffer covers (from base, whole pages)
     const void *key;
-    VkBuffer buf; int sparse;
-    vk_alloc *gran; uint64_t ngran, bound;   // sparse: one allocation per bound granule
-    vk_alloc mem;                 // not sparse: one allocation for all of it
+    VkBuffer buf[MAXWIN]; uint64_t win_lo[MAXWIN], win_n[MAXWIN]; int nwin;   // window k covers [win_lo, win_lo + win_n) of the pool, from base
+    int sparse;
+    vk_alloc *gran; uint64_t ngran, bound;   // sparse: one allocation per bound granule, bound into every window that covers it
+    vk_alloc mem[MAXWIN];         // not sparse: one allocation per window
     const void *span;             // the dirty tracker's range (registered by the recording layer right after gfx_pool_add)
     uint64_t *up;                 // per page: the tracker's stamp when its device copy was taken (0 = never copied)
     uint32_t *last_dirty; uint8_t *streak, *hot;   // hot pages: written in HOT_STREAK consecutive frames, left writable and copied at every use
@@ -34,6 +37,7 @@ static SRWLOCK g_lk = SRWLOCK_INIT;
 static uint64_t g_frame = 1;
 static VkBufferUsageFlags g_usage;
 static VkDeviceSize g_gran = GRAN, g_max_buffer;
+static int g_alias;   // overlapping windows: sparse binding with aliasing (NXRT_VK_NO_ALIAS=1 turns them off, for tests)
 
 static struct {
     VkBuffer buf; vk_alloc mem; uint8_t *map; VkDeviceSize size, head, tail; int wrapped;
@@ -126,10 +130,13 @@ static pool_t_ *pool_find(uintptr_t a, uint64_t len) {   // caller holds g_lk (s
     return NULL;
 }
 
+static int win_of(const pool_t_ *p, uint64_t off) { int k = p->nwin - 1; while (k > 0 && p->win_lo[k] > off) k--; return k; }   // the last window starting at or before off
+static int win_for(const pool_t_ *p, uint64_t off, uint64_t n) { int k = win_of(p, off); return off + n <= p->win_lo[k] + p->win_n[k] ? k : -1; }   // the window holding all of it, or -1
+
 static void pool_free(pool_t_ *p) {
-    if (p->buf) vkDestroyBuffer(g_vk.dev, p->buf, NULL);
+    for (int k = 0; k < p->nwin; k++) if (p->buf[k]) vkDestroyBuffer(g_vk.dev, p->buf[k], NULL);
     if (p->sparse) { for (uint64_t g = 0; g < p->ngran; g++) vk_free_mem(&p->gran[g]); free(p->gran); }
-    else vk_free_mem(&p->mem);
+    else for (int k = 0; k < p->nwin; k++) vk_free_mem(&p->mem[k]);
     free(p->up); free(p->last_dirty); free(p->streak); free(p->hot); free((void *)p->gpu_pending); free(p->committed); free(p);
 }
 static void pool_free_cb(void *arg) { pool_free(arg); }
@@ -140,22 +147,41 @@ void vkm_pool_add(const void *mem, uint64_t size) {
     p->lo = (uintptr_t)mem; p->hi = p->lo + size; p->key = mem;
     p->base = p->lo & ~(uintptr_t)(PAGE - 1);
     p->size = ((p->hi - p->base) + PAGE - 1) & ~(uint64_t)(PAGE - 1); p->npages = p->size / PAGE;
-    if (g_max_buffer && p->size > g_max_buffer) { VKRED("memory pool %p+%#llx exceeds the device's largest buffer (%#llx): not mirrored", mem, (unsigned long long)size, (unsigned long long)g_max_buffer); free(p); return; }
     p->up = calloc(p->npages, sizeof *p->up); p->last_dirty = calloc(p->npages, sizeof *p->last_dirty); p->streak = calloc(p->npages, 1); p->hot = calloc(p->npages, 1); p->gpu_pending = calloc(p->npages, 1);
     p->committed = calloc(p->npages, 1);
     p->sparse = g_vk.has.sparse_buffer;
-    VkDeviceSize bsize = p->sparse ? (p->size + g_gran - 1) / g_gran * g_gran : p->size;
-    VkBufferCreateInfo bci = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, p->sparse ? (VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT) : 0,
-                              bsize, g_usage, VK_SHARING_MODE_EXCLUSIVE, 0, NULL};
-    if (!p->up || !p->hot || !p->committed || vkCreateBuffer(g_vk.dev, &bci, NULL, &p->buf) != VK_SUCCESS) { VKRED("cannot create the buffer of memory pool %p+%#llx", mem, (unsigned long long)size); pool_free(p); return; }
+    VkDeviceSize bsize = p->sparse ? (p->size + g_gran - 1) / g_gran * g_gran : p->size, w = bsize, ov = 0;
+    if (g_max_buffer && bsize > g_max_buffer) {   // windows start on granules (or pages), so a granule never straddles two
+        w = p->sparse ? g_max_buffer / g_gran * g_gran : g_max_buffer / PAGE * PAGE;
+        if (p->sparse && g_alias) { ov = w / 4 < (256ull << 20) ? w / 4 : (256ull << 20); ov = ov / g_gran * g_gran; }
+    }
+    for (uint64_t at = 0; w > ov && p->nwin < MAXWIN; at += w - ov) {
+        p->win_lo[p->nwin] = at; p->win_n[p->nwin] = bsize - at < w ? bsize - at : w; p->nwin++;
+        if (at + w >= bsize) break;
+    }
+    if (!p->nwin || p->win_lo[p->nwin - 1] + p->win_n[p->nwin - 1] < bsize) {
+        VKRED("memory pool %p+%#llx does not fit in %d buffers of the device's largest size (%#llx): not mirrored", mem, (unsigned long long)size, MAXWIN, (unsigned long long)g_max_buffer);
+        p->nwin = 0; pool_free(p); return;
+    }
+    VkBufferCreateFlags fl = p->sparse ? VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT | (ov ? VK_BUFFER_CREATE_SPARSE_ALIASED_BIT : 0) : 0;
+    int ok = p->up && p->hot && p->committed;
+    for (int k = 0; ok && k < p->nwin; k++) {
+        VkBufferCreateInfo bci = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, fl, p->win_n[k], g_usage, VK_SHARING_MODE_EXCLUSIVE, 0, NULL};
+        ok = vkCreateBuffer(g_vk.dev, &bci, NULL, &p->buf[k]) == VK_SUCCESS;
+        if (ok) vk_name((uint64_t)p->buf[k], VK_OBJECT_TYPE_BUFFER, "nvn memory pool");
+    }
+    if (!ok) { VKRED("cannot create the buffer of memory pool %p+%#llx", mem, (unsigned long long)size); pool_free(p); return; }
     if (p->sparse) { p->ngran = bsize / g_gran; p->gran = calloc(p->ngran, sizeof *p->gran); for (uint64_t g = 0; g < p->ngran; g++) p->gran[g].block = -1; }
     else {   // without sparse binding: all of it now
-        VkMemoryRequirements mr; vkGetBufferMemoryRequirements(g_vk.dev, p->buf, &mr);
-        if (vk_alloc_mem(&mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &p->mem)) { VKRED("no device memory for memory pool %p+%#llx", mem, (unsigned long long)size); pool_free(p); return; }
-        vkBindBufferMemory(g_vk.dev, p->buf, p->mem.mem, p->mem.off);
+        for (int k = 0; k < p->nwin; k++) {
+            VkMemoryRequirements mr; vkGetBufferMemoryRequirements(g_vk.dev, p->buf[k], &mr);
+            if (vk_alloc_mem(&mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &p->mem[k])) { VKRED("no device memory for memory pool %p+%#llx", mem, (unsigned long long)size); pool_free(p); return; }
+            vkBindBufferMemory(g_vk.dev, p->buf[k], p->mem[k].mem, p->mem[k].off);
+        }
         p->bound = p->size;
     }
-    vk_name((uint64_t)p->buf, VK_OBJECT_TYPE_BUFFER, "nvn memory pool");
+    if (p->nwin > 1) VKLOG("memory pool %p+%#llx: %d buffers of up to %llu MB%s (the device's largest buffer is %llu MB)", mem, (unsigned long long)size, p->nwin,
+                           (unsigned long long)(w >> 20), ov ? ", overlapping by the same memory" : ", side by side", (unsigned long long)(g_max_buffer >> 20));
     AcquireSRWLockExclusive(&g_lk);
     if (g_npool < MAXPOOL) { g_pool[g_npool++] = p; qsort(g_pool, (size_t)g_npool, sizeof *g_pool, pool_cmp); p = NULL; }
     ReleaseSRWLockExclusive(&g_lk);
@@ -171,12 +197,26 @@ void vkm_pool_del(const void *mem) {
     if (p) vk_retire(pool_free_cb, p);   // submissions recorded so far may still read it
 }
 
+// The window of p holding [addr, addr+len): buffer and offset, or 0 when the range spans two windows that do not overlap that far (logged once)
+static int pool_window(pool_t_ *p, uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off) {
+    uint64_t o = addr - p->base; int k = win_for(p, o, len ? len : 1);
+    if (k < 0) {
+        static _Atomic int said; if (!atomic_exchange(&said, 1))
+            VKRED("a range %#llx+%#llx spans two of memory pool %p's buffers (the device's largest buffer is %llu MB): it reads zeros (later ones are not logged)",
+                  (unsigned long long)addr, (unsigned long long)len, p->key, (unsigned long long)(g_max_buffer >> 20));
+        return 0;
+    }
+    if (buf) *buf = p->buf[k];
+    if (off) *off = o - p->win_lo[k];
+    return 1;
+}
+
 int vkm_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off) {
     AcquireSRWLockShared(&g_lk);
     pool_t_ *p = pool_find((uintptr_t)addr, len ? len : 1);
-    if (p) { if (buf) *buf = p->buf; if (off) *off = addr - p->base; }
+    int ok = p && pool_window(p, addr, len, buf, off);
     ReleaseSRWLockShared(&g_lk);
-    return p != NULL;
+    return ok;
 }
 
 // Sparse backing for [o, o+n) of the buffer: unbound granules get memory and are bound before anything is recorded against them (a bind is a queue
@@ -184,19 +224,28 @@ int vkm_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off) {
 static int pool_bind(pool_t_ *p, uint64_t o, uint64_t n) {
     if (!p->sparse) return 0;
     uint64_t g0 = o / g_gran, g1 = (o + n + g_gran - 1) / g_gran;
-    VkMemoryRequirements mr; vkGetBufferMemoryRequirements(g_vk.dev, p->buf, &mr);
+    VkMemoryRequirements mr; vkGetBufferMemoryRequirements(g_vk.dev, p->buf[0], &mr);
     VkMemoryRequirements gr = {g_gran, mr.alignment, mr.memoryTypeBits};
     for (;;) {
-        VkSparseMemoryBind binds[64]; int nb = 0, rc = 0;
-        for (uint64_t g = g0; g < g1 && g < p->ngran && nb < 64; g++) {
+        uint64_t fresh[32]; int nf = 0, rc = 0;   // granules backed in this round; each is bound into every window that covers it (two where windows overlap)
+        for (uint64_t g = g0; g < g1 && g < p->ngran && nf < 32; g++) {
             if (p->gran[g].mem) continue;
             if (vk_alloc_mem(&gr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &p->gran[g])) { VKRED("no device memory to back pool %p at %#llx", p->key, (unsigned long long)(g * g_gran)); rc = -1; break; }
-            binds[nb++] = (VkSparseMemoryBind){g * g_gran, g_gran, p->gran[g].mem, p->gran[g].off, 0};
+            fresh[nf++] = g;
             p->bound += g_gran;
         }
-        if (!nb) return rc;
-        VkSparseBufferMemoryBindInfo bi = {p->buf, (uint32_t)nb, binds};
-        VkBindSparseInfo si = {VK_STRUCTURE_TYPE_BIND_SPARSE_INFO, NULL, 0, NULL, 1, &bi, 0, NULL, 0, NULL, 0, NULL};
+        if (!nf) return rc;
+        VkSparseMemoryBind binds[64]; VkSparseBufferMemoryBindInfo bis[MAXWIN]; int nb = 0, nbi = 0;
+        for (int k = 0; k < p->nwin; k++) {
+            int first = nb;
+            for (int i = 0; i < nf; i++) {
+                uint64_t at = fresh[i] * g_gran;
+                if (at >= p->win_lo[k] && at < p->win_lo[k] + p->win_n[k] && nb < 64)
+                    binds[nb++] = (VkSparseMemoryBind){at - p->win_lo[k], g_gran, p->gran[fresh[i]].mem, p->gran[fresh[i]].off, 0};
+            }
+            if (nb > first) bis[nbi++] = (VkSparseBufferMemoryBindInfo){p->buf[k], (uint32_t)(nb - first), binds + first};
+        }
+        VkBindSparseInfo si = {VK_STRUCTURE_TYPE_BIND_SPARSE_INFO, NULL, 0, NULL, (uint32_t)nbi, bis, 0, NULL, 0, NULL, 0, NULL};
         VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; VkFence f; vkCreateFence(g_vk.dev, &fci, NULL, &f);
         AcquireSRWLockExclusive(&g_vk.qlock);
         VkResult r = vkQueueBindSparse(g_vk.q, 1, &si, f);
@@ -243,15 +292,27 @@ static int group_clean(pool_t_ *p, uint64_t g0) {
     return !nvn_dirty_since_span(p->span, (const void *)(p->base + g0 * PAGE), 64 * PAGE, lo);
 }
 
-typedef struct { VkBufferCopy r[256]; int n; VkBuffer src; } copy_batch;
-static void batch_flush(copy_batch *b, pool_t_ *p, VkCommandBuffer cb) { if (b->n) vkCmdCopyBuffer(cb, b->src, p->buf, (uint32_t)b->n, b->r); b->n = 0; }
+typedef struct { VkBufferCopy r[256]; int n; VkBuffer src, dst; } copy_batch;
+static void batch_flush(copy_batch *b, VkCommandBuffer cb) { if (b->n) vkCmdCopyBuffer(cb, b->src, b->dst, (uint32_t)b->n, b->r); b->n = 0; }
+// [off, off+n) of the pool from src at so: one copy per window it crosses (windows that overlap share their memory, so one of them is enough)
+static void batch_put(copy_batch *b, pool_t_ *p, VkCommandBuffer cb, VkBuffer src, VkDeviceSize so, uint64_t off, uint64_t n) {
+    while (n) {
+        int k = win_of(p, off); uint64_t end = p->win_lo[k] + p->win_n[k], m = off + n <= end ? n : end - off;
+        if (b->n == 256 || (b->n && (b->src != src || b->dst != p->buf[k]))) batch_flush(b, cb);
+        b->src = src; b->dst = p->buf[k]; b->r[b->n++] = (VkBufferCopy){so, off - p->win_lo[k], m};
+        so += m; off += m; n -= m;
+    }
+}
+static void pool_fill_zero(pool_t_ *p, VkCommandBuffer cb, uint64_t off, uint64_t n) {
+    while (n) { int k = win_of(p, off); uint64_t end = p->win_lo[k] + p->win_n[k], m = off + n <= end ? n : end - off; vkCmdFillBuffer(cb, p->buf[k], off - p->win_lo[k], m, 0); off += m; n -= m; }
+}
 
 // Copies the pages among [p0, p1) of pool p whose device copy is behind into cb, until budget bytes; *stop_at (optional) is where it stopped.
 // Order per run (nxnative's): take the stamp, write-protect, then read guest memory: a write after the protection faults and is seen at the next check
 static uint64_t pool_sync(pool_t_ *p, uint64_t p0, uint64_t p1, VkCommandBuffer cb, uint64_t budget, uint64_t *stop_at) {
     if (!p->span) p->span = nvn_dirty_span((const void *)p->lo, p->hi - p->lo);
     if (p1 > p->npages) p1 = p->npages;
-    copy_batch b; b.n = 0; b.src = VK_NULL_HANDLE;
+    copy_batch b; b.n = 0; b.src = b.dst = VK_NULL_HANDLE;
     uint64_t queued = 0, t0 = now_ns(), pg = p0;
     while (pg < p1 && queued < budget) {
         if (!(pg & 63) && pg + 64 <= p1 && group_clean(p, pg)) { pg += 64; continue; }
@@ -278,7 +339,7 @@ static uint64_t pool_sync(pool_t_ *p, uint64_t p0, uint64_t p1, VkCommandBuffer 
 #endif
             if (rend < pg) pg = rend > run0 ? rend : run0 + 1;
             if (!readable) {
-                if (budget == UINT64_MAX) { if (pool_bind(p, run0 * PAGE, (pg - run0) * PAGE)) break; batch_flush(&b, p, cb); vkCmdFillBuffer(cb, p->buf, run0 * PAGE, (pg - run0) * PAGE, 0); }
+                if (budget == UINT64_MAX) { if (pool_bind(p, run0 * PAGE, (pg - run0) * PAGE)) break; batch_flush(&b, cb); pool_fill_zero(p, cb, run0 * PAGE, (pg - run0) * PAGE); }
                 else if (rend > pg) pg = rend < p1 ? rend : p1;
                 atomic_fetch_add(&s_uncommitted, pg - run0);
                 continue;
@@ -299,12 +360,11 @@ static uint64_t pool_sync(pool_t_ *p, uint64_t p0, uint64_t p1, VkCommandBuffer 
         if (!dst) { pg = run0; break; }
         guest_copy(dst, (const void *)(p->base + off), (size_t)n);
         for (uint64_t k = run0; k < pg; k++) p->up[k] = stamp;
-        if (b.n == 256 || (b.n && b.src != sb)) batch_flush(&b, p, cb);
-        b.src = sb; b.r[b.n++] = (VkBufferCopy){so, off, n};
+        batch_put(&b, p, cb, sb, so, off, n);
         queued += n;
         atomic_fetch_add(&s_up_pages, pg - run0); atomic_fetch_add(&s_up_runs, 1);
     }
-    batch_flush(&b, p, cb);
+    batch_flush(&b, cb);
     if (stop_at) *stop_at = pg;
     atomic_fetch_add(&s_up_bytes, queued); atomic_fetch_add(&s_up_ns, now_ns() - t0);
     return queued;
@@ -313,10 +373,9 @@ static uint64_t pool_sync(pool_t_ *p, uint64_t p0, uint64_t p1, VkCommandBuffer 
 int vkm_use(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off) {
     AcquireSRWLockShared(&g_lk);
     pool_t_ *p = pool_find((uintptr_t)addr, len ? len : 1);
+    int ok = p && pool_window(p, addr, len, buf, off);
     ReleaseSRWLockShared(&g_lk);
-    if (!p) return 0;
-    if (buf) *buf = p->buf;
-    if (off) *off = addr - p->base;
+    if (!ok) return 0;
     VkCommandBuffer cb = vks_upload_cb();
     if (!cb) return 1;
     atomic_fetch_add(&s_sync, 1);
@@ -447,6 +506,9 @@ int vkm_init(void) {
     VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &m4};
     vkGetPhysicalDeviceProperties2(g_vk.pd, &p2);
     g_max_buffer = m4.maxBufferSize;
+    e = getenv("NXRT_VK_MAX_BUFFER_MB");   // test switch: pretend the device's largest buffer is smaller (AMD's 2048, to try its pool windows on another card)
+    if (e && atoi(e) > 0 && ((VkDeviceSize)atoi(e) << 20) < g_max_buffer) g_max_buffer = (VkDeviceSize)atoi(e) << 20;
+    g_alias = g_vk.has.sparse_aliased && !(getenv("NXRT_VK_NO_ALIAS") && atoi(getenv("NXRT_VK_NO_ALIAS")));
     if (g_vk.has.sparse_buffer) {   // the granule is a whole number of the device's sparse blocks
         VkBufferCreateInfo bci = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT, GRAN, g_usage, VK_SHARING_MODE_EXCLUSIVE, 0, NULL};
         VkBuffer b; VkMemoryRequirements mr;
@@ -460,8 +522,9 @@ int vkm_init(void) {
     vkBindBufferMemory(g_vk.dev, g_st.buf, g_st.mem.mem, g_st.mem.off);
     g_st.map = g_st.mem.map; g_st.size = ring;
     vk_name((uint64_t)g_st.buf, VK_OBJECT_TYPE_BUFFER, "staging ring");
-    VKLOG("memory: staging ring %llu MB, upload budget %llu MB a frame, pools %s (granule %llu KB), largest buffer %.0f GB",
-          (unsigned long long)(ring >> 20), (unsigned long long)(g_budget >> 20), g_vk.has.sparse_buffer ? "sparse" : "fully backed", (unsigned long long)(g_gran >> 10), g_max_buffer / 1073741824.0);
+    VKLOG("memory: staging ring %llu MB, upload budget %llu MB a frame, pools %s (granule %llu KB), largest buffer %llu MB (maxBufferSize %llu MB), sparse aliasing %s%s",
+          (unsigned long long)(ring >> 20), (unsigned long long)(g_budget >> 20), g_vk.has.sparse_buffer ? "sparse" : "fully backed", (unsigned long long)(g_gran >> 10),
+          (unsigned long long)(g_max_buffer >> 20), (unsigned long long)(m4.maxBufferSize >> 20), g_vk.has.sparse_aliased ? "yes" : "no", g_alias ? "" : " (pool windows side by side)");
     return 0;
 }
 
