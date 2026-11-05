@@ -1,0 +1,170 @@
+name: Linux / Steam Deck beta report
+description: "How the Linux beta ran on your Steam Deck or Linux PC (it worked, or it didn't: both help)"
+title: "[Linux beta] <your device>: <worked / what went wrong>"
+labels: ["linux-beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Fill in what you got to; "didn't get there" is a fine answer. Everything after the build is from your
+        first play session.
+
+        **Please never attach** your save, anything from your dump or your build folder, shader files, or console keys. The report
+        script below leaves all of those out by itself.
+
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      options:
+        - Steam Deck LCD
+        - Steam Deck OLED
+        - Linux desktop
+        - Linux laptop
+        - Other handheld
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Operating system, GPU and driver
+      description: For example "SteamOS 3.7, Deck APU, Mesa 25.2" or "CachyOS, GTX 1660, NVIDIA 580.95". The report file has the details.
+      placeholder: SteamOS 3.7, Deck APU, Mesa 25.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: game_version
+    attributes:
+      label: Game version of your dump
+      options:
+        - "2.0.1"
+        - "1.0.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: build
+    attributes:
+      label: Did setup and the build finish?
+      options:
+        - "Yes"
+        - "No: setup stopped with an error"
+        - "No: the build stopped with an error"
+        - "No: it was still running when I gave up"
+    validations:
+      required: true
+
+  - type: input
+    id: build_time
+    attributes:
+      label: How long did the build take?
+      description: Roughly, from "build" to the end. Note if you stopped it and ran it again.
+      placeholder: about 40 minutes
+
+  - type: dropdown
+    id: title
+    attributes:
+      label: The title screen
+      options:
+        - Showed correctly
+        - Showed, with graphics problems
+        - Black or white screen
+        - The game closed or crashed before it
+        - Didn't get there
+    validations:
+      required: true
+
+  - type: dropdown
+    id: field
+    attributes:
+      label: In the game (after the title)
+      options:
+        - Played correctly
+        - Played, with graphics problems
+        - Froze or crashed
+        - Didn't get there
+    validations:
+      required: true
+
+  - type: dropdown
+    id: smoothness
+    attributes:
+      label: How smooth was it?
+      options:
+        - Steady 60 fps
+        - Mostly smooth, short hitches
+        - Choppy (about 20 to 40 fps)
+        - Very slow (below 20 fps)
+        - Didn't get there
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: controls
+    attributes:
+      label: What worked for controls?
+      options:
+        - label: The Steam Deck's own controls, in Desktop Mode
+        - label: The Steam Deck's own controls, in Game Mode
+        - label: An external controller
+        - label: Keyboard and mouse
+        - label: The name box (typing your character's name)
+
+  - type: dropdown
+    id: sound
+    attributes:
+      label: Sound
+      options:
+        - Worked
+        - Crackled or stuttered
+        - No sound
+        - Didn't get there
+
+  - type: dropdown
+    id: saves
+    attributes:
+      label: Saves
+      options:
+        - A new game saved, and loaded again after a restart
+        - My imported save loaded
+        - Something went wrong with saving or loading (say below)
+        - Didn't try
+
+  - type: textarea
+    id: problems
+    attributes:
+      label: What went wrong, or looked wrong?
+      description: What you did, what happened and when, and any message on screen or in the terminal (copy the text if you can).
+      placeholder: |
+        In the first town, the water flickered white when the camera turned...
+        The build stopped at "recompiling the game's code" with: ...
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: |
+        Drag files into this box.
+        1. **The report file (please always):** in a terminal, run
+           `~/pokopia-native-*/linux/report.sh <your build folder>`, check the list it shows, and attach the
+           `pokopia-report-<date>.tar.gz` it puts in your home folder. It holds logs and facts about your computer, no game files.
+        2. **Screenshots** of anything that looks wrong.
+        3. **A short screen recording** if you made one. Files over 10 MB won't attach here: link it instead (an unlisted video).
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: If the game crashed when a new area loaded, did it help to start it once with `NXRT_VK_ROBUST=1` in front of the play command? Anything else you noticed is welcome too.
+
+  - type: checkboxes
+    id: nothing_private
+    attributes:
+      label: Before you send
+      options:
+        - label: I attached no save, no game files, no build folder and no keys
+          required: true
