@@ -1560,7 +1560,7 @@ def main():
     s = sub.add_parser('run'); s.add_argument('build'); s.add_argument('--lang', default='en-US')
     s.add_argument('env', nargs='*', help='Mac: extra DM_* switches, KEY=VALUE; Windows: switches for play.ps1; Linux: switches for play.sh')
     s.set_defaults(f=run_windows if WIN else run_linux if LINUX else run_mac)
-    s = sub.add_parser('import-save', help='Windows: a save from Eden, the phone or a Mac becomes the one the Windows game plays (the old one is kept)')
+    s = sub.add_parser('import-save', help='Windows and Linux: a save from Eden, the phone or a Mac becomes the one the game plays (the old one is kept)')
     s.add_argument('build'); s.add_argument('folder', nargs='?', help='a folder holding B00, G00 and S00 (or a save/ folder with them)')
     s.add_argument('--eden', action='store_true', help="Eden's own save of this game (read only)"); s.add_argument('--force', action='store_true')
     s.set_defaults(f=import_save)

@@ -127,3 +127,6 @@ so you can read them first. Send that file, and tell me:
 - **No window, or "no Vulkan loader"**: install your distribution's Vulkan loader and Mesa Vulkan drivers (`vulkan-icd-loader` and `vulkan-radeon` on
   Arch, `libvulkan1` and `mesa-vulkan-drivers` on Debian and Ubuntu).
 - **`doctor` says the CPU lacks AVX2**: the recompiled game needs it; that CPU cannot run it.
+- **The game closes by itself, or the picture breaks up, when a new place loads**: start it once with the driver's bounds checks on and say in the
+  report whether that helped: `NXRT_VK_ROBUST=1 ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`
+- **The build stops with "shorter than its own header says"**: the dump's `exefs` was copied in text mode; copy it again in binary mode.

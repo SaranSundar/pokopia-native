@@ -50,8 +50,9 @@ for f in $(find "$R" -type f); do
     "$f"
   # what was typed into the game's keyboard (the character's name): the log keeps that a box was asked for, not the text
   perl -i -pe "if (/swkbd:/) { s/initial '.*?' limit/initial '<text>' limit/; s/OK '.*'\$/OK '<typed text>'/ }" "$f" 2>/dev/null || true
-  # public IPv4 addresses (private, loopback and link-local ones say only that a LAN is there)
-  perl -i -pe 's/\b((\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3})\b/(($2==10)||($2==127)||($2==192&&$3==168)||($2==172&&$3>=16&&$3<=31)||($2==169&&$3==254)||($2==100&&$3>=64&&$3<=127)) ? $1 : "<internet address>"/ge' "$f" 2>/dev/null || true
+  # public IPv4 addresses on the logs' network lines (private, loopback and link-local ones say only that a LAN is there); system.txt names none, and
+  # its versions (a kernel's 6.1.52.1, Vulkan's conformance 1.3.6.0) look like addresses
+  [ "${f##*/}" = system.txt ] || perl -i -pe 'if (/coop|ldn|link ?play|join|relay|connect|room|socket|udp|tcp|address|peer|\blan\b/i) { s/\b((\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3})\b/(($2==10)||($2==127)||($2==192&&$3==168)||($2==172&&$3>=16&&$3<=31)||($2==169&&$3==254)||($2==100&&$3>=64&&$3<=127)) ? $1 : "<internet address>"/ge }' "$f" 2>/dev/null || true
 done
 
 # ---- refuse anything that should never be in it: game data, saves, shaders, or a name left behind
