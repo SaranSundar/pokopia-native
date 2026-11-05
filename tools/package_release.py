@@ -28,7 +28,7 @@ LINUX_ONLY = ('linux/', 'ampere-lower/linux/')
 # ampere-lower's source; not the Windows binaries, the Mac app or the Windows window
 NOT_LINUX = ('windows/bin/', 'ampere-lower/windows/', 'Pokopia Native Builder.cmd', 'Pokopia Native Builder.app/', 'host/dmsh_xlate_bin/',
              'host/windows/build_app.patch', 'host/windows/fork-extras.patch')
-ELF_OK = re.compile(r'^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|libpthread\.so\.0|librt\.so\.1|ld-linux-x86-64\.so\.2|libSDL3\.so\.0|libgcc_s\.so\.1|libstdc\+\+\.so\.6)$')
+ELF_OK = re.compile(r'^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|libpthread\.so\.0|librt\.so\.1|ld-linux-x86-64\.so\.2|libSDL3\.so\.0|libgcc_s\.so\.1|libstdc\+\+\.so\.6|libz\.so\.1)$')   # zlib: LLVM's lld; every distribution and SteamOS have it
 NEVER = ('.github/workflows/',)   # the CI files are the repository's, not the players'
 GAME_DERIVED = re.compile(r'(^|/)(_local|extract|shader/corpus|shader/maxwell|shdump|dumps|objcache)(/|$)|\.(nso|img|nca|nsp|xci|bin\.patched)$|(^|/)(main|sdk|subsdk0|rtld)$', re.I)
 VC_RUNTIME = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')   # the SPIRV-Tools of the Vulkan SDK are built with the DLL runtime: app-local copies
@@ -114,11 +114,23 @@ def elf_needed(path):
     return need, ('.'.join(map(str, vers[-1])) if vers else None)
 
 
+def scrub_pdb_path(b):
+    """A PE file with its CodeView record's build path (RSDS: the .pdb's path on the computer that built it) replaced by /_/<name>.pdb, NUL-padded to
+    the same length: the code and every offset stay as they are"""
+    out = bytearray(b)
+    for m in re.finditer(rb'RSDS.{20}([^\0]{4,260}?\.pdb)\0', b, re.S):
+        path = m.group(1); neutral = b'/_/' + re.split(rb'[\\/]', path)[-1]
+        if len(neutral) <= len(path): out[m.start(1):m.end(1)] = neutral.ljust(len(path), b'\0')
+    return bytes(out)
+
+
 def linux_kit_files(src, a):
     """{name in linux/bin: (source path, where it comes from)}"""
     bld = pathlib.Path(a.linux_build)
     k = {n: (bld / 'bin' / n, 'windows-native Linux build (scripts/build.sh)') for n in ('nxanalyze', 'nxlift', 'nxrt')}
-    k['libSDL3.so.0'] = (pathlib.Path(a.linux_sdl3) / 'lib/libSDL3.so.0', 'SDL 3.4.18, built from its source release')
+    # the real file behind the libSDL3.so.0 link (links do not read through \\wsl.localhost)
+    sdl = max(pathlib.Path(a.linux_sdl3).glob('lib/libSDL3.so.0*'), key=lambda p: (p.is_file(), len(p.name)), default=pathlib.Path(a.linux_sdl3) / 'lib/libSDL3.so.0')
+    k['libSDL3.so.0'] = (sdl, 'SDL 3.4.18, built from its source release')
     k['hle_inventory.tsv'] = (src / 'src/nxrt/gen/out/hle_inventory.tsv', 'windows-native source (the runtime\'s registry: nxanalyze --hle)')
     k['play.sh'] = (src / 'scripts/play.sh', 'windows-native source (the launcher)')
     for f in sorted((src / 'src/nxshader').glob('*.py')): k[f'nxshader/{f.name}'] = (f, 'windows-native source (the shader tool)')
@@ -229,7 +241,7 @@ def main():
         for n, (p, _) in lkit.items():
             need, glibc = elf_needed(p)
             bad = [d for d in need if not ELF_OK.match(d)]
-            if bad: sys.exit(f'{p} needs {", ".join(bad)}: the Linux kit may only need the C library, libSDL3.so.0 and the C++ runtime every distribution has')
+            if bad: sys.exit(f'{p} needs {", ".join(bad)}: the Linux kit may only need the C library, libSDL3.so.0, zlib and the C++ runtime every distribution has')
             if glibc and tuple(map(int, glibc.split('.'))) > newest: sys.exit(f'{p} needs glibc {glibc}: build the Linux tools on Ubuntu 22.04 (glibc 2.35)')
         personal.append(re.compile(rb'/home/[A-Za-z0-9._-]{1,40}/', re.I))
 
@@ -281,8 +293,11 @@ def main():
         entries = [(n, (HERE / n).read_bytes(), 0o755 if modes.get(n, 0o100644) & 0o111 or n.endswith('.sh') else 0o644) for n in files]
         if plat == 'windows': entries += [(f'windows/bin/{n}', d, 0o644) for n, d in kit_blobs.items()]
         if plat == 'linux':
-            entries = [e for e in entries if not e[0].startswith('linux/bin/')]
-            entries += [(n[3:] if n.startswith('../') else f'linux/bin/{n}', d, lmodes[n]) for n, d in lkit_blobs.items()]
+            kit_names = [n[3:] if n.startswith('../') else f'linux/bin/{n}' for n in lkit_blobs]
+            # the kit's files replace the repository's copies; the translator without its debug file, its DLLs without the build machine's paths
+            entries = [e for e in entries if not e[0].startswith('linux/bin/') and e[0] not in kit_names and not e[0].endswith('.pdb')]
+            entries = [(n, scrub_pdb_path(d) if n.endswith('.dll') else d, m) for n, d, m in entries]
+            entries += [(k, d, lmodes[n]) for k, (n, d) in zip(kit_names, lkit_blobs.items())]
         for n, d, _ in entries:
             if len(d) > biggest: sys.exit(f'refusing: {n} is larger than any tool ({len(d)} bytes)')
             for rx in personal:   # in text and inside binaries (UTF-8 and UTF-16): a build machine's user folder, the private --rules list
