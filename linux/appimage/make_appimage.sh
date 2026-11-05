@@ -8,6 +8,7 @@
 # its git history left out), VERSION and ID. Everything is scanned (scan_payload.py with --rules) before it is packed: no private data, no
 # game files, no video. Nothing of the game is in it.
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1   # no .pyc from this build in the contents: they would name the folder it ran in
 HERE=$(cd "$(dirname "$0")" && pwd)
 ZIP= TOOLS= DOTNET= RULES= OUT= WORK=${TMPDIR:-/tmp}/pokopia-appimage
 while [ $# -gt 0 ]; do
@@ -32,6 +33,7 @@ PY=$P/python/bin/python3
 "$PY" -m pip install --quiet --no-cache-dir --no-compile --only-binary=:all: --disable-pip-version-check lz4 fonttools pillow zstandard
 "$PY" -m pip list --format=freeze --disable-pip-version-check 2>/dev/null | grep -iE '^(lz4|fonttools|pillow|zstandard)==' > "$WORK/python-modules.txt"
 "$PY" -c 'import lz4, fontTools, PIL, zstandard, tkinter; print("python modules and tkinter: ok, Tk", tkinter.TkVersion)'
+"$PY" -m pip uninstall --quiet --yes pip   # a player's Python needs no pip (its Windows launchers carry their builder's paths)
 # what a player's Python never needs: the test suite, IDLE, headers, manuals; scripts whose first line names this build folder
 rm -rf "$P/python/lib/python3.12/test" "$P/python/lib/python3.12/idlelib" "$P/python/include" "$P/python/share"
 find "$P/python/bin" -mindepth 1 ! -name 'python3' ! -name 'python3.12' ! -name 'python' -delete
@@ -49,6 +51,9 @@ say "nxnative: the download's own setup, then its git history left out"
 NX=$P/installer/nxnative
 echo "nxnative $(git -C "$NX" rev-parse --short HEAD) with the Switch 2 patch" > "$NX/.bundled"
 rm -rf "$NX/.git" "$P/installer"/setup-*.log
+# what the Linux build never reads from nxnative: its documentation (screenshots of other games), fuzz and test inputs, its contributors' notes,
+# and the Mac translator's debug symbols (paths of the machine it was built on)
+rm -rf "$NX/docs" "$NX/dm/tools/fuzz" "$NX/dm/tools/tests" "$NX/AGENTS.md" "$NX"/dm/gfx/tools/dmsh_xlate_bin/*.pdb "$NX/dm/gfx/tools/dmsh_xlate_bin/Gommon.dll"
 find "$P/installer" -name __pycache__ -type d -prune -exec rm -rf {} +
 
 echo "$VER" > "$P/VERSION"
@@ -64,7 +69,7 @@ say "scanning the contents"
 mkdir -p "$OUT"
 NAME=Pokopia-Native-Builder-$VER-x86_64.AppImage
 say "packing $NAME"
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOLS/appimagetool-x86_64.AppImage" --runtime-file "$TOOLS/runtime-x86_64" --no-appstream "$A" "$OUT/$NAME" > "$WORK/appimagetool.log" 2>&1 \
+ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ${PACK_ON_ONE_CPU:+taskset -c 0 nice -n 19} "$TOOLS/appimagetool-x86_64.AppImage" --runtime-file "$TOOLS/runtime-x86_64" --no-appstream "$A" "$OUT/$NAME" > "$WORK/appimagetool.log" 2>&1 \
   || { tail -20 "$WORK/appimagetool.log"; exit 1; }
 chmod +x "$OUT/$NAME"
 (cd "$OUT" && sha256sum "$NAME" > "$NAME.sha256")

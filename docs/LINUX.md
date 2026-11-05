@@ -17,6 +17,26 @@ report (the last section). Nothing of the game is in the download: everything ma
 
 No root, no `sudo`, no compiler: the download carries its own tools in `linux/bin` (see `linux/bin/MANIFEST.txt` and `THIRD-PARTY-NOTICES.txt`).
 
+## The easy way: the AppImage
+
+**`Pokopia-Native-Builder-<version>-x86_64.AppImage`** is the builder as one file, with everything it needs inside (its own Python, the .NET
+runtime, the Linux tools and nxnative): no terminal steps, no Python packages, no .NET install.
+
+1. **Make it executable**: in Dolphin (the Steam Deck's file manager), right-click it → **Properties** → **Permissions** → tick **Is executable**.
+   Or in a terminal: `chmod +x ~/Downloads/Pokopia-Native-Builder-*.AppImage`
+2. **Double-click it.** The first start unpacks the builder to `~/.local/share/pokopia-native/builder/<version>` (about 1 GB, once per version;
+   the games you build use its Python and .NET from there), then the window opens.
+3. In the window: **Choose…** your dump folder, then **Build**, then **Play**. **Import save…** brings your save from Eden, the phone or a Mac.
+
+The game itself is still built on your computer from your own dump, into the build folder; the AppImage carries nothing of the game. To play from
+Steam (Game Mode), add the game's launcher `<build folder>/out/play-pokopia-<game version>.sh` as a non-Steam game, as below, not the AppImage.
+The report (the last section) is `~/Downloads/Pokopia-Native-Builder-*.AppImage report <build folder>` in a terminal. If the AppImage does not
+start at all, run it in a terminal with `--appimage-extract-and-run` after its name (a system without FUSE), and say so in the report.
+The window looks plain (one basic font): its own Tk draws with the X server's fonts. To remove the builder, delete the AppImage and
+`~/.local/share/pokopia-native/builder`; your builds and saves are elsewhere and stay.
+
+Everything below is the same build without the AppImage, from the "for Linux" zip and a terminal.
+
 ## Arch Linux and CachyOS (a PC, or a Steam Deck running them)
 
 The steps below are the same. First install what the build and the game use from pacman (Python with Tk, git, unzip, zenity for the game's

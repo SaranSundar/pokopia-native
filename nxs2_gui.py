@@ -368,7 +368,9 @@ def _self_shot(app, path):   # NXS2_GUI_SHOT=<png>: save a picture of the window
     from PIL import ImageGrab
     app.update_idletasks(); app.update()
     x, y = app.winfo_rootx(), app.winfo_rooty(); w, h = app.winfo_width(), app.winfo_height()
-    ImageGrab.grab(bbox=(x, y, x + w, y + h)).save(path); app.destroy()
+    try: ImageGrab.grab(bbox=(x, y, x + w, y + h), **({'xdisplay': os.environ.get('DISPLAY')} if LINUX else {})).save(path)   # Linux: from the X server
+    except Exception as e: print(f'NXS2_GUI_SHOT: {e}', file=sys.stderr)
+    app.destroy()
 
 
 if __name__ == '__main__':

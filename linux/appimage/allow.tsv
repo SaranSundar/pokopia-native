@@ -1,0 +1,7 @@
+allow	payload/installer/linux/bin/ld\.lld	^/home/runner/
+allow	payload/python/.*	^@gmail$
+allow	payload/dotnet/ThirdPartyNotices\.txt	^@gmail$
+allow	payload/dotnet/shared/.*\.dll	^m1@$
+allow	payload/installer/nxnative/dm/third_party/.*	^@gmail$
+allow	payload/installer/nxnative/dm/third_party/ryujinx/src/Ryujinx\.Common/Configuration/AppDataManager\.cs	^C:\\Users\\user\\$
+allow	payload/python/lib/python3\.12/venv/scripts/common/Activate\.ps1	^C:\\Users\\MyUser\\$
