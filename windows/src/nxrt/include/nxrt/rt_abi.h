@@ -8,7 +8,9 @@
 extern "C" {
 #endif
 
-#ifdef NXRT_BUILDING
+#if !defined(_WIN32)
+#define NXRT_API __attribute__((visibility("default")))   /* Linux: the nxrt executable exports these dynamically; game.so binds them at dlopen */
+#elif defined(NXRT_BUILDING)
 #define NXRT_API __declspec(dllexport)
 #else
 #define NXRT_API __declspec(dllimport)
@@ -103,8 +105,8 @@ NXRT_API void rt_return_to_host(NxwGuestCpu *cpu);
      uint32_t nxw_game_function_count;          */
 typedef struct NxwGameFunction {
     uint64_t guest_va;   /* entry address in the guest */
-    uint32_t rva;        /* the host function's RVA in the DLL */
-    uint32_t flags;      /* reserved */
+    uint32_t rva;        /* the host function's RVA in the DLL; with NXW_GAME_FN_SELFREL (game.so) fn - &rva, signed */
+    uint32_t flags;      /* NXW_GAME_FN_* (nxw/guest_cpu.h) */
 } NxwGameFunction;
 
 #ifdef __cplusplus

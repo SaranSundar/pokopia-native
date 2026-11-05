@@ -2,7 +2,11 @@
 // Kept: the profile, host work, LOG/die, module table, guest clocks, SystemEvent bindings, fault and pre-write hooks.
 // Gone with native execution: key page and TSD slots, gates and observation gates, patch areas, cheats, Unreal/fps state, Mac/iOS front-end hooks.
 #pragma once
+#ifdef _WIN32
 #include "posix_win.h"
+#else
+#include "posix_linux.h"   // docs/LINUX-PLAN.md
+#endif
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>

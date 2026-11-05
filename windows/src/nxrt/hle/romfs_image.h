@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include "posix_fs_win.h"
+#include "posix_fs.h"
 
 typedef struct { uint64_t a, b; uint32_t name; uint16_t nlen; uint8_t type, pad; } __attribute__((packed)) img_ent;   // directory: a = first child, b = children; file: a = offset, b = size
 _Static_assert(sizeof(img_ent) == 24, "RomFS image entry layout");

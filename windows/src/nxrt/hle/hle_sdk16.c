@@ -2,9 +2,11 @@
 // System service interfaces used by games on newer SDKs (16.x): oe / time / pl (shared font) / vi vsync / diag.
 // On the real device all of these go through Horizon system services (IPC); the host gives values directly or makes them "unavailable".
 #include "hle.h"
-#include "posix_fs_win.h"
+#include "posix_fs.h"
+#ifdef _WIN32
 #define tzname _tzname
 #define tzset _tzset
+#endif
 #include <stdatomic.h>
 #include <time.h>
 

@@ -4,7 +4,7 @@
 // Windows: the profanity filter's host vtable holds run-time host-call tokens with hand-written adapters (nxrt_host_fn_token), in host heap memory; `long` is int64_t.
 #include "hle.h"
 #include "nxrt/runtime.h"
-#include "posix_fs_win.h"
+#include "posix_fs.h"
 
 // ---------- aoc add-on content (the DLC NSPs in the player's folder) / ec shop (excluded) ----------
 // Owned add-on content indices (ascending), fixed at the first query:

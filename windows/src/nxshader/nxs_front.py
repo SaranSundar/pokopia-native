@@ -2,7 +2,7 @@
 translator (dmsh_xlate: Ryujinx.Graphics.Shader, MIT, with TargetLanguage.Spirv / TargetApi.Vulkan) → <key>.spv and <key>.res.json. Ported: records,
 job_for (with vertex_ab, early_fragment_tests, tf_layout) and the integer-input retranslation, the last read from the SPIR-V instead of the MSL. Not ported,
 being Metal's: spv_single_lane, the geometry-to-compute lowering, spirv-cross and everything after it (docs/m5-record-shaders.md lists each edit)."""
-import hashlib, json, os, re, struct, subprocess, sys, tempfile
+import hashlib, json, os, re, shutil, struct, subprocess, sys, tempfile
 
 CTL_MAGIC = bytes.fromhex('34127698')
 
@@ -139,6 +139,9 @@ def job_digest(job):
 class Translator:
     """dmsh_xlate (the installer's Windows build) run with dotnet; its identity is its DLLs' and its embedded sources' hashes"""
     def __init__(self, bindir, dotnet='dotnet'):
+        if dotnet == 'dotnet' and sys.platform != 'win32' and not shutil.which('dotnet'):   # Linux: Microsoft's installer script puts it in ~/.dotnet
+            home = os.path.join(os.environ.get('DOTNET_ROOT') or os.path.expanduser('~/.dotnet'), 'dotnet')
+            if os.path.isfile(home): dotnet = home
         self.bindir, self.dotnet = bindir, dotnet
         self.dll = os.path.join(bindir, 'dmsh_xlate.dll')
         if not os.path.exists(self.dll): raise FileNotFoundError(self.dll)

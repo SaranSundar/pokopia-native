@@ -2,6 +2,7 @@
    MapPhysicalMemory), GetInfo, the system tick at 31.25 MHz, events, thread queries, sleep and yield, the defaults; and the host-call path end to end
    (a token through the code table, its thunk, the registry, a ported adapter). */
 #include "guest_test.h"
+#include "nxrt/path_sep.h"
 
 NXRT_EARLY_RESERVE()
 
@@ -35,15 +36,20 @@ static int crash_report_test(void) {
     CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
     /* the newest crash report in the log folder */
     char dir[MAX_PATH] = ".", pat[MAX_PATH + 8], path[2 * MAX_PATH]; const char *d = getenv("NXRT_LOG_DIR"); if (d) snprintf(dir, sizeof dir, "%s", d);
-    snprintf(pat, sizeof pat, "%s\\*.crash.txt", dir);
+    snprintf(pat, sizeof pat, "%s" NXRT_SEP "*.crash.txt", dir);
     WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd); FILETIME best = {0}; path[0] = 0;
     if (h != INVALID_HANDLE_VALUE) {
-        do if (CompareFileTime(&fd.ftLastWriteTime, &best) > 0) { best = fd.ftLastWriteTime; snprintf(path, sizeof path, "%s\\%s", dir, fd.cFileName); } while (FindNextFileA(h, &fd));
+        do if (CompareFileTime(&fd.ftLastWriteTime, &best) > 0) { best = fd.ftLastWriteTime; snprintf(path, sizeof path, "%s" NXRT_SEP "%s", dir, fd.cFileName); } while (FindNextFileA(h, &fd));
         FindClose(h);
     }
     char buf[8192] = {0}; FILE *f = path[0] ? fopen(path, "r") : NULL;
     if (f) { fread(buf, 1, sizeof buf - 1, f); fclose(f); }
-    int ok = code == 128 + 11 && strstr(buf, "exception 0xc0000005") && strstr(buf, "write to 0x10") && strstr(buf, "x19=0000000001234567") && strstr(buf, "guest context");
+#ifdef _WIN32
+    const char *fault = "exception 0xc0000005";
+#else
+    const char *fault = "signal 11 (Segmentation fault)";   /* Linux: crash.c's signal handler */
+#endif
+    int ok = code == 128 + 11 && strstr(buf, fault) && strstr(buf, "write to 0x10") && strstr(buf, "x19=0000000001234567") && strstr(buf, "guest context");
     printf("crash on a guest thread: exit %lu, report %s %s (%.0f ms)\n", code, path, ok ? "complete" : "INCOMPLETE", (now_ns_test() - t0) / 1e6);
     if (!ok) printf("%s\n", buf);
     return ok ? 0 : 1;

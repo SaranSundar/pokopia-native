@@ -9,6 +9,7 @@
 #include <string.h>
 #include "nxrt/runtime.h"
 #include "save_txn.h"
+#include "nxrt/path_sep.h"
 
 NXRT_EARLY_RESERVE()
 
@@ -16,35 +17,44 @@ static int g_fail;
 #define T(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); g_fail = 1; } } while (0)
 
 static void put(const char *root, const char *rel, char tag, size_t n) {
-    char p[MAX_PATH]; snprintf(p, sizeof p, "%s\\%s", root, rel);
-    char d[MAX_PATH]; strcpy(d, p); *strrchr(d, '\\') = 0; CreateDirectoryA(d, NULL);
+    char p[MAX_PATH]; snprintf(p, sizeof p, "%s" NXRT_SEP "%s", root, rel);
+    char d[MAX_PATH]; strcpy(d, p); *strrchr(d, NXRT_SEPC) = 0; CreateDirectoryA(d, NULL);
     FILE *f = fopen(p, "wb"); if (!f) { printf("cannot write %s\n", p); exit(2); }
     for (size_t i = 0; i < n; i++) fputc((int)(unsigned char)(tag + i * 7), f);
     fclose(f);
 }
+#ifdef _WIN32
 static void stream(const char *root, const char *rel, const char *text) {
-    char p[MAX_PATH]; snprintf(p, sizeof p, "%s\\%s:org.d2rmobile.guest-name", root, rel);
+    char p[MAX_PATH]; snprintf(p, sizeof p, "%s" NXRT_SEP "%s:org.d2rmobile.guest-name", root, rel);
     FILE *f = fopen(p, "wb"); if (f) { fputs(text, f); fclose(f); }
 }
+#else
+#include <sys/xattr.h>
+/* Linux: hle_fs.c keeps the guest name in a user.* attribute (plat/posix_fs_linux.h) */
+static void stream(const char *root, const char *rel, const char *text) {
+    char p[MAX_PATH]; snprintf(p, sizeof p, "%s" NXRT_SEP "%s", root, rel);
+    setxattr(p, "user.org.d2rmobile.guest-name", text, strlen(text), 0);
+}
+#endif
 static void version_a(const char *root) {
     CreateDirectoryA(root, NULL);
-    put(root, "B00\\BCKDAT.BIN", 'a', 1024); put(root, "G00\\CMNDAT.BIN", 'b', 65536); put(root, "G00\\STGDAT01.BIN", 'c', 131072); put(root, "S00\\SYDAT.BIN", 'd', 4096);
+    put(root, "B00" NXRT_SEP "BCKDAT.BIN", 'a', 1024); put(root, "G00" NXRT_SEP "CMNDAT.BIN", 'b', 65536); put(root, "G00" NXRT_SEP "STGDAT01.BIN", 'c', 131072); put(root, "S00" NXRT_SEP "SYDAT.BIN", 'd', 4096);
 }
 static void version_b(const char *root) {
     CreateDirectoryA(root, NULL);
-    put(root, "B00\\BCKDAT.BIN", 'A', 1024); put(root, "G00\\CMNDAT.BIN", 'B', 65536); put(root, "G00\\SCSHDAT.BIN", 'E', 32768); put(root, "S00\\SYDAT.BIN", 'D', 4096);
-    stream(root, "G00\\CMNDAT.BIN", "CmnDat.bin");
+    put(root, "B00" NXRT_SEP "BCKDAT.BIN", 'A', 1024); put(root, "G00" NXRT_SEP "CMNDAT.BIN", 'B', 65536); put(root, "G00" NXRT_SEP "SCSHDAT.BIN", 'E', 32768); put(root, "S00" NXRT_SEP "SYDAT.BIN", 'D', 4096);
+    stream(root, "G00" NXRT_SEP "CMNDAT.BIN", "CmnDat.bin");
 }
 /* A tree as text: "relative path:size:checksum" per file, sorted by the directory walk (NTFS lists names in order) */
 static void digest(const char *root, const char *rel, char *out, size_t n) {
-    char pat[MAX_PATH]; snprintf(pat, sizeof pat, "%s%s%s\\*", root, *rel ? "\\" : "", rel);
+    char pat[MAX_PATH]; snprintf(pat, sizeof pat, "%s%s%s" NXRT_SEP "*", root, *rel ? NXRT_SEP : "", rel);
     WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd);
     if (h == INVALID_HANDLE_VALUE) return;
     do {
         if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
-        char r[MAX_PATH]; snprintf(r, sizeof r, "%s%s%s", rel, *rel ? "\\" : "", fd.cFileName);
+        char r[MAX_PATH]; snprintf(r, sizeof r, "%s%s%s", rel, *rel ? NXRT_SEP : "", fd.cFileName);
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { digest(root, r, out, n); continue; }
-        char p[MAX_PATH]; snprintf(p, sizeof p, "%s\\%s", root, r);
+        char p[MAX_PATH]; snprintf(p, sizeof p, "%s" NXRT_SEP "%s", root, r);
         FILE *f = fopen(p, "rb"); unsigned long long sum = 1469598103934665603ull, size = 0; int c;
         while (f && (c = fgetc(f)) != EOF) { sum = (sum ^ (unsigned)c) * 1099511628211ull; size++; }
         if (f) fclose(f);
@@ -71,9 +81,9 @@ int main(int argc, char **argv) {
     GetTempPathA(sizeof tmp, tmp); snprintf(root, sizeof root, "%snxrt-save-test-%lu", tmp, GetCurrentProcessId());
     GetModuleFileNameA(NULL, self, sizeof self);
     CreateDirectoryA(root, NULL);
-    snprintf(save, sizeof save, "%s\\save", root); snprintf(work, sizeof work, "%s\\save.work", root);
+    snprintf(save, sizeof save, "%s" NXRT_SEP "save", root); snprintf(work, sizeof work, "%s" NXRT_SEP "save.work", root);
     char ref_a[8192] = "", ref_b[8192] = "", got[8192];
-    { char a[MAX_PATH], b[MAX_PATH]; snprintf(a, sizeof a, "%s\\ref_a", root); snprintf(b, sizeof b, "%s\\ref_b", root);
+    { char a[MAX_PATH], b[MAX_PATH]; snprintf(a, sizeof a, "%s" NXRT_SEP "ref_a", root); snprintf(b, sizeof b, "%s" NXRT_SEP "ref_b", root);
       version_a(a); version_b(b); digest(a, "", ref_a, sizeof ref_a); digest(b, "", ref_b, sizeof ref_b); save_txn_rm_tree(a); save_txn_rm_tree(b); }
     T(strcmp(ref_a, ref_b) != 0);
     version_b(work);
@@ -103,9 +113,15 @@ int main(int argc, char **argv) {
         /* the recovered save takes the next commit */
         if (is_a) { T(save_txn_commit(work, save) == 0); got[0] = 0; digest(save, "", got, sizeof got); T(!strcmp(got, ref_b)); }
     }
-    { char p[MAX_PATH], s[64] = ""; snprintf(p, sizeof p, "%s\\G00\\CMNDAT.BIN:org.d2rmobile.guest-name", save);
+#ifdef _WIN32
+    { char p[MAX_PATH], s[64] = ""; snprintf(p, sizeof p, "%s" NXRT_SEP "G00" NXRT_SEP "CMNDAT.BIN:org.d2rmobile.guest-name", save);
       FILE *f = fopen(p, "rb"); if (f) { fgets(s, sizeof s, f); fclose(f); }
       T(!strcmp(s, "CmnDat.bin")); }   /* the guest name stream came along */
+#else
+    { char p[MAX_PATH], s[64] = ""; snprintf(p, sizeof p, "%s" NXRT_SEP "G00" NXRT_SEP "CMNDAT.BIN", save);
+      getxattr(p, "user.org.d2rmobile.guest-name", s, sizeof s - 1);
+      T(!strcmp(s, "CmnDat.bin")); }   /* the guest name attribute came along */
+#endif
     save_txn_rm_tree(root);
     printf("%d kill points: %d left the old version, %d the new one, none a mix\n", np, as_a, as_b);
     printf("nxrt.save: %s\n", g_fail ? "FAIL" : "ok");

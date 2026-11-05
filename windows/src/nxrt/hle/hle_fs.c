@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include <stdatomic.h>
 #include "romfs_image.h"
-#include "posix_fs_win.h"
+#include "posix_fs.h"
 #include "save_txn.h"
 static void save_sync_mount(const char *dir, const char *game) { (void)dir; (void)game; }   // save sync (save_sync.c) is not ported
 static void save_sync_committed(void) {}
@@ -767,9 +767,15 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
                 static _Atomic int once; if (!once++) LOG("[fs] ReadFile into %p+%#zx: the destination was write-protected again during the read, prepared again at +%#zx (first case)", buf, sz, got);
                 dm_guest_write_prepare((uint8_t *)buf + got, sz - got); continue; }
             if (errno == EFAULT) {   // the destination is not writable host memory: say where, with the protection of its VM region
+#ifdef _WIN32
                 int e = errno; MEMORY_BASIC_INFORMATION vi; SIZE_T ok = VirtualQuery((uint8_t *)buf + got, &vi, sizeof vi);
                 LOG("[RED] fs ReadFile into %p+%#zx failed at +%#zx (EFAULT): VM region %p+%#zx protection %#lx%s", buf, sz, got, ok ? vi.BaseAddress : NULL, ok ? (size_t)vi.RegionSize : 0, ok ? (unsigned long)vi.Protect : 0ul, ok ? "" : " (none)");
-                errno = e; }
+                errno = e;
+#else
+                LOG("[RED] fs ReadFile into %p+%#zx failed at +%#zx (EFAULT): the destination is not writable", buf, sz, got);
+                errno = EFAULT;
+#endif
+            }
             return err_res("pread", "fd"); }
         if (r == 0) break;
         got += r;

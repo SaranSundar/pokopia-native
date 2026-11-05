@@ -2,7 +2,7 @@
 // (--gfx null), and device-level calls go straight to the driver instead of through the loader's trampolines.
 #pragma once
 #define VK_NO_PROTOTYPES
-#ifndef VK_USE_PLATFORM_WIN32_KHR
+#if defined(_WIN32) && !defined(VK_USE_PLATFORM_WIN32_KHR)
 #define VK_USE_PLATFORM_WIN32_KHR
 #endif
 #include <vulkan/vulkan.h>

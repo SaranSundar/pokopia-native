@@ -23,9 +23,14 @@ uint32_t gt_self(void) { return thr_cur_handle(); }
 void gt_init(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
     if (nxrt_init(&(nxrt_options){.quiet = 1})) { printf("FAIL nxrt_init\n"); exit(1); }
+#ifdef _WIN32
     uint8_t *img = (uint8_t *)GetModuleHandleW(NULL);
     IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(img + ((IMAGE_DOS_HEADER *)img)->e_lfanew);
-    if (nxrt_code_table_create(NXRT_TOKEN_BASE, NXRT_MODULE_BASE + 0x100000) || nxrt_code_attach(img, nt->OptionalHeader.SizeOfImage)) { printf("FAIL code table\n"); exit(1); }
+    size_t img_size = nt->OptionalHeader.SizeOfImage;
+#else
+    size_t img_size; uint8_t *img = plat_exe_image(&img_size);
+#endif
+    if (nxrt_code_table_create(NXRT_TOKEN_BASE, NXRT_MODULE_BASE + 0x100000) || nxrt_code_attach(img, img_size)) { printf("FAIL code table\n"); exit(1); }
     nxrt_thread_main_init();
     NxwGuestCpu *c = nxrt_cur_cpu();
     c->x[1] = 64u << 20;

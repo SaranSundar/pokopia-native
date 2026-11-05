@@ -25,6 +25,9 @@
 #ifndef _WIN32   // the Mac build (docs/m4-swapin.md)
 #define _popen popen
 #define _pclose pclose
+#define NXW_POPEN_READ "r"   // glibc refuses popen's "b"
+#else
+#define NXW_POPEN_READ "rb"
 #endif
 
 namespace fs = std::filesystem;
@@ -155,8 +158,12 @@ int main(int argc, char** argv) try {
 
     fs::path elf = fs::path(scratch) / ("xcheck_" + label + ".o");
     write_file(elf, elf_with_text(words));
-    std::string cmd = "\"\"" + objdump + "\" -d -z --mattr=+v8.5a,+crypto \"" + elf.string() + "\"\"";
-    FILE* p = _popen(cmd.c_str(), "rb");
+#ifdef _WIN32
+    std::string cmd = "\"\"" + objdump + "\" -d -z --mattr=+v8.5a,+crypto \"" + elf.string() + "\"\"";   // cmd.exe strips the outer pair
+#else
+    std::string cmd = "\"" + objdump + "\" -d -z --mattr=+v8.5a,+crypto \"" + elf.string() + "\"";
+#endif
+    FILE* p = _popen(cmd.c_str(), NXW_POPEN_READ);
     if (!p) fail("cannot run " + objdump);
 
     std::map<std::string, Diff> unexplained;

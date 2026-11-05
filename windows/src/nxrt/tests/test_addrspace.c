@@ -10,14 +10,35 @@
 
 NXRT_EARLY_RESERVE()
 
+#ifndef _WIN32
+#include <sys/mman.h>
+/* Linux (docs/LINUX-PLAN.md L-D3): the child's range is taken by a constructor that runs before the runtime's (priority 100 before 101), as
+   VirtualAllocEx into the suspended child does on Windows */
+__attribute__((constructor(100))) static void squat(void) {
+    if (getenv("NXRT_TEST_SQUAT"))
+        mmap((void *)(uintptr_t)(NXRT_TOKEN_BASE + 0x10000), 0x10000, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+}
+#endif
+
 static int g_fail;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d: %s (error %lu)\n", __FILE__, __LINE__, #c, GetLastError()); g_fail = 1; } } while (0)
 
+#ifndef _WIN32
+static void query(const char *what, uint64_t a) {   /* the /proc/self/maps line that holds a */
+    FILE *f = fopen("/proc/self/maps", "r"); char line[512];
+    while (f && fgets(line, sizeof line, f)) {
+        unsigned long long lo, hi;
+        if (sscanf(line, "%llx-%llx", &lo, &hi) == 2 && a >= lo && a < hi) { printf("  %s %#llx: %s", what, (unsigned long long)a, line); break; }
+    }
+    if (f) fclose(f);
+}
+#else
 static void query(const char *what, uint64_t a) {
     MEMORY_BASIC_INFORMATION m;
     if (!VirtualQuery((void *)(uintptr_t)a, &m, sizeof m)) { printf("  %s %#llx: VirtualQuery failed\n", what, (unsigned long long)a); return; }
     printf("  %s %#llx: region %p+%#zx alloc %p state %#lx type %#lx protect %#lx\n", what, (unsigned long long)a, m.BaseAddress, m.RegionSize, m.AllocationBase, m.State, m.Type, m.Protect);
 }
+#endif
 
 /* The fallback's mechanism, and the detection: a parent creates this test suspended, reserves 64 KB inside the child's token range with
    VirtualAllocEx before any of the child's code (or its DLLs) runs, and resumes it. The child's TLS callback must then report that range as taken,
@@ -26,8 +47,29 @@ static int child(void) {
     const nxrt_range *r = nxrt_as_range(NXRT_AS_TOKENS);
     printf("  child: tokens %s, conflict %#llx +%#llx state %#x type %#x\n", r->reserved ? "reserved" : "NOT reserved", (unsigned long long)r->conflict_base,
            (unsigned long long)r->conflict_size, r->conflict_state, r->conflict_type);
+#ifdef _WIN32
     return !r->reserved && r->conflict_base == NXRT_TOKEN_BASE + 0x10000 && r->conflict_state == MEM_RESERVE && nxrt_as_range(NXRT_AS_MODULES)->reserved ? 0 : 1;
+#else
+    printf("  child: held by %s\n", r->conflict_owner);
+    return !r->reserved && r->conflict_base == NXRT_TOKEN_BASE + 0x10000 && nxrt_as_range(NXRT_AS_MODULES)->reserved ? 0 : 1;
+#endif
 }
+#ifndef _WIN32
+static int spawn_child(void) {
+    char exe[MAX_PATH], cmd[MAX_PATH + 16];
+    GetModuleFileNameA(NULL, exe, sizeof exe);
+    snprintf(cmd, sizeof cmd, "\"%s\" --child", exe);
+    setenv("NXRT_TEST_SQUAT", "1", 1);
+    STARTUPINFOA si; PROCESS_INFORMATION pi; ZeroMemory(&si, sizeof si); si.cb = sizeof si;
+    BOOL ok = CreateProcessA(exe, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    unsetenv("NXRT_TEST_SQUAT");
+    if (!ok) return -1;
+    WaitForSingleObject(pi.hProcess, 30000);
+    DWORD code = 99; GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    return (int)code;
+}
+#else
 static int spawn_child(void) {
     char exe[MAX_PATH], cmd[MAX_PATH + 16];
     GetModuleFileNameA(NULL, exe, sizeof exe);
@@ -41,6 +83,7 @@ static int spawn_child(void) {
     CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
     return p ? (int)code : -2;
 }
+#endif
 
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -59,9 +102,11 @@ int main(int argc, char **argv) {
     CHECK(l->stack == l->alias + l->alias_size && l->heap == l->stack + l->stack_size && l->heap + l->heap_size == l->as_base + l->as_size);
 
     /* 2. /HIGHENTROPYVA:NO took effect, and host allocations stay out of the guest range */
+#ifdef _WIN32
     uint8_t *img = (uint8_t *)GetModuleHandleW(NULL);
     IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(img + ((IMAGE_DOS_HEADER *)img)->e_lfanew);
     CHECK(!(nt->OptionalHeader.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA));
+#endif
     void *v = VirtualAlloc(NULL, 1 << 20, MEM_RESERVE, PAGE_NOACCESS), *h = malloc(64 << 20);
     printf("host allocations: VirtualAlloc %p, malloc(64 MB) %p\n", v, h);
     CHECK((uint64_t)(uintptr_t)v < NXRT_TOKEN_BASE || (uint64_t)(uintptr_t)v >= (1ull << 39));

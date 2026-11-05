@@ -140,6 +140,7 @@ static vkt_image *image_create(const tex_t *t, int cls) {
 }
 
 // ---------- Uploads from storage ----------
+#ifdef _WIN32
 static int guarded_deswizzle(const s2tex_surface *s, const uint8_t *bl, size_t bl_size, uint8_t *lin, size_t row, size_t slice) {
     __try { return s2tex_deswizzle(s, bl, bl_size, lin, row, slice); }
     __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { return -100; }
@@ -148,6 +149,22 @@ static int guarded_copy(uint8_t *dst, const uint8_t *src, size_t n) {
     __try { memcpy(dst, src, n); return 0; }
     __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { memset(dst, 0, n); return -1; }
 }
+#else
+static int guarded_deswizzle(const s2tex_surface *s, const uint8_t *bl, size_t bl_size, uint8_t *lin, size_t row, size_t slice) {
+    plat_guard g; PLAT_GUARD_PUSH(&g);
+    if (sigsetjmp(g.jb, 0)) return -100;
+    int r = s2tex_deswizzle(s, bl, bl_size, lin, row, slice);
+    PLAT_GUARD_POP(&g);
+    return r;
+}
+static int guarded_copy(uint8_t *dst, const uint8_t *src, size_t n) {
+    plat_guard g; PLAT_GUARD_PUSH(&g);
+    if (sigsetjmp(g.jb, 0)) { memset(dst, 0, n); return -1; }
+    memcpy(dst, src, n);
+    PLAT_GUARD_POP(&g);
+    return 0;
+}
+#endif
 // The "one" of a component type, for the alpha that 3-component formats gain
 static void expand_rgb(const uint8_t *src, uint8_t *dst, size_t texels, uint32_t bpb, int nvn_format) {
     uint32_t comp = bpb / 3, flags = vkf_get(nvn_format)->flags;
@@ -275,10 +292,23 @@ static void clear_new(vkt_image *im, VkCommandBuffer cb) {   // a GPU texture's 
 // uncompressed textures NVN cannot tell from render targets): in a pool the CPU cannot access (filled when the pool was made), an uncached one, or storage the
 // CPU flushed. Not depth, multisample or compressible ones. Pokopia fills its 32x32x32 colour-grading LUT this way (an IMAGE-flagged RGBA8 3D texture)
 int nvn_flushed(const void *p, uint64_t n);   // hle_nvn.c
+#ifdef _WIN32
 static int mem_any(const uint8_t *p, uint64_t n) {
     __try { uint64_t i = 0, v; for (; i + 8 <= n; i += 8) { memcpy(&v, p + i, 8); if (v) return 1; } for (; i < n; i++) if (p[i]) return 1; return 0; }
     __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { return 0; }
 }
+#else
+static int mem_any(const uint8_t *p, uint64_t n) {
+    plat_guard g; PLAT_GUARD_PUSH(&g);
+    if (sigsetjmp(g.jb, 0)) return 0;
+    int any = 0;
+    uint64_t i = 0, v;
+    for (; !any && i + 8 <= n; i += 8) { memcpy(&v, p + i, 8); any = v != 0; }
+    for (; !any && i < n; i++) any = p[i] != 0;
+    PLAT_GUARD_POP(&g);
+    return any;
+}
+#endif
 static int init_fill(const tex_t *t, const vkt_image *im) {
     if (!t->mem || !t->pool || (t->pool->flags & NVN_MEMORY_POOL_FLAGS_VIRTUAL) || t->has_layout || t->d.samples > 1 || (t->d.flags & NVN_TEXTURE_FLAGS_COMPRESSIBLE)) return 0;
     if ((im->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) || (im->fi->flags & VKF_COMPRESSED)) return 0;

@@ -22,7 +22,11 @@
 #include "nxs_rt.h"
 #include <stdatomic.h>
 #include <stddef.h>
+#ifdef _WIN32
 #include <bcrypt.h>
+#else
+#include "nxw/sha256.h"
+#endif
 
 // The profile keys the graphics layer reads (nxnative's dm/games/game.py names); Pokopia's game.tsv sets none of them, so game.py's defaults
 #ifndef DM_GAME_TEX_FLUSH_UPLOAD
@@ -561,6 +565,15 @@ static void pk_drop(const void *p) {
     pthread_mutex_unlock(&g_pk_mu);
 }
 // SHA-256 of a + b (nxnative used CommonCrypto)
+#ifndef _WIN32
+static void sha256_2(const void *a, size_t na, const void *b, size_t nb, uint8_t out[32]) {
+    nxw_sha256 c;
+    nxw_sha256_init(&c);
+    nxw_sha256_update(&c, a, na);
+    if (nb) nxw_sha256_update(&c, b, nb);
+    nxw_sha256_final(&c, out);
+}
+#else
 static void sha256_2(const void *a, size_t na, const void *b, size_t nb, uint8_t out[32]) {
     static BCRYPT_ALG_HANDLE alg; static INIT_ONCE once = INIT_ONCE_STATIC_INIT; BOOL pending;
     if (InitOnceBeginInitialize(&once, 0, &pending, NULL) && pending) {
@@ -572,6 +585,7 @@ static void sha256_2(const void *a, size_t na, const void *b, size_t nb, uint8_t
         BCryptFinishHash(h, out, 32, 0)) die("SHA-256 (BCrypt) failed");
     BCryptDestroyHash(h);
 }
+#endif
 // mapped = 1: computed only when the code area is in a registered memory pool (at SetShaders: Mario sets some programs with an unmapped address first and fills it in before the first draw)
 static int keys_hash(const NVNshaderData *sd, int mapped, uint8_t out[8]) {
     uint32_t ncode = 0; void *mb; uint64_t mo;
@@ -1983,9 +1997,14 @@ int nvn_tex_mirror_t2t(const tex_t *s, unsigned sl, unsigned ss, const NVNcopyRe
 // The movie decoder's native-texture output (DecoderMode 2, hle_movie.c): a whole frame into level 0 of the client texture, as WriteTexels does; returns the texture format, or −1 when the object is not a texture
 int nvn_host_write_texture(const void *nvntex, const void *src, int w, int h, size_t row, int *tw, int *th) {
     const tex_t *t = nvntex;
+#ifdef _WIN32
     MEMORY_BASIC_INFORMATION mi;   // the value the client gives is not necessarily a pointer: look before reading
     if (!t || (uintptr_t)t & 7 || !VirtualQuery(t, &mi, sizeof mi) || mi.State != MEM_COMMIT || (mi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) ||
         (uintptr_t)t + sizeof *t > (uintptr_t)mi.BaseAddress + mi.RegionSize) return -1;
+#else
+    tex_t probe;   // the value the client gives is not necessarily a pointer: read it without faulting first
+    if (!t || (uintptr_t)t & 7 || plat_read((uint64_t)(uintptr_t)t, &probe, sizeof probe)) return -1;
+#endif
     if (t->magic != MAGIC('T', 'E', 'X', 0)) return -1;
     if (tw) *tw = (int)t->d.width;
     if (th) *th = (int)t->d.height;

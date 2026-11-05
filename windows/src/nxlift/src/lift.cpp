@@ -529,7 +529,9 @@ Lifter::Lifter(const Inputs& in, LLVMContext& ctx, const Options& opt) : p(std::
     TargetOptions to;
     to.AllowFPOpFusion = FPOpFusion::Strict;   // never fuse a separate FMUL and FADD
     const auto cm = opt.jit ? std::optional<CodeModel::Model>(CodeModel::Large) : std::nullopt;
-    p->tm.reset(t->createTargetMachine(p->triple, p->cpu_name, p->features, to, std::nullopt, cm,
+    // Linux: the game is a shared object (docs/LINUX-PLAN.md L-D2)
+    const auto rm = !opt.jit && p->triple.isOSBinFormatELF() ? std::optional<Reloc::Model>(Reloc::PIC_) : std::nullopt;
+    p->tm.reset(t->createTargetMachine(p->triple, p->cpu_name, p->features, to, rm, cm,
                                        opt.opt >= 2 ? CodeGenOptLevel::Default : CodeGenOptLevel::Less));
     if (!p->tm) nxw::fail("cannot create the " + p->triple.str() + " target machine");
 }
@@ -722,6 +724,11 @@ void Lifter::finish(Module& m) {
     if (!p->opt.jit && p->triple.isOSDarwin())   // the swap-in dylib defines them itself: no GOT loads
         for (const char* n : {"rt_code_table", "rt_code_base", "rt_code_words", "rt_host_base", "rt_trace_on"})
             if (GlobalVariable* g = m.getGlobalVariable(n)) g->setVisibility(GlobalValue::HiddenVisibility), g->setDSOLocal(true);
+    // game.so: guest functions are hidden, so calls between them and from other partitions are direct (no PLT, no interposition); the
+    // rt_* ABI stays preemptible and comes from the nxrt executable through the GOT
+    if (!p->opt.jit && p->triple.isOSBinFormatELF())
+        for (Function& f : m)
+            if (f.getName().starts_with("fn_") && !f.hasLocalLinkage()) f.setVisibility(GlobalValue::HiddenVisibility), f.setDSOLocal(true);
     std::string err;
     raw_string_ostream os(err);
     if (verifyModule(m, &os)) nxw::fail("lifted IR does not verify: " + err.substr(0, 2000));
@@ -823,6 +830,54 @@ memset:
     retq
 )";
 
+// The same three routines in the System V convention, for game.so (Linux). Hidden: they never stand in for the process's own
+// memcpy; LLVM emits no __chkstk on Linux.
+static const char k_so_support_asm[] = R"(
+    .text
+    .globl memcpy
+    .hidden memcpy
+    .type memcpy,@function
+memcpy:
+    movq %rdi, %rax
+    movq %rdx, %rcx
+    rep movsb
+    retq
+    .size memcpy, .-memcpy
+
+    .globl memmove
+    .hidden memmove
+    .type memmove,@function
+memmove:
+    movq %rdi, %rax
+    movq %rdx, %rcx
+    cmpq %rsi, %rdi
+    jbe 1f
+    leaq (%rsi,%rcx), %r8
+    cmpq %r8, %rdi
+    jae 1f
+    leaq -1(%rsi,%rcx), %rsi
+    leaq -1(%rdi,%rcx), %rdi
+    std
+    rep movsb
+    cld
+    retq
+1:  rep movsb
+    retq
+    .size memmove, .-memmove
+
+    .globl memset
+    .hidden memset
+    .type memset,@function
+memset:
+    movq %rdi, %r8
+    movl %esi, %eax
+    movq %rdx, %rcx
+    rep stosb
+    movq %r8, %rax
+    retq
+    .size memset, .-memset
+)";
+
 std::vector<char> game_table_object(Lifter& L, const Inputs& in, const std::vector<uint32_t>& fns) {
     auto M = L.new_module("nxw_game");
     LLVMContext& ctx = M->getContext();
@@ -830,9 +885,10 @@ std::vector<char> game_table_object(Lifter& L, const Inputs& in, const std::vect
     Type* i32 = Type::getInt32Ty(ctx);
     Type* i64 = Type::getInt64Ty(ctx);
     FunctionType* fty = FunctionType::get(Type::getVoidTy(ctx), {PointerType::getUnqual(ctx)}, false);
+    const bool elf = M->getTargetTriple().isOSBinFormatELF();
     auto exported = [&](Type* t, Constant* init, const char* name) {
         auto* g = new GlobalVariable(*M, t, true, GlobalValue::ExternalLinkage, init, name);
-        g->setDLLStorageClass(GlobalValue::DLLExportStorageClass);
+        if (!elf) g->setDLLStorageClass(GlobalValue::DLLExportStorageClass);
         return g;
     };
     exported(i32, ConstantInt::get(i32, NXW_ABI_VERSION), "nxw_game_abi");
@@ -846,9 +902,31 @@ std::vector<char> game_table_object(Lifter& L, const Inputs& in, const std::vect
             }
     exported(ArrayType::get(i8, id.size() + 1), ConstantDataArray::getString(ctx, id), "nxw_game_build_id");
     exported(i32, ConstantInt::get(i32, fns.size()), "nxw_game_function_count");
+    StructType* ent = StructType::get(ctx, {i64, i32, i32});
+    if (elf) {
+        // ELF has no image-relative relocation: each entry holds fn - &entry.rva (R_X86_64_PC32, resolved by the link) and flags
+        // NXW_GAME_FN_SELFREL; nxrt turns it into the RVA. The table is local so the difference folds into a PC-relative fixup;
+        // the exported name is an alias of it.
+        ArrayType* at = ArrayType::get(ent, fns.size());
+        auto* table = new GlobalVariable(*M, at, true, GlobalValue::InternalLinkage, nullptr, "nxw_game_functions.table");
+        std::vector<Constant*> es;
+        es.reserve(fns.size());
+        for (uint32_t k = 0; k < fns.size(); k++) {
+            auto* fn = cast<Function>(M->getOrInsertFunction(in.fn_name(fns[k]), fty).getCallee());
+            fn->setVisibility(GlobalValue::HiddenVisibility), fn->setDSOLocal(true);
+            Constant* field = ConstantExpr::getInBoundsGetElementPtr(at, table, ArrayRef<Constant*>{ConstantInt::get(i32, 0), ConstantInt::get(i32, k),
+                                                                                                    ConstantInt::get(i32, 1)});
+            Constant* rel = ConstantExpr::getTrunc(
+                ConstantExpr::getSub(ConstantExpr::getPtrToInt(fn, i64), ConstantExpr::getPtrToInt(field, i64)), i32);
+            es.push_back(ConstantStruct::get(ent, {ConstantInt::get(i64, in.fn_address(fns[k])), rel, ConstantInt::get(i32, NXW_GAME_FN_SELFREL)}));
+        }
+        table->setInitializer(ConstantArray::get(at, es));
+        GlobalAlias::create(at, 0, GlobalValue::ExternalLinkage, "nxw_game_functions", table, M.get());
+        M->appendModuleInlineAsm(StringRef(k_so_support_asm));
+        return L.emit_object(*M);
+    }
     // {guest_va, rva, flags}: the RVA is fn - __ImageBase, which COFF lowers to an image-relative relocation
     auto* image_base = new GlobalVariable(*M, i8, true, GlobalValue::ExternalLinkage, nullptr, "__ImageBase");
-    StructType* ent = StructType::get(ctx, {i64, i32, i32});
     std::vector<Constant*> es;
     es.reserve(fns.size());
     for (uint32_t f : fns) {

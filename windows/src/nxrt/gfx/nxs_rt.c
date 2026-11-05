@@ -3,6 +3,15 @@
 #include "dm.h"
 #include <stdatomic.h>
 #include <wchar.h>
+#ifdef _WIN32
+#define SEP "\\"
+#else
+#define SEP "/"   // docs/LINUX-PLAN.md: the paths also go to the shader tool's command line
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+extern char **environ;
+#endif
 
 static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
 static int g_on;
@@ -30,20 +39,30 @@ static BOOL CALLBACK init_once(PINIT_ONCE o, PVOID a, PVOID *c) {
     const char *e = getenv("NXRT_SHADER_CACHE");
     char repo[1024] = "";
     {   // the executable lives in <repo>/build/<tree>/bin
+#ifdef _WIN32
         wchar_t w[1024]; DWORD n = GetModuleFileNameW(NULL, w, 1024);
         if (n && n < 1024 && WideCharToMultiByte(CP_UTF8, 0, w, -1, repo, sizeof repo, NULL, NULL)) {
             for (int up = 0; up < 4; up++) { char *s = strrchr(repo, '\\'); if (s) *s = 0; }
         }
+#else
+        ssize_t n = readlink("/proc/self/exe", repo, sizeof repo - 1);
+        repo[n > 0 ? n : 0] = 0;
+        for (int up = 0; n > 0 && up < 4; up++) { char *s = strrchr(repo, '/'); if (s) *s = 0; }
+#endif
     }
     if (e && *e) snprintf(g_cache, sizeof g_cache, "%s", e);
-    else if (*repo) snprintf(g_cache, sizeof g_cache, "%s\\_local\\nxshader\\cache", repo);
+    else if (*repo) snprintf(g_cache, sizeof g_cache, "%s" SEP "_local" SEP "nxshader" SEP "cache", repo);
     const char *d = getenv("NXRT_SHADER_DUMP"); snprintf(g_dump, sizeof g_dump, "%s", d && *d ? d : "");
-    if (!*g_dump) snprintf(g_dump, sizeof g_dump, "%s\\dumps", g_cache);
+    if (!*g_dump) snprintf(g_dump, sizeof g_dump, "%s" SEP "dumps", g_cache);
     const char *b = getenv("NXRT_SHADER_BUILD"); snprintf(g_build, sizeof g_build, "%s", b ? b : "");
     const char *t = getenv("NXRT_SHADER_TOOL");
-    char tool_py[1100]; snprintf(tool_py, sizeof tool_py, "%s\\src\\nxshader\\nxshader.py", repo);
+    char tool_py[1100]; snprintf(tool_py, sizeof tool_py, "%s" SEP "src" SEP "nxshader" SEP "nxshader.py", repo);
     if (t && *t) snprintf(g_tool, sizeof g_tool, "%s", strcmp(t, "off") ? t : "");
+#ifdef _WIN32
     else if (*repo && isfile(tool_py)) snprintf(g_tool, sizeof g_tool, "py -3 -I \"%s\" --cache \"%s\"", tool_py, g_cache);
+#else
+    else if (*repo && isfile(tool_py)) snprintf(g_tool, sizeof g_tool, "python3 -I \"%s\" --cache \"%s\"", tool_py, g_cache);
+#endif
     g_on = *g_cache && isdir(g_cache);
     if (g_on) LOG("[nxs] shader cache %s; dumps to %s; on-demand translation %s", g_cache, g_dump, *g_tool ? g_tool : "off (NXRT_SHADER_TOOL)");
     return TRUE;
@@ -65,13 +84,13 @@ static ent *find(const char *key, int make) {   // g_lk held exclusively when ma
     return *e;
 }
 static int chain_of(char *out, size_t n) {
-    char p[1100]; snprintf(p, sizeof p, "%s\\vk\\CHAIN", g_cache);
+    char p[1100]; snprintf(p, sizeof p, "%s" SEP "vk" SEP "CHAIN", g_cache);
     size_t len; char *c = slurp(p, &len, 1); if (!c) return 0;
     size_t k = 0; while (k + 1 < n && c[k] && c[k] != '\n' && c[k] != '\r') { out[k] = c[k]; k++; } out[k] = 0;
     free(c); return k > 0;
 }
 static int load(ent *e) {   // g_lk held: the cache's entry, when it exists and its chain is the cache's
-    char base[1100], p[1200], chain[64]; snprintf(base, sizeof base, "%s\\vk\\%s", g_cache, e->key);
+    char base[1100], p[1200], chain[64]; snprintf(base, sizeof base, "%s" SEP "vk" SEP "%s", g_cache, e->key);
     snprintf(p, sizeof p, "%s.json", base); size_t jn, sn; char *j = slurp(p, &jn, 1);
     if (!j) return 0;
     snprintf(p, sizeof p, "%s.spv", base); char *s = slurp(p, &sn, 0);
@@ -97,7 +116,23 @@ static DWORD WINAPI qthread(LPVOID a) {
         ReleaseSRWLockExclusive(&g_qlk);
         char cmd[4096], logp[1200]; uint64_t t0 = now_ns();
         snprintf(cmd, sizeof cmd, "%s ondemand --dump \"%s\" --key %s%s%s%s", g_tool, g_dump, r->key, *g_build ? " --build \"" : "", g_build, *g_build ? "\"" : "");
-        snprintf(logp, sizeof logp, "%s\\%s.log", g_dump, r->key);
+        snprintf(logp, sizeof logp, "%s" SEP "%s.log", g_dump, r->key);
+#ifndef _WIN32
+        // through the shell, as the command line is one string (play.sh quotes NXRT_SHADER_TOOL for sh); the log file is its output, a few nice steps down
+        DWORD code = 999;
+        posix_spawn_file_actions_t fa; posix_spawn_file_actions_init(&fa);
+        posix_spawn_file_actions_addopen(&fa, 1, logp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        posix_spawn_file_actions_adddup2(&fa, 1, 2);
+        char nice_cmd[4200]; snprintf(nice_cmd, sizeof nice_cmd, "exec nice -n 4 %s", cmd);
+        char *argv[] = {"/bin/sh", "-c", nice_cmd, NULL};
+        pid_t pid;
+        if (!posix_spawn(&pid, "/bin/sh", &fa, NULL, argv, environ)) {
+            int st = 0;
+            while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+            code = WIFEXITED(st) ? (DWORD)WEXITSTATUS(st) : 998;
+        }
+        posix_spawn_file_actions_destroy(&fa);
+#else
         wchar_t wcmd[4096], wlog[1200]; wpath(cmd, wcmd, 4096); wpath(logp, wlog, 1200);
         SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
         HANDLE lh = CreateFileW(wlog, GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -108,6 +143,7 @@ static DWORD WINAPI qthread(LPVOID a) {
             WaitForSingleObject(pi.hProcess, INFINITE); GetExitCodeProcess(pi.hProcess, &code); CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
         }
         if (lh != INVALID_HANDLE_VALUE) CloseHandle(lh);
+#endif
         AcquireSRWLockExclusive(&g_lk);
         ent *e = find(r->key, 1);
         int got = code == 0 && load(e);
@@ -148,8 +184,8 @@ static int dump(const char *key, const NVNshaderData *sd) {
     uint8_t ctl[0x880] = {0}; memcpy(ctl, c, s2 ? 0xe0 : 0x880);
     mkdirs(g_dump);
     char p[1200]; FILE *f;
-    snprintf(p, sizeof p, "%s\\%s.ctl", g_dump, key); if (!(f = ufopen(p, L"wb"))) return 0; fwrite(ctl, 1, sizeof ctl, f); fclose(f);
-    snprintf(p, sizeof p, "%s\\%s.code", g_dump, key); if (!(f = ufopen(p, L"wb"))) return 0; fwrite((const void *)(uintptr_t)sd->data, 1, ncode, f); fclose(f);
+    snprintf(p, sizeof p, "%s" SEP "%s.ctl", g_dump, key); if (!(f = ufopen(p, L"wb"))) return 0; fwrite(ctl, 1, sizeof ctl, f); fclose(f);
+    snprintf(p, sizeof p, "%s" SEP "%s.code", g_dump, key); if (!(f = ufopen(p, L"wb"))) return 0; fwrite((const void *)(uintptr_t)sd->data, 1, ncode, f); fclose(f);
     return 1;
 }
 static const nxs_shader *get(const char *key, const NVNshaderData *sd) {

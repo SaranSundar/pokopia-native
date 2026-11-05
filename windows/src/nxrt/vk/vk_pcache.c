@@ -2,6 +2,7 @@
 // A saver thread writes it a few seconds after new pipelines stop arriving, through a temporary file and an atomic replace, so a crash or a kill
 // at any moment leaves either the previous file or the new one. The file is checked against this device's pipelineCacheUUID before use.
 #include "vk_internal.h"
+#include "nxrt/path_sep.h"
 #include <process.h>
 #include <shlobj.h>
 #include <stdio.h>
@@ -25,8 +26,8 @@ static int cache_dir(wchar_t *out, size_t n) {
     if (e && *e) { MultiByteToWideChar(CP_UTF8, 0, e, -1, out, (int)n); CreateDirectoryW(out, NULL); return 0; }
     wchar_t *la = NULL;
     if (SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, NULL, &la) != S_OK) return -1;
-    _snwprintf(out, n, L"%ls\\pokopia-native", la); CreateDirectoryW(out, NULL);
-    _snwprintf(out, n, L"%ls\\pokopia-native\\vulkan", la); CreateDirectoryW(out, NULL);
+    _snwprintf(out, n, L"%ls" NXRT_WSEP L"pokopia-native", la); CreateDirectoryW(out, NULL);
+    _snwprintf(out, n, L"%ls" NXRT_WSEP L"pokopia-native" NXRT_WSEP L"vulkan", la); CreateDirectoryW(out, NULL);
     CoTaskMemFree(la);
     return 0;
 }
@@ -52,7 +53,7 @@ int vkpc_init(void) {
     wchar_t dir[MAX_PATH];
     void *data = NULL; size_t size = 0;
     if (!cache_dir(dir, MAX_PATH)) {
-        _snwprintf(g_pc.path, MAX_PATH, L"%ls\\pipelines-%04x-%04x.bin", dir, g_vk.props.vendorID, g_vk.props.deviceID);
+        _snwprintf(g_pc.path, MAX_PATH, L"%ls" NXRT_WSEP L"pipelines-%04x-%04x.bin", dir, g_vk.props.vendorID, g_vk.props.deviceID);
         _snwprintf(g_pc.tmp, MAX_PATH, L"%ls.tmp", g_pc.path);
         FILE *f = _wfopen(g_pc.path, L"rb");
         if (f) {

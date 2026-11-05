@@ -38,7 +38,11 @@ static int count_true(const feat_any *f, size_t size) { int n = 0; size_t k = (s
 int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_inst_exts) {
     if (g_vk.up) return 0;
     InitializeSRWLock(&g_vk.qlock);
+#ifdef _WIN32
     if (vkf_load_global()) { VKRED("no Vulkan loader (vulkan-1.dll): the Vulkan renderer cannot start"); return -1; }
+#else
+    if (vkf_load_global()) { VKRED("no Vulkan loader (libvulkan.so.1): the Vulkan renderer cannot start (install your distribution's vulkan loader package)"); return -1; }
+#endif
     uint32_t iv = VK_API_VERSION_1_0; if (vkEnumerateInstanceVersion) vkEnumerateInstanceVersion(&iv);
     if (iv < VK_API_VERSION_1_3) { VKRED("the Vulkan loader is version %u.%u, 1.3 is needed", VK_API_VERSION_MAJOR(iv), VK_API_VERSION_MINOR(iv)); return -1; }
 
@@ -175,11 +179,16 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
     else if (!f2.features.textureCompressionBC) miss = "textureCompressionBC";
     else if (!f13.maintenance4) miss = "maintenance4";
     if (miss) { VKRED("%s lacks %s, which the renderer needs", g_vk.props.deviceName, miss); return -1; }
-    // Enabled: every supported feature except robustness that costs performance (robustBufferAccess stays on NVIDIA, as Ryujinx does) and capture/replay addresses
+    // Enabled: every supported feature except robustness that costs performance (robustBufferAccess stays on NVIDIA, as Ryujinx does) and capture/replay addresses.
+    // A CPU driver (lavapipe) gets buffer and image robustness: there a shader's read past a buffer is a page fault in the process. NXRT_VK_ROBUST=1 / 0 forces it.
+    const char *rob = getenv("NXRT_VK_ROBUST");
+    const int robust = rob ? atoi(rob) != 0 : g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
     VkPhysicalDeviceFeatures en = f2.features;
-    en.robustBufferAccess = g_vk.props.vendorID == 0x10de && f2.features.robustBufferAccess;
+    en.robustBufferAccess = (robust || (!rob && g_vk.props.vendorID == 0x10de)) && f2.features.robustBufferAccess;
     en.inheritedQueries = 0;
-    f13.robustImageAccess = 0; f12.bufferDeviceAddressCaptureReplay = 0; f12.bufferDeviceAddressMultiDevice = 0; f11.protectedMemory = 0;
+    f13.robustImageAccess = robust && f13.robustImageAccess; f12.bufferDeviceAddressCaptureReplay = 0; f12.bufferDeviceAddressMultiDevice = 0; f11.protectedMemory = 0;
+    if (robust) VKLOG("robust buffer access %s, robust image access %s (%s)", en.robustBufferAccess ? "on" : "unsupported", f13.robustImageAccess ? "on" : "unsupported",
+                      rob ? "NXRT_VK_ROBUST" : "a CPU driver");
     for (int i = 0; i < NEF; i++) {
         if (!fs[i]) continue;
         if (ef[i].st == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT) {

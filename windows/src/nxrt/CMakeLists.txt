@@ -3,18 +3,29 @@
 set(NXRT_HLE
   hle/hle_sdkinit.c hle/hle_offline.c hle/hle_net.c hle/hle_nvdrv.c hle/hle_account.c hle/hle_friends.c hle/hle_time.c hle/hle_table.c hle/hle_nvn.c
   hle/hle_fs.c hle/hle_oe.c hle/hle_sdk16.c hle/hle_hid.c hle/hle_touch.c hle/hle_haptics.c hle/hle_nv.c hle/hle_vi.c
-  hle/hle_audio.c hle/audio_silent.c hle/hle_audren.c hle/hle_misc.c hle/hle_codec.c hle/save_txn.c hle/hle_swkbd.c)
+  hle/hle_audio.c hle/audio_silent.c hle/hle_audren.c hle/hle_misc.c hle/hle_codec.c hle/hle_swkbd.c)
+# The platform's own files: Win32, or Linux (docs/LINUX-PLAN.md: plat/linux/windows.h gives the rest of nxrt the Win32 subset it uses)
+if(WIN32)
+  set(NXRT_PLAT plat/plat_win32.c host/addrspace.c host/prof.c hle/save_txn.c front/text_input_win.c)
+else()
+  set(NXRT_PLAT plat/plat_linux.c plat/win32_linux.c host/addrspace_linux.c host/prof_linux.c hle/save_txn_posix.c front/text_input_linux.c)
+endif()
 add_library(nxrt_core STATIC
-  plat/plat_win32.c
-  host/addrspace.c host/log.c host/crash.c host/hle_os.c host/thread.c host/hle_thread.c host/hle_svc.c host/rt.c host/hle.c host/loader.cpp
-  host/main.c host/ctl_standins.c host/hle_guestthread.c host/prof.c gfx/nvn_tex.c
-  gfx/gfx_select.c gfx/gfx_null.c gfx/nvn_dirty.c gfx/nvn_texio.c gfx/nxs_rt.c front/text_input_win.c
+  ${NXRT_PLAT}
+  host/log.c host/crash.c host/hle_os.c host/thread.c host/hle_thread.c host/hle_svc.c host/rt.c host/hle.c host/loader.cpp
+  host/main.c host/ctl_standins.c host/hle_guestthread.c gfx/nvn_tex.c
+  gfx/gfx_select.c gfx/gfx_null.c gfx/nvn_dirty.c gfx/nvn_texio.c gfx/nxs_rt.c
   ${NXRT_HLE}
   gen/out/hle_registry.gen.c gen/out/hle_stubs.gen.c)
 target_include_directories(nxrt_core PUBLIC include PRIVATE plat host hle gfx gen/out)
 target_compile_definitions(nxrt_core PUBLIC NXRT_BUILDING PRIVATE _USE_MATH_DEFINES)
 set_target_properties(nxrt_core PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_link_libraries(nxrt_core PUBLIC nxw_abi nxload nxw_interp s2tex PRIVATE bcrypt dbghelp coop user32)   # coop: Link Play (src/coop, docs/coop-step1b.md); user32: the keyboard's box
+if(WIN32)
+  target_link_libraries(nxrt_core PUBLIC nxw_abi nxload nxw_interp s2tex PRIVATE bcrypt dbghelp coop user32)   # coop: Link Play (src/coop, docs/coop-step1b.md); user32: the keyboard's box
+else()
+  target_include_directories(nxrt_core PUBLIC plat/linux plat)
+  target_link_libraries(nxrt_core PUBLIC nxw_abi nxload nxw_interp s2tex nxw_common ${CMAKE_DL_LIBS} pthread m PRIVATE coop)
+endif()
 # NXRT_PDB=ON: nxrt.exe with nxrt.pdb (CodeView), so the profiler (host/prof.c) names host functions
 option(NXRT_PDB "build nxrt with debug information for the profiler" OFF)
 if(NXRT_PDB)
@@ -24,11 +35,18 @@ endif()
 target_compile_options(nxrt_core PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wno-sign-compare -Wno-missing-field-initializers -Wno-unused-function>)
 
 # Every executable that hosts guest code: high-entropy ASLR off, so the host's own allocations stay out of the guest range (DESIGN D3)
+# Linux: the executable exports the rt_* ABI and the adapters dynamically, for game.so (docs/LINUX-PLAN.md L-D2), and finds libSDL3.so.0 beside itself
 function(nxrt_executable name)
   add_executable(${name} ${ARGN})
   target_link_libraries(${name} PRIVATE nxrt_core)
   target_include_directories(${name} PRIVATE plat host hle gen/out)
-  target_link_options(${name} PRIVATE -Xlinker /HIGHENTROPYVA:NO $<$<BOOL:${NXRT_PDB}>:-g>)
+  if(WIN32)
+    target_link_options(${name} PRIVATE -Xlinker /HIGHENTROPYVA:NO $<$<BOOL:${NXRT_PDB}>:-g>)
+  else()
+    target_link_options(${name} PRIVATE -rdynamic -Wl,-z,noexecstack)
+    # only $ORIGIN: CMake's build-tree rpath would carry the builder's home folder into the kit
+    set_target_properties(${name} PROPERTIES BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "$ORIGIN")
+  endif()
   set_target_properties(${name} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
 endfunction()
 
@@ -51,7 +69,8 @@ set_tests_properties(nxrt.dump PROPERTIES SKIP_RETURN_CODE 77)
 nxrt_executable(nxrt-tests-gamedll tests/test_game_dll.c)
 set_target_properties(nxrt-tests-gamedll PROPERTIES ENABLE_EXPORTS ON)
 add_library(nxrt_test_game SHARED tests/game_dll.c)
-target_include_directories(nxrt_test_game PRIVATE include)
+target_include_directories(nxrt_test_game PRIVATE include $<$<NOT:$<PLATFORM_ID:Windows>>:${CMAKE_CURRENT_SOURCE_DIR}/plat/linux;${CMAKE_CURRENT_SOURCE_DIR}/plat>)
+set_target_properties(nxrt_test_game PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})   # Linux: beside the test, as the DLL is
 target_link_libraries(nxrt_test_game PRIVATE nxw_abi nxrt-tests-gamedll)
 add_test(NAME nxrt.gamedll COMMAND nxrt-tests-gamedll)
 nxrt_executable(nxrt-tests-boot tests/test_boot_order.c)
@@ -70,9 +89,15 @@ add_test(NAME nxrt.nvn_rec COMMAND nxrt-tests-nvn-rec)
 # M6: the save round trip through nn::fs (docs/m6-input-gameplay.md)
 nxrt_executable(nxrt-tests-save-rt tests/test_save_rt.c tests/guest_test.c)
 add_test(NAME nxrt.save_rt COMMAND nxrt-tests-save-rt)
+if(NXW_LINUX)   # the software keyboard's box through a stand-in zenity (docs/LINUX-PLAN.md)
+  nxrt_executable(nxrt-tests-text-input tests/test_text_input.c)
+  add_test(NAME nxrt.text_input COMMAND nxrt-tests-text-input)
+endif()
 # M6 phase B: play.ps1's defaults (nxrt.exe and the work folder) however the script is started (docs/m6-phase-b.md)
-add_test(NAME scripts.play_defaults COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/scripts/test_play.ps1 -Repo ${CMAKE_SOURCE_DIR})
-set_tests_properties(scripts.play_defaults PROPERTIES SKIP_RETURN_CODE 77)
+if(WIN32)
+  add_test(NAME scripts.play_defaults COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/scripts/test_play.ps1 -Repo ${CMAKE_SOURCE_DIR})
+  set_tests_properties(scripts.play_defaults PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 # Co-op step 1b: the hooks route to the coop module (off: the offline answers; host / join: a node through the hooks with one made directly), one process each
 nxrt_executable(nxrt-tests-coop tests/test_coop.c)
 target_link_libraries(nxrt-tests-coop PRIVATE coop)

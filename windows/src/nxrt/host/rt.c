@@ -6,6 +6,10 @@
 #include "coop.h"
 #include <stddef.h>
 #include <stdatomic.h>
+#ifndef _WIN32
+#include <dlfcn.h>
+#include <link.h>
+#endif
 
 const uint32_t *rt_code_table;
 uint64_t rt_code_base, rt_code_words, rt_host_base;
@@ -57,7 +61,10 @@ static int table_put(uint64_t va, uint32_t rva) {
 }
 
 /* The token thunks: "mov edx, k; jmp common", common = "jmp [rip]; .quad nxrt_host_call". A table entry for token k is its thunk's RVA, so an indirect
-   call through a token reaches nxrt_host_call(cpu, k) with the caller's rcx (cpu) intact. The block must lie within 4 GB above the image */
+   call through a token reaches nxrt_host_call(cpu, k) with the caller's rcx (cpu) intact. The block must lie within 4 GB above the image.
+   Linux (System V): "mov esi, k", the caller's rdi (cpu) intact */
+#ifdef _WIN32
+#define THUNK_MOV_K 0xBA   /* mov edx, imm32 */
 static uint8_t *thunks_place(size_t n) {
     uint64_t lo = ((uint64_t)(uintptr_t)g_image + g_image_size + 0xffff) & ~0xffffull, hi = (uint64_t)(uintptr_t)g_image + 0xFFFFFFFFull - n;
     for (uint64_t a = lo; a < hi;) {
@@ -69,6 +76,24 @@ static uint8_t *thunks_place(size_t n) {
     }
     return NULL;
 }
+#else
+#define THUNK_MOV_K 0xBE   /* mov esi, imm32 */
+/* The first gap of n bytes in [lo, hi) after the mappings /proc/self/maps lists */
+static uint8_t *thunks_place(size_t n) {
+    uint64_t lo = ((uint64_t)(uintptr_t)g_image + g_image_size + 0xffff) & ~0xffffull, hi = (uint64_t)(uintptr_t)g_image + 0xFFFFFFFFull - n;
+    FILE *f = fopen("/proc/self/maps", "r");
+    char line[512];
+    uint64_t a = lo;
+    while (f && a < hi && fgets(line, sizeof line, f)) {
+        unsigned long long s, e;
+        if (sscanf(line, "%llx-%llx", &s, &e) != 2 || e <= a) continue;
+        if (s >= a + n) break;   /* the gap before this mapping is big enough */
+        a = (e + 0xffff) & ~0xffffull;
+    }
+    if (f) fclose(f);
+    return a < hi ? VirtualAlloc((void *)(uintptr_t)a, n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) : NULL;
+}
+#endif
 int nxrt_code_attach(void *image, size_t image_size) {
     if (!g_table) return -1;
     g_image = image; g_image_size = image_size; rt_host_base = (uint64_t)(uintptr_t)image;
@@ -80,13 +105,15 @@ int nxrt_code_attach(void *image, size_t image_size) {
     for (size_t k = 0; k < ntok; k++) {
         uint8_t *t = b + 16 + 16 * k;
         int32_t rel = (int32_t)(b - (t + 10));
-        t[0] = 0xBA; uint32_t kk = (uint32_t)k; memcpy(t + 1, &kk, 4);
+        t[0] = THUNK_MOV_K; uint32_t kk = (uint32_t)k; memcpy(t + 1, &kk, 4);
         t[5] = 0xE9; memcpy(t + 6, &rel, 4);
         memset(t + 10, 0xCC, 6);
     }
     DWORD old;
     if (!VirtualProtect(b, n, PAGE_EXECUTE_READ, &old)) return -1;
+#ifdef _WIN32
     FlushInstructionCache(GetCurrentProcess(), b, n);
+#endif
     for (size_t k = 0; k < ntok; k++)
         if (table_put(NXRT_TOKEN_BASE + k * NXRT_TOKEN_STRIDE, (uint32_t)(b + 16 + 16 * k - (uint8_t *)image))) return -1;
     LOG("code image %p (+%#zx), host-call thunks at %p", image, image_size, (void *)b);
@@ -141,13 +168,21 @@ static int interpret_function(uint64_t va) {
     void (*tramp)(NxwGuestCpu *) = nxw_interp_trampoline;
     uint32_t pc_off = (uint32_t)offsetof(NxwGuestCpu, pc);
     c[0] = 0x48; c[1] = 0xB8; memcpy(c + 2, &va, 8);
-    c[10] = 0x48; c[11] = 0x89; c[12] = 0x81; memcpy(c + 13, &pc_off, 4);
+#ifdef _WIN32
+    c[10] = 0x48; c[11] = 0x89; c[12] = 0x81; memcpy(c + 13, &pc_off, 4);   /* the cpu is the first argument: rcx (Windows x64) */
+#else
+    c[10] = 0x48; c[11] = 0x89; c[12] = 0x87; memcpy(c + 13, &pc_off, 4);   /* rdi (System V) */
+#endif
     c[17] = 0x48; c[18] = 0xB8; memcpy(c + 19, &tramp, 8);
     c[27] = 0xFF; c[28] = 0xE0;
     DWORD old;
     if (!VirtualProtect(f, sizeof c, PAGE_EXECUTE_READWRITE, &old)) return -1;
     memcpy(f, c, sizeof c);
+#ifdef _WIN32
     VirtualProtect(f, sizeof c, old, &old);
+#else
+    VirtualProtect(f, sizeof c, PAGE_EXECUTE_READ, &old);   /* game.so's text as the loader mapped it: the Linux VirtualProtect reports no old protection */
+#endif
     FlushInstructionCache(GetCurrentProcess(), f, sizeof c);
     return 0;
 }
@@ -173,6 +208,53 @@ static void interact_attach(void) {
 }
 
 /* The game DLL (the contract in rt_abi.h): its function list fills the table */
+#ifndef _WIN32
+/* game.so (docs/LINUX-PLAN.md L-D2): dlopen binds its rt_* imports to this executable; the image is its load bias up to the end of its last PT_LOAD
+   segment; self-relative entries become RVAs from the bias */
+typedef struct { uint64_t base, end; } so_extent;
+static int so_phdr(struct dl_phdr_info *i, size_t sz, void *p) {
+    (void)sz;
+    so_extent *x = p;
+    if (i->dlpi_addr != x->base) return 0;
+    for (int k = 0; k < i->dlpi_phnum; k++)
+        if (i->dlpi_phdr[k].p_type == PT_LOAD && x->base + i->dlpi_phdr[k].p_vaddr + i->dlpi_phdr[k].p_memsz > x->end)
+            x->end = x->base + i->dlpi_phdr[k].p_vaddr + i->dlpi_phdr[k].p_memsz;
+    return 1;
+}
+static uint32_t entry_rva(const NxwGameFunction *e, uint64_t base) {
+    if (!(e->flags & NXW_GAME_FN_SELFREL)) return e->rva;
+    return (uint32_t)((uint64_t)(uintptr_t)&e->rva + (uint64_t)(int64_t)(int32_t)e->rva - base);
+}
+int nxrt_attach_game_dll(const char *path) {
+    uint64_t t0 = now_ns();
+    void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!h) { LOG("[RED] cannot load the game library %s: %s", path, dlerror()); return -1; }
+    const uint32_t *abi = dlsym(h, "nxw_game_abi");
+    const NxwGameFunction *fns = dlsym(h, "nxw_game_functions");
+    const uint32_t *nfn = dlsym(h, "nxw_game_function_count");
+    const char *bid = dlsym(h, "nxw_game_build_id");
+    if (!abi || !fns || !nfn) { LOG("[RED] %s does not export the nxw_game_* contract", path); return -1; }
+    if (*abi != NXW_ABI_VERSION) { LOG("[RED] %s was built for runtime ABI %u, this runtime is %d", path, *abi, NXW_ABI_VERSION); return -1; }
+    if (bid && strncmp(bid, dm_main_build(), 32)) { LOG("[RED] %s is for main %s, the loaded main is %s", path, bid, dm_main_build()); return -1; }
+    struct link_map *lm = NULL;
+    if (dlinfo(h, RTLD_DI_LINKMAP, &lm) || !lm) { LOG("[RED] %s: no link map", path); return -1; }
+    so_extent x = {(uint64_t)lm->l_addr, 0};
+    dl_iterate_phdr(so_phdr, &x);
+    if (x.end <= x.base) { LOG("[RED] %s: no loaded segments", path); return -1; }
+    if (nxrt_code_attach((void *)(uintptr_t)x.base, (size_t)(x.end - x.base))) return -1;
+    uint32_t bad = 0;
+    g_by_rva = malloc(sizeof *g_by_rva * (*nfn ? *nfn : 1));
+    for (uint32_t i = 0; i < *nfn; i++) {
+        uint32_t rva = entry_rva(&fns[i], x.base);
+        bad += table_put(fns[i].guest_va, rva) != 0;
+        if (g_by_rva) g_by_rva[i] = (NxwGameFunction){fns[i].guest_va, rva, 0};
+    }
+    if (g_by_rva) { qsort(g_by_rva, *nfn, sizeof *g_by_rva, by_rva); g_nfn = *nfn; }
+    LOG("game library %s: base %#llx, %.1f MB, %u functions (main %.16s), table filled in %.1f ms%s", path, (unsigned long long)x.base,
+        (x.end - x.base) / 1048576.0, *nfn, bid ? bid : "?", (now_ns() - t0) / 1e6, bad ? " [RED] (some outside the table)" : "");
+    return bad ? -1 : 0;
+}
+#else
 int nxrt_attach_game_dll(const char *path) {
     uint64_t t0 = now_ns();
     HMODULE h = LoadLibraryA(path);
@@ -195,6 +277,7 @@ int nxrt_attach_game_dll(const char *path) {
     if (!bad && coop_interact_on()) interact_attach();
     return bad ? -1 : 0;
 }
+#endif
 
 /* ---- Host-to-guest calls ---- */
 uint64_t nxrt_guest_call(uint64_t va, int n, const uint64_t *args) {
@@ -424,8 +507,13 @@ static DWORD WINAPI watch_thread(void *u) {
         char peek[80] = "";
         if (g_peek_len) {
             uint64_t obj = *(volatile uint64_t *)(uintptr_t)g_peek_slot;   /* a slot in main's data: always mapped */
+#ifdef _WIN32
             MEMORY_BASIC_INFORMATION m;
             if (obj && VirtualQuery((void *)(uintptr_t)(obj + g_peek_off), &m, sizeof m) && m.State == MEM_COMMIT && (m.Protect & (PAGE_READWRITE | PAGE_READONLY))) {
+#else
+            uint8_t probe[64];   /* readable: plat_read fails instead of faulting */
+            if (obj && !plat_read(obj + g_peek_off, probe, g_peek_len < (int)sizeof probe ? (size_t)g_peek_len : sizeof probe)) {
+#endif
                 int o = snprintf(peek, sizeof peek, " peek=");
                 for (int i = 0; i < g_peek_len && o < (int)sizeof peek - 3; i++) o += snprintf(peek + o, sizeof peek - o, "%02x", ((volatile uint8_t *)(uintptr_t)(obj + g_peek_off))[i]);
             }

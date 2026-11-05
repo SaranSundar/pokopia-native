@@ -222,7 +222,15 @@ static int64_t block(thr_t *t, int kind, int64_t ns) {
             // wait_until's (G released; it ends at a wake as well, which the loop then finds under G), after which the wait has timed out
             uint64_t now = now_ns();
             if (now >= deadline) rc = ETIMEDOUT;
+#ifdef _WIN32
             else if (deadline - now > 2500000) SleepConditionVariableSRW(&t->cv, &G, (DWORD)((deadline - now - 1500000) / 1000000), 0);
+#else
+            else if (deadline - now > 2500000) {   // Linux: the same shape; pthread's timed wait takes a CLOCK_REALTIME deadline
+                uint64_t until = plat_realtime_ns() + (deadline - now - 1500000);
+                struct timespec ts = {(time_t)(until / 1000000000u), (long)(until % 1000000000u)};
+                pthread_cond_timedwait(&t->cv, &G, &ts);
+            }
+#endif
             else { pthread_mutex_unlock(&G); wait_until(deadline, &t->woke, ns); pthread_mutex_lock(&G); rc = ETIMEDOUT; }
         } else rc = pthread_cond_wait(&t->cv, &G);
         if (rc == ETIMEDOUT && !t->woke && (!det_wait || guest_ns() >= guest_deadline)) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }

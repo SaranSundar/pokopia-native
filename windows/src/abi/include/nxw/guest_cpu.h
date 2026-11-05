@@ -9,6 +9,8 @@
 #include <stdint.h>
 
 #define NXW_ABI_VERSION 1
+/* nxw_game_functions[].flags (src/nxrt/include/nxrt/rt_abi.h): the entry's rva is fn - &rva, signed (game.so, docs/LINUX-PLAN.md L-D2) */
+#define NXW_GAME_FN_SELFREL 1u
 
 #ifdef __cplusplus
 extern "C" {

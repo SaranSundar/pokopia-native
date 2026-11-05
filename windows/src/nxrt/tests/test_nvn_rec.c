@@ -19,7 +19,11 @@
 #include "../gfx/nvn_texio.h"
 #include "../gfx/nvn_dirty.h"
 #include "../gfx/nxs_rt.h"
+#ifdef _WIN32
 #include <bcrypt.h>
+#else
+#include "nxw/sha256.h"
+#endif
 
 NXRT_EARLY_RESERVE()
 uint64_t dm_guest_frame(void);                       /* hle_thread.c */
@@ -51,12 +55,18 @@ static void mem_callback(NxwGuestCpu *c) {
     g_cb_next += g_cb_chunk;
 }
 
+#ifndef _WIN32
+static void sha256_2(const void *a, size_t na, const void *b, size_t nb, uint8_t out[32]) {
+    nxw_sha256 c; nxw_sha256_init(&c); nxw_sha256_update(&c, a, na); nxw_sha256_update(&c, b, nb); nxw_sha256_final(&c, out);
+}
+#else
 static void sha256_2(const void *a, size_t na, const void *b, size_t nb, uint8_t out[32]) {
     BCRYPT_ALG_HANDLE alg; BCRYPT_HASH_HANDLE h;
     BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, NULL, 0); BCryptCreateHash(alg, &h, NULL, 0, NULL, 0, 0);
     BCryptHashData(h, (PUCHAR)a, (ULONG)na, 0); BCryptHashData(h, (PUCHAR)b, (ULONG)nb, 0); BCryptFinishHash(h, out, 32, 0);
     BCryptDestroyHash(h); BCryptCloseAlgorithmProvider(alg, 0);
 }
+#endif
 /* the ops of one recording, following JUMPs (CALLs are not entered) */
 static int ops_of(const uint8_t *p, uint32_t *ops, int max) {
     int n = 0;

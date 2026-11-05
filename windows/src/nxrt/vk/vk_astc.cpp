@@ -1,6 +1,7 @@
 // ASTC -> BC7 with a persistent cache (vk_astc.h; docs/m5-vulkan.md §4.3). astc-encoder 5.7.0 (Apache-2.0, third_party/astcenc) decodes, bc7enc
 // (MIT / Unlicense, third_party/bc7enc) encodes. Written from their public headers.
 #include "vk_astc.h"
+#include "nxrt/path_sep.h"
 #include "third_party/astcenc/astcenc.h"
 #include "third_party/bc7enc/bc7enc.h"
 #include "third_party/bc7enc/bc7decomp.h"
@@ -48,7 +49,7 @@ static vka_key make_key(const uint8_t *astc, size_t n, uint32_t w, uint32_t h, u
     vka_key k; k.lo = hash64(astc, n, VKA_VERSION ^ shape); k.hi = hash64(astc, n, ~VKA_VERSION ^ (shape * 0x2545F4914F6CDD1Dull)); return k;
 }
 
-static void path_of(const vka_key &k, int q, wchar_t *out) { _snwprintf(out, MAX_PATH, L"%ls\\%016llx%016llx-q%d.bc7", g_dir, (unsigned long long)k.hi, (unsigned long long)k.lo, q); }
+static void path_of(const vka_key &k, int q, wchar_t *out) { _snwprintf(out, MAX_PATH, L"%ls" NXRT_WSEP L"%016llx%016llx-q%d.bc7", g_dir, (unsigned long long)k.hi, (unsigned long long)k.lo, q); }
 static int cache_read(const vka_key &k, int q, uint8_t *out, size_t size, uint32_t w, uint32_t h, uint32_t s) {
     if (!g_dir[0]) return 0;
     wchar_t p[MAX_PATH]; path_of(k, q, p);
@@ -199,8 +200,8 @@ extern "C" int vka_init(const char *dir) {
     else {
         const char *e = getenv("NXRT_VK_CACHE_DIR"); wchar_t base[MAX_PATH] = L"";
         if (e && *e) MultiByteToWideChar(CP_UTF8, 0, e, -1, base, MAX_PATH);
-        else { wchar_t *la = nullptr; if (SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &la) == S_OK) { _snwprintf(base, MAX_PATH, L"%ls\\pokopia-native", la); CreateDirectoryW(base, nullptr); _snwprintf(base, MAX_PATH, L"%ls\\pokopia-native\\vulkan", la); CoTaskMemFree(la); } }
-        if (base[0]) { CreateDirectoryW(base, nullptr); _snwprintf(g_dir, MAX_PATH, L"%ls\\astc-bc7", base); }
+        else { wchar_t *la = nullptr; if (SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &la) == S_OK) { _snwprintf(base, MAX_PATH, L"%ls" NXRT_WSEP L"pokopia-native", la); CreateDirectoryW(base, nullptr); _snwprintf(base, MAX_PATH, L"%ls" NXRT_WSEP L"pokopia-native" NXRT_WSEP L"vulkan", la); CoTaskMemFree(la); } }
+        if (base[0]) { CreateDirectoryW(base, nullptr); _snwprintf(g_dir, MAX_PATH, L"%ls" NXRT_WSEP L"astc-bc7", base); }
     }
     if (g_dir[0]) CreateDirectoryW(g_dir, nullptr);
     { std::lock_guard<std::mutex> lk(g_mu); g_stop = false; }

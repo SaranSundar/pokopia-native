@@ -9,6 +9,9 @@
 #include <string.h>
 
 void dm_guest_write_prepare(void *addr, size_t len);   // host/crash.c: unprotect before the host writes guest memory
+#ifndef _WIN32
+int dm_guest_readable_run(uint64_t a, uint64_t *end);   // host/hle_svc.c: what VirtualQuery tells on Windows
+#endif
 
 enum { PAGE = 4096, GRAN = 2u << 20, HOT_STREAK = 3, HOT_COOL_FRAMES = 240, MAXPOOL = 4096, RUN_MAX = 1024 };
 typedef struct {
@@ -205,10 +208,20 @@ static int pool_bind(pool_t_ *p, uint64_t o, uint64_t n) {
 }
 
 // Guest memory is read with a guard: a page that is not mapped any more (a pool the game freed without finalizing) reads as zeros instead of crashing
+#ifdef _WIN32
 static int guest_copy(void *dst, const void *src, size_t n) {
     __try { memcpy(dst, src, n); return 0; }
     __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { memset(dst, 0, n); return -1; }
 }
+#else
+static int guest_copy(void *dst, const void *src, size_t n) {
+    plat_guard g; PLAT_GUARD_PUSH(&g);
+    if (sigsetjmp(g.jb, 0)) { memset(dst, 0, n); return -1; }
+    memcpy(dst, src, n);
+    PLAT_GUARD_POP(&g);
+    return 0;
+}
+#endif
 
 static void page_rewritten(pool_t_ *p, uint64_t pg) {   // a page copied before and written again: hot after HOT_STREAK frames in a row
     if (p->last_dirty[pg] == (uint32_t)g_frame) return;
@@ -250,11 +263,19 @@ static uint64_t pool_sync(pool_t_ *p, uint64_t p0, uint64_t p1, VkCommandBuffer 
         // regions, which the tracker's protections split finely: in gameplay it was 70 % of the render thread's time. Pages seen committed are remembered
         // (a pool's memory stays committed while the pool exists) and only a run that starts on a page not known yet is asked about
         uint64_t known = run0; while (known < pg && p->committed[known]) known++;
+#ifdef _WIN32
         MEMORY_BASIC_INFORMATION mi;
         if (known > run0) pg = known;   // the known part now, the rest in the next run
         else if (VirtualQuery((const void *)(p->base + run0 * PAGE), &mi, sizeof mi)) {
             uint64_t rend = ((uintptr_t)mi.BaseAddress + mi.RegionSize - p->base) / PAGE;
             int readable = mi.State == MEM_COMMIT && !(mi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
+#else
+        uint64_t rend_a;
+        if (known > run0) pg = known;
+        else {
+            int readable = dm_guest_readable_run(p->base + run0 * PAGE, &rend_a);
+            uint64_t rend = (rend_a - p->base + PAGE - 1) / PAGE;
+#endif
             if (rend < pg) pg = rend > run0 ? rend : run0 + 1;
             if (!readable) {
                 if (budget == UINT64_MAX) { if (pool_bind(p, run0 * PAGE, (pg - run0) * PAGE)) break; batch_flush(&b, p, cb); vkCmdFillBuffer(cb, p->buf, run0 * PAGE, (pg - run0) * PAGE, 0); }

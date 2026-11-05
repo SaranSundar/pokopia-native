@@ -3,6 +3,7 @@
 #include "vk_tex.h"
 #include "vk_submit.h"
 #include "vk_present.h"
+#include "nxrt/path_sep.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -112,7 +113,7 @@ int vks_shot_capture(const tex_t *t, const int crop[4], int flip, uint8_t **rgba
 
 static void shot_path(char *out, size_t n, uint64_t frame, const char *suffix) {
     const char *lp = nxrt_log_path();
-    if (*g_dir) snprintf(out, n, "%s\\shot-%06llu%s.png", g_dir, (unsigned long long)frame, suffix);
+    if (*g_dir) snprintf(out, n, "%s" NXRT_SEP "shot-%06llu%s.png", g_dir, (unsigned long long)frame, suffix);
     else snprintf(out, n, "%s.shot-%06llu%s.png", lp && *lp ? lp : "nxrt", (unsigned long long)frame, suffix);
 }
 static int origin_ll(void) { extern int vk_origin_lower_left(void); return vk_origin_lower_left(); }

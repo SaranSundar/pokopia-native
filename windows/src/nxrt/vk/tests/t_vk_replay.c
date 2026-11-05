@@ -6,6 +6,7 @@
    and control-file triggers write). M6 phase B: colour and stencil clears through their masks, a GPU copy read back into a storage-backed texture, and the dual-source
    and alpha-test fragment variants drawn. The GPU part is skipped without a device (77 overall only when nothing could run). */
 #include "vk_test.h"
+#include "nxrt/path_sep.h"
 #include "vk_pipe.h"
 #include "vk_shader.h"
 #include "vk_replay.h"
@@ -228,7 +229,7 @@ int main(void) {
     cpu_part();
     char tmp[MAX_PATH], dir[MAX_PATH], ctl[MAX_PATH], ctl_out[MAX_PATH];
     GetTempPathA(MAX_PATH, tmp); snprintf(dir, sizeof dir, "%snxrt-t-vk-replay-shots", tmp); CreateDirectoryA(dir, NULL);
-    snprintf(ctl, sizeof ctl, "%s\\take.txt", dir); snprintf(ctl_out, sizeof ctl_out, "%s\\from-control.png", dir);
+    snprintf(ctl, sizeof ctl, "%s" NXRT_SEP "take.txt", dir); snprintf(ctl_out, sizeof ctl_out, "%s" NXRT_SEP "from-control.png", dir);
     char e1[MAX_PATH + 32], e2[MAX_PATH + 32];
     snprintf(e1, sizeof e1, "NXRT_VK_SHOT_DIR=%s", dir); _putenv(e1); _putenv("NXRT_VK_SHOT=3");
     snprintf(e2, sizeof e2, "NXRT_VK_SHOT_FILE=%s", ctl); _putenv(e2);
@@ -372,7 +373,7 @@ int main(void) {
     CHECK(same, "the capture is the cropped region, rows turned over");
     free(cap);
     vks_shot_present(&ta, 3, NULL);
-    char shot3[MAX_PATH + 32]; snprintf(shot3, sizeof shot3, "%s\\shot-000003.png", dir);
+    char shot3[MAX_PATH + 32]; snprintf(shot3, sizeof shot3, "%s" NXRT_SEP "shot-000003.png", dir);
     int pw = 0, ph = 0; uint8_t *px = png_read(shot3, &pw, &ph, &why);
     CHECK(px && pw == TW && ph == TH, "present 3 written as %s (%s)", shot3, why ? why : "ok");
     free(px); DeleteFileA(shot3);

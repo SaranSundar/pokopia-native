@@ -32,12 +32,18 @@ def below_normal():
     if sys.platform == 'win32':
         try: ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), BELOW_NORMAL)
         except Exception: pass
+    else:
+        try: os.nice(4)   # Linux (docs/LINUX-PLAN.md): a few steps down, as below-normal is on Windows
+        except OSError: pass
 
 
 def vk_tool(name):
-    """SPIRV-Tools: NXSHADER_TOOLS (the folder the installer's Windows download ships them in), then the Vulkan SDK, then the PATH"""
-    for d in (os.environ.get('NXSHADER_TOOLS'), os.path.join(os.environ.get('VULKAN_SDK') or r'C:\VulkanSDK\1.4.363.0', 'Bin')):
-        if d and os.path.exists(os.path.join(d, name + '.exe')): return os.path.join(d, name + '.exe')
+    """SPIRV-Tools: NXSHADER_TOOLS (the folder the installer's Windows or Linux download ships them in), then the Vulkan SDK, then the PATH"""
+    exe = name + '.exe' if sys.platform == 'win32' else name
+    sdk_bin = os.path.join(os.environ.get('VULKAN_SDK') or r'C:\VulkanSDK\1.4.363.0', 'Bin') if sys.platform == 'win32' else \
+        os.path.join(os.environ.get('VULKAN_SDK') or '/usr', 'bin')
+    for d in (os.environ.get('NXSHADER_TOOLS'), sdk_bin):
+        if d and os.path.exists(os.path.join(d, exe)): return os.path.join(d, exe)
     return shutil.which(name)
 
 
@@ -231,7 +237,8 @@ def cmd_ondemand(a):
     if not (os.path.exists(ctl_p) and os.path.exists(code_p)): print(f'[RED] ondemand {key}: no dump {ctl_p} / .code'); return 2
     tools, py = os.path.join(a.installer, 'tools'), sys.executable
     ampere = os.environ.get('AMPERE_LOWER') or next((p for p in (os.path.join(a.installer, 'ampere-lower', 'windows', 'ampere-lower.exe'),   # as the installer ships it
-                                                             os.path.join(a.installer, 'ampere-lower', 'ampere-lower.exe')) if os.path.exists(p)), '')
+                                                             os.path.join(a.installer, 'ampere-lower', 'ampere-lower.exe'),
+                                                             os.path.join(a.installer, 'ampere-lower', 'ampere-lower')) if os.path.exists(p)), '')   # Linux, as build.sh makes it
     t0 = time.time()
     s = tempfile.mkdtemp(prefix='nxshader_od_')
     try:

@@ -2,6 +2,7 @@
 // Vulkan meet; the enumerant values are the NVN header's and the Vulkan specification's.
 #include "vk_pipe.h"
 #include "vk_hmap.h"
+#include "nxrt/path_sep.h"
 #include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -320,7 +321,7 @@ static vk_hmap g_mf_seen = {8};   // the lines listed already (by hash)
 static uint64_t line_hash(const char *l) { return vk_hm_hash(l, (uint32_t)strlen(l)) | 1; }
 static int manifest_path(wchar_t *out, size_t n) {
     const wchar_t *pc = vkpc_path(); if (!pc || !pc[0]) return -1;
-    _snwprintf(out, n, L"%ls", pc); wchar_t *sl = wcsrchr(out, L'\\'); if (!sl) return -1;
+    _snwprintf(out, n, L"%ls", pc); wchar_t *sl = wcsrchr(out, NXRT_WSEPC); if (!sl) return -1;
     _snwprintf(sl + 1, n - (size_t)(sl + 1 - out), L"pipelines.tsv");
     return 0;
 }

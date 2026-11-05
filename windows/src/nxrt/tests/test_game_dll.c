@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "nxrt/runtime.h"
+#ifndef _WIN32
+#include <dlfcn.h>
+#include <link.h>
+#endif
 
 NXRT_EARLY_RESERVE()
 
@@ -22,11 +26,19 @@ int main(void) {
     nxrt_thread_main_init();
     char path[MAX_PATH];
     GetModuleFileNameA(NULL, path, sizeof path);
+#ifdef _WIN32
     char *slash = strrchr(path, '\\');
     strcpy(slash ? slash + 1 : path, "nxrt_test_game.dll");
     T(nxrt_attach_game_dll(path) == 0);
     HMODULE h = GetModuleHandleA("nxrt_test_game.dll");
     T(h && rt_host_base == (uint64_t)(uintptr_t)h);
+#else
+    char *slash = strrchr(path, '/');
+    strcpy(slash ? slash + 1 : path, "libnxrt_test_game.so");
+    T(nxrt_attach_game_dll(path) == 0);
+    void *h = dlopen(path, RTLD_NOW | RTLD_NOLOAD); struct link_map *lm = NULL;
+    T(h && !dlinfo(h, RTLD_DI_LINKMAP, &lm) && lm && rt_host_base == (uint64_t)lm->l_addr);
+#endif
     NxwGuestCpu *c = nxrt_cur_cpu();
     /* each function through the table */
     c->x[0] = 5; nxrt_code_lookup(VA_A)(c); T(c->x[0] == 16);

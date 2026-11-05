@@ -821,10 +821,20 @@ static void bind_vertex_buffers(VkCommandBuffer cb, uint32_t used, int use_zero)
     }
     if (use_zero) { VkDeviceSize o = 0, n = ZERO_SIZE; vkCmdBindVertexBuffers2(cb, 16, 1, &R0.zero, &o, &n, NULL); }
 }
+#ifdef _WIN32
 static int read_u32(uint64_t a, uint32_t *v) {   // guest memory, guarded
     __try { memcpy(v, (const void *)(uintptr_t)a, 4); return 1; }
     __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { return 0; }
 }
+#else
+static int read_u32(uint64_t a, uint32_t *v) {   // guest memory, guarded
+    plat_guard g; PLAT_GUARD_PUSH(&g);
+    if (sigsetjmp(g.jb, 0)) return 0;
+    memcpy(v, (const void *)(uintptr_t)a, 4);
+    PLAT_GUARD_POP(&g);
+    return 1;
+}
+#endif
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (S->render_skip) { g_st.draws_skipped++; return; }
     int prim = dw ? dw->prim : di->prim, expand;

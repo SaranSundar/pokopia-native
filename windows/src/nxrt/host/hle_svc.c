@@ -24,6 +24,30 @@ static _Atomic uint64_t *g_alias_bits;   // alias region page bitmap (alias_page
 static uint64_t *g_alias_exposed;   // one bit per page ever opened; protected by g_map_lock
 static uint8_t *g_stack; static size_t g_stack_cap;
 int dm_guest_as_contains(uintptr_t a) { uintptr_t b = (uintptr_t)g_as; return g_as && a >= b && a - b < g_reserve; }
+#ifndef _WIN32
+static _Atomic uint64_t *g_heap_chunks;
+static uint64_t alias_run_end(uint64_t p, uint64_t end, int mapped);
+// Linux stand-in for VirtualQuery's state and protection (vk_mem.c's pool sync): 1 when the page at a can be read without committing anything,
+// *end = where that answer may change. Heap: the chunk is committed and below the open end; alias: the page is mapped; elsewhere a probe
+int dm_guest_readable_run(uint64_t a, uint64_t *end) {
+    uint64_t pg = a & ~0xfffull, hb = (uint64_t)(uintptr_t)g_heap, ab = (uint64_t)(uintptr_t)g_alias;
+    if (g_heap && pg >= hb && pg - hb < g_heap_cap) {
+        uint64_t off = pg - hb, chunk = off >> 20, cend = hb + ((chunk + 1) << 20), cur = atomic_load(&g_heap_cur);
+        int ok = off < cur && (atomic_load(&g_heap_chunks[chunk >> 6]) >> (chunk & 63) & 1);
+        *end = ok && hb + cur < cend ? hb + cur : cend;
+        return ok;
+    }
+    if (g_alias && pg >= ab && pg - ab < g_alias_cap) {
+        uint64_t p = (pg - ab) >> 12, e = g_alias_cap >> 12;
+        int ok = atomic_load(&g_alias_bits[p >> 6]) >> (p & 63) & 1;
+        *end = ab + (alias_run_end(p, e, ok) << 12);
+        return ok;
+    }
+    uint8_t probe;
+    *end = pg + 0x1000;
+    return !plat_read(pg, &probe, 1);
+}
+#endif
 
 // ---- Lazy heap commit: one bit per 1 MB chunk committed (and open as far as the heap is open) ----
 #define HEAP_CHUNK 0x100000ull
@@ -45,11 +69,16 @@ static int heap_fault(void *addr, int is_write, void *ctx) {   // a fault hook: 
     uint64_t chunk = (a - b) / HEAP_CHUNK;
     if (atomic_load(&g_heap_chunks[chunk >> 6]) >> (chunk & 63) & 1) {   // committed already
         if (is_write && dm_fault_is_wp(addr)) return 0;   // the dirty tracker's write protection, without a VirtualQuery: its hook comes next
+#ifdef _WIN32
         MEMORY_BASIC_INFORMATION mi;
         if (!VirtualQuery(addr, &mi, sizeof mi)) return 0;
         if (mi.State == MEM_COMMIT && (mi.Protect & 0xff) == PAGE_READONLY) return 0;   // a write to a write-protected page: the dirty tracker's hook
         if (mi.State != MEM_COMMIT || (mi.Protect & 0xff) == PAGE_NOACCESS)            // still being opened by another thread, or closed: this page only
             VirtualAlloc((void *)(uintptr_t)(a & ~0xfffull), 0x1000, MEM_COMMIT, PAGE_READWRITE);
+#else
+        // Linux has no cheap query: the tracker above is the only one that makes heap pages read-only, so this is a chunk another thread is still opening
+        as_protect(a & ~0xfffull, 0x1000, PAGE_READWRITE);
+#endif
         return 1;   // accessible now: run the access again
     }
     heap_chunk_open(chunk, cur);

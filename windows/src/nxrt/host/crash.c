@@ -2,11 +2,17 @@
 // Windows: signals become a vectored exception handler (fault hooks: write-protect dirty tracking, the code table's lazy pages) and an unhandled
 // exception filter (the crash report). The report goes to the log and to <log>.crash.txt, with the faulting thread's guest context: its NxwGuestCpu.
 // Dropped: the progress watchdog (DM_WATCH; diagnostic), the Mac sampler, the iOS dump port.
+// Linux (docs/LINUX-PLAN.md L-D4): SIGSEGV / SIGBUS on an alternate stack run the same hook chain, then a plat_guard recovery point, then the report.
 #include "dm.h"
 #include "nxrt/runtime.h"
 
 #include <signal.h>
 #include <stdatomic.h>
+#ifndef _WIN32
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <ucontext.h>
+#endif
 
 // ---------- Page fault hooks (write-protect dirty page tracking, lazily committed tables) ----------
 // Called in registration order; returning 1 = handled (the faulting instruction runs again); the crash path is taken only when all return 0.
@@ -39,6 +45,14 @@ static void addr_name(uint64_t a, char *out, size_t n) {
     if (module_of((void *)(uintptr_t)a) || nxrt_token_name(a) || a == NXRT_RETURN_TO_HOST) { nxrt_symbolize(a, out, n); return; }
     uint64_t off = 0, g = nxrt_host_to_guest(a, &off);
     if (g) { char s[160]; nxrt_symbolize(g, s, sizeof s); snprintf(out, n, "game:%s (+%#llx)", s, (unsigned long long)off); return; }
+#ifndef _WIN32
+    Dl_info di;
+    if (a > 0x10000 && dladdr((void *)(uintptr_t)a, &di) && di.dli_fname) {
+        const char *b = strrchr(di.dli_fname, '/');
+        snprintf(out, n, "%s+%#llx", b ? b + 1 : di.dli_fname, (unsigned long long)(a - (uint64_t)(uintptr_t)di.dli_fbase));
+        return;
+    }
+#else
     HMODULE h = NULL; char path[MAX_PATH];
     if (a > 0x10000 && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)(uintptr_t)a, &h) &&
         GetModuleFileNameA(h, path, sizeof path)) {
@@ -46,6 +60,7 @@ static void addr_name(uint64_t a, char *out, size_t n) {
         snprintf(out, n, "%s+%#llx", b ? b + 1 : path, (unsigned long long)(a - (uint64_t)(uintptr_t)h));
         return;
     }
+#endif
     snprintf(out, n, "%#llx", (unsigned long long)a);
 }
 
@@ -91,6 +106,43 @@ static void report_cpu(FILE *f, const NxwGuestCpu *c) {
     fputc('\n', f);
 }
 
+#ifndef _WIN32
+// The faulting thread's own frames from the unwinder (game.so and nxrt carry .eh_frame), starting at the signal handler; the fault's pc first
+typedef struct { int sig; siginfo_t *si; ucontext_t *uc; } sig_ctx;
+static void report_host_stack(FILE *f, const sig_ctx *sc) {
+    void *fr[48];
+    int n = backtrace(fr, 48);
+    char nm[96];
+    fprintf(f, "host frames:");
+    if (sc->uc) { addr_name((uint64_t)sc->uc->uc_mcontext.gregs[REG_RIP], nm, sizeof nm); fprintf(f, " %s |", nm); }
+    for (int i = 0; i < n; i++) { addr_name((uint64_t)(uintptr_t)fr[i], nm, sizeof nm); fprintf(f, " %s", nm); }
+    fputc('\n', f);
+}
+// The thread's name and the mappings (/proc/self/maps) that hold the pc and the faulting address: code outside every module is a driver's JIT (lavapipe)
+// or the game's; an address in no mapping prints its neighbours
+static void report_maps(FILE *f, uint64_t pc, uint64_t addr, int has_addr) {
+    char p[64], name[32] = "?"; snprintf(p, sizeof p, "/proc/self/task/%lu/comm", (unsigned long)GetCurrentThreadId());
+    FILE *c = fopen(p, "r");
+    if (c) { if (fgets(name, sizeof name, c)) name[strcspn(name, "\n")] = 0; fclose(c); }
+    fprintf(f, "thread name: %s\n", name);
+    FILE *m = fopen("/proc/self/maps", "r");
+    if (!m) return;
+    char line[512], below[512] = "", above[512] = "";
+    int pc_seen = 0, addr_seen = !has_addr;
+    while (fgets(line, sizeof line, m)) {
+        unsigned long long lo, hi;
+        if (sscanf(line, "%llx-%llx", &lo, &hi) != 2) continue;
+        line[strcspn(line, "\n")] = 0;
+        if (pc >= lo && pc < hi) { fprintf(f, "  pc in: %s\n", line); pc_seen = 1; }
+        if (has_addr && addr >= lo && addr < hi) { fprintf(f, "  address in: %s\n", line); addr_seen = 1; }
+        if (has_addr && hi <= addr) snprintf(below, sizeof below, "%s", line);
+        if (has_addr && lo > addr && !*above) snprintf(above, sizeof above, "%s", line);
+    }
+    fclose(m);
+    if (!pc_seen) fprintf(f, "  pc in no mapping\n");
+    if (!addr_seen) fprintf(f, "  address in no mapping; below it: %s; above it: %s\n", *below ? below : "-", *above ? above : "-");
+}
+#else
 static void report_host_stack(FILE *f, const CONTEXT *ctx) {
     CONTEXT c = *ctx;
     fprintf(f, "host frames:");
@@ -107,6 +159,7 @@ static void report_host_stack(FILE *f, const CONTEXT *ctx) {
     }
     fputc('\n', f);
 }
+#endif
 
 // Only the first crashing thread prints its state: when several threads crash at once the dumps used to interleave. Later threads wait for the
 // process to end; the first thread crashing again while printing exits at once
@@ -114,20 +167,45 @@ static _Atomic uint32_t g_crash_owner;
 static int crash_gate(void) {
     uint32_t me = GetCurrentThreadId(), none = 0;
     if (atomic_compare_exchange_strong(&g_crash_owner, &none, me)) return 1;
+#ifdef _WIN32
     if (none == me) ExitProcess(70);
     for (;;) Sleep(INFINITE);
+#else
+    if (none == me) _exit(70);
+    for (;;) pause();
+#endif
 }
 
 // The report: the log gets it too, and <log>.crash.txt keeps it whatever happens to the log afterwards
 void crash_report(const char *why, const void *ctx_) {
+#ifdef _WIN32
     const EXCEPTION_POINTERS *ep = ctx_;
+#else
+    const sig_ctx *ep = ctx_;
+#endif
     crash_gate();
     char path[MAX_PATH + 16]; snprintf(path, sizeof path, "%s.crash.txt", *nxrt_log_path() ? nxrt_log_path() : "nxrt");
     FILE *f = fopen(path, "w");
     for (int pass = 0; pass < 2; pass++) {
         FILE *o = pass ? stderr : f;
         if (!o) continue;
-        fprintf(o, "nxrt crash report: %s\nthread %lu, game build %s\n", why, GetCurrentThreadId(), dm_main_build());
+        fprintf(o, "nxrt crash report: %s\nthread %lu, game build %s\n", why, (unsigned long)GetCurrentThreadId(), dm_main_build());
+#ifndef _WIN32
+        if (ep) {
+            char at[96], a2[96];
+            addr_name(ep->uc ? (uint64_t)ep->uc->uc_mcontext.gregs[REG_RIP] : 0, at, sizeof at);
+            fprintf(o, "signal %d (%s) at %s", ep->sig, strsignal(ep->sig), at);
+            if ((ep->sig == SIGSEGV || ep->sig == SIGBUS) && ep->si) {
+                addr_name((uint64_t)(uintptr_t)ep->si->si_addr, a2, sizeof a2);
+                long err = ep->uc ? (long)ep->uc->uc_mcontext.gregs[REG_ERR] : 0;
+                fprintf(o, ": %s %s", err & 2 ? "write to" : err & 16 ? "execute" : "read of", a2);
+            }
+            fputc('\n', o);
+            report_host_stack(o, ep);
+            report_maps(o, ep->uc ? (uint64_t)ep->uc->uc_mcontext.gregs[REG_RIP] : 0, (uint64_t)(uintptr_t)(ep->si ? ep->si->si_addr : 0),
+                        (ep->sig == SIGSEGV || ep->sig == SIGBUS) && ep->si);
+        }
+#else
         if (ep) {
             const EXCEPTION_RECORD *er = ep->ExceptionRecord; char at[96], a2[96];
             addr_name((uint64_t)(uintptr_t)er->ExceptionAddress, at, sizeof at);
@@ -139,6 +217,7 @@ void crash_report(const char *why, const void *ctx_) {
             fputc('\n', o);
             report_host_stack(o, ep->ContextRecord);
         }
+#endif
         NxwGuestCpu *c = nxrt_cur_cpu();
         if (c) report_cpu(o, c); else fprintf(o, "not a guest thread\n");
         fflush(o);
@@ -148,6 +227,50 @@ void crash_report(const char *why, const void *ctx_) {
     if (g_dump_hook) g_dump_hook();
 }
 
+#ifndef _WIN32
+__thread plat_guard *plat_guard_top;
+void crash_thread_init(void);
+// One handler for every fatal signal. SA_NODEFER: a plat_guard recovery leaves the handler with siglongjmp and no signal mask to restore
+static void on_signal(int sig, siginfo_t *si, void *uc_) {
+    ucontext_t *uc = uc_;
+    if ((sig == SIGSEGV || sig == SIGBUS) && si) {
+        int is_write = uc && (uc->uc_mcontext.gregs[REG_ERR] & 2) != 0;
+        int saved = errno;
+        for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) { errno = saved; return; }
+        plat_guard *g = plat_guard_top;
+        if (g) { plat_guard_top = g->prev; siglongjmp(g->jb, 1); }
+    }
+    char why[64]; snprintf(why, sizeof why, "signal %d (%s)", sig, sig == SIGABRT ? "abort()" : strsignal(sig));
+    sig_ctx sc = {sig, si, uc};
+    crash_report(why, &sc);
+    _exit(128 + sig);
+}
+void crash_install(void) {
+    static int done;
+    if (done) return;
+    done = 1;
+    void *warm[2]; backtrace(warm, 2);   // loads the unwinder now: the first backtrace may allocate, which a crashing thread must not
+    crash_thread_init();
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = on_signal;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    static const int sigs[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT};
+    for (int s = 0; s < 6; s++) sigaction(sigs[s], &sa, NULL);
+    signal(SIGPIPE, SIG_IGN);   // a closed Link Play socket is an error code, never the end of the game
+}
+// Per-thread setup: an alternate signal stack, so the hooks and the report run after a stack overflow too
+void crash_thread_init(void) {
+    static _Thread_local void *alt;
+    if (alt) return;
+    size_t n = 64 * 1024;
+    alt = malloc(n);
+    if (!alt) return;
+    stack_t ss = {.ss_sp = alt, .ss_size = n, .ss_flags = 0};
+    sigaltstack(&ss, NULL);
+}
+#else
 static LONG CALLBACK on_vectored(EXCEPTION_POINTERS *ep) {
     const EXCEPTION_RECORD *er = ep->ExceptionRecord;
     if (er->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || er->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
@@ -179,4 +302,5 @@ void crash_install(void) {
 }
 // Per-thread setup: room on the stack for the report after a stack overflow
 void crash_thread_init(void) { ULONG g = 64 * 1024; SetThreadStackGuarantee(&g); }
+#endif
 void crash_dump_now(const char *why) { LOG("state dump (%s)", why); if (g_dump_hook) g_dump_hook(); }

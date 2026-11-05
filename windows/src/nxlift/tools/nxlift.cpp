@@ -15,6 +15,10 @@
 //   --dll FILE         also write nxw_game.obj (the nxw_game_* exports) and link every object into FILE with lld-link
 //   --nxrt-lib FILE    the runtime's import library for --dll (default: lib\nxrt.lib beside this tool's bin folder)
 //   --lld FILE         lld-link (default: from PATH, else C:\Program Files\LLVM\bin\lld-link.exe)
+// On Linux (nxlift built for x86_64-linux-gnu writes ELF objects, docs/LINUX-PLAN.md L-D2):
+//   --so FILE          also write nxw_game.o and link every object into the shared object FILE with ld.lld; the rt_* ABI stays
+//                      undefined and binds to the nxrt executable at dlopen
+//   --lld FILE         ld.lld (default: beside this tool, else from PATH)
 // The Mac swap-in harness (docs/m4-swapin.md; nxlift built for arm64-apple-macos writes Mach-O .o files):
 //   --swapin           direct calls and tail calls through the D4 lookup (Options::swapin), and nxw_swapin_table.o
 //   --base-of M=ADDR   module M at ADDR (hex) instead of program.db's layout (repeatable)
@@ -30,9 +34,17 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/thread.h>
 #include <llvm/Support/xxhash.h>
+#include <llvm/Target/TargetMachine.h>
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <cerrno>
+#include <spawn.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char** environ;
 #endif
 
 #include <algorithm>
@@ -110,6 +122,31 @@ fs::path find_lld() {
     if (SearchPathA(nullptr, "lld-link.exe", nullptr, MAX_PATH, p, nullptr)) return p;
     return "C:\\Program Files\\LLVM\\bin\\lld-link.exe";
 }
+#else
+// Runs argv (the child inherits this process's niceness, idle in a build) and waits; the exit code, -1 if it could not start
+int run_idle(const std::vector<std::string>& args) {
+    std::vector<char*> av;
+    for (const std::string& a : args) av.push_back(const_cast<char*>(a.c_str()));
+    av.push_back(nullptr);
+    pid_t pid;
+    if (posix_spawnp(&pid, av[0], nullptr, nullptr, av.data(), environ)) return -1;
+    int st = 0;
+    while (waitpid(pid, &st, 0) < 0)
+        if (errno != EINTR) return -1;
+    return WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);
+}
+
+fs::path self_dir() {
+    std::error_code ec;
+    const fs::path p = fs::read_symlink("/proc/self/exe", ec);
+    return ec ? fs::path() : p.parent_path();
+}
+
+// ld.lld beside this tool (the kit), else the first on PATH
+fs::path find_lld() {
+    if (const fs::path d = self_dir(); !d.empty() && fs::exists(d / "ld.lld")) return d / "ld.lld";
+    return "ld.lld";
+}
 #endif
 
 // --fn-list: "<module> <offset>" or "<absolute address>" per line, hex; # starts a comment; other columns are ignored
@@ -149,7 +186,7 @@ void disassemble(const Inputs& in, uint32_t f) {
 
 int main(int argc, char** argv) {
     try {
-        fs::path exefs, dbp, out, cache, dll, nxrt_lib, lld;
+        fs::path exefs, dbp, out, cache, dll, so, nxrt_lib, lld;
         Options opt;
         opt.entry_trace = true;
         std::set<std::string> modules;
@@ -186,6 +223,7 @@ int main(int argc, char** argv) {
             else if (a == "--no-cache") use_cache = false;
             else if (a == "--no-trace-hooks") opt.entry_trace = false;
             else if (a == "--dll") dll = next();
+            else if (a == "--so") so = next();
             else if (a == "--nxrt-lib") nxrt_lib = next();
             else if (a == "--lld") lld = next();
             else if (a == "--swapin") opt.swapin = true, opt.dllimport = false;
@@ -207,7 +245,8 @@ int main(int argc, char** argv) {
         if (jobs > 4) std::printf("nxlift: at most 4 jobs on this PC; using 4\n"), jobs = 4;
         if (low) SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS);
 #else
-        (void)low;
+        if (jobs > 4) std::printf("nxlift: at most 4 jobs; using 4\n"), jobs = 4;
+        if (low) setpriority(PRIO_PROCESS, 0, 19);   // the workers and ld.lld inherit it
 #endif
         if (jobs == 0) jobs = 1;
 
@@ -263,7 +302,7 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         const std::string obj_ext = ".obj";
 #else
-        const std::string obj_ext = ".o";   // Mach-O (the swap-in harness)
+        const std::string obj_ext = ".o";   // ELF (game.so) or Mach-O (the swap-in harness)
 #endif
         fs::create_directories(out);
         for (uint32_t m = 0; m < in.db.modules.size(); m++)
@@ -445,7 +484,44 @@ int main(int argc, char** argv) {
         }
 #else
         if (!dll.empty()) nxw::fail("--dll links a Windows DLL; build on Windows");
-        (void)nxrt_lib, (void)lld;
+        (void)nxrt_lib;
+        // game.so: the nxw_game_* object, then every partition's object; only nxw_game_* is exported (the version script)
+        if (!so.empty()) {
+            const auto l0 = Clock::now();
+            std::vector<uint32_t> all;
+            for (const Partition& p : parts) all.insert(all.end(), p.fns.begin(), p.fns.end());
+            {
+                llvm::LLVMContext ctx;
+                Lifter L(in, ctx, opt);
+                if (!L.target().getTargetTriple().isOSBinFormatELF()) nxw::fail("--so needs nxlift built for Linux (ELF objects)");
+                const std::vector<char> o = game_table_object(L, in, all);
+                std::ofstream f(out / "nxw_game.o", std::ios::binary);
+                f.write(o.data(), std::streamsize(o.size()));
+                if (!f) nxw::fail("cannot write nxw_game.o");
+            }
+            if (lld.empty()) lld = find_lld();
+            const fs::path vs = out / "game.ver", rsp = out / "link.rsp";
+            {
+                std::ofstream v(vs);
+                v << "{\n  global: nxw_game_abi; nxw_game_build_id; nxw_game_function_count; nxw_game_functions;\n  local: *;\n};\n";
+                std::ofstream r(rsp);
+                r << "-shared\n-soname\ngame.so\n-z\nnow\n-z\nrelro\n-z\nnoexecstack\n--hash-style=gnu\n--build-id=sha1\n";
+                r << "\"--version-script=" << fs::absolute(vs).string() << "\"\n";
+                r << "-o\n\"" << fs::absolute(so).string() << "\"\n";
+                for (const Partition& p : parts) {
+                    char name[64];
+                    std::snprintf(name, sizeof name, "%s/p%04u.o", in.module_name(p.module), p.index);
+                    r << '"' << fs::absolute(out / name).string() << "\"\n";
+                }
+                r << '"' << fs::absolute(out / "nxw_game.o").string() << "\"\n";
+            }
+            std::printf("nxlift: linking %s with %s\n", so.string().c_str(), lld.string().c_str());
+            std::fflush(stdout);
+            const int rc = run_idle({lld.string(), "@" + fs::absolute(rsp).string()});
+            if (rc) nxw::fail("ld.lld failed with exit code " + std::to_string(rc));
+            std::printf("nxlift: %s: %zu functions, %.1f MB, linked in %.1f s\n", so.string().c_str(), all.size(),
+                        fs::file_size(so) / 1048576.0, ms(Clock::now() - l0) / 1000);
+        }
 #endif
         return 0;
     } catch (const std::exception& e) {

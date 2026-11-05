@@ -5,6 +5,9 @@
 #endif
 #include <windows.h>
 #include <stdio.h>
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
 
 #define VKF_DEF(n) PFN_##n n;
 VKF_GLOBAL(VKF_DEF)
@@ -19,9 +22,15 @@ static HMODULE g_lib;
 
 int vkf_load_global(void) {
     if (vkGetInstanceProcAddr) return 0;
+#ifdef _WIN32
     if (!g_lib) g_lib = LoadLibraryW(L"vulkan-1.dll");
     if (!g_lib) return -1;
     vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)(void (*)(void))GetProcAddress(g_lib, "vkGetInstanceProcAddr");
+#else
+    if (!g_lib) g_lib = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);   // the system's loader (Mesa, the Steam runtime and NVIDIA register their drivers with it)
+    if (!g_lib) return -1;
+    vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(g_lib, "vkGetInstanceProcAddr");
+#endif
     if (!vkGetInstanceProcAddr) return -1;
 #define L(n) n = (PFN_##n)vkGetInstanceProcAddr(NULL, #n);
     VKF_GLOBAL(L)

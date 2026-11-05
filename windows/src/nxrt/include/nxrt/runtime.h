@@ -25,7 +25,12 @@ int nxrt_as_ok(void);
 /* The guest block's partition (nxnative's layout, profile sizes): unused 256 MB, alias, stack, heap */
 typedef struct nxrt_layout { uint64_t as_base, as_size, alias, alias_size, stack, stack_size, heap, heap_size, app_pool; } nxrt_layout;
 const nxrt_layout *nxrt_as_layout(void);
-/* Expands to a TLS callback that reserves the guest ranges before the CRT and any DLL initialisation: put it in each executable once */
+/* Expands to a TLS callback that reserves the guest ranges before the CRT and any DLL initialisation: put it in each executable once.
+   Linux: a constructor that runs before main and before the libraries start threads (docs/LINUX-PLAN.md L-D3) */
+#ifndef _WIN32
+#define NXRT_EARLY_RESERVE() \
+    __attribute__((constructor(101))) static void nxrt_early_reserve_(void) { nxrt_as_reserve_early(); }
+#else
 #define NXRT_EARLY_RESERVE()                                                                                   \
     static void __stdcall nxrt_tls_cb_(void *h, unsigned long reason, void *r) {                              \
         (void)h; (void)r; if (reason == 1) nxrt_as_reserve_early();                                           \
@@ -33,6 +38,7 @@ const nxrt_layout *nxrt_as_layout(void);
     __pragma(comment(linker, "/INCLUDE:_tls_used"))                                                           \
     __pragma(comment(linker, "/INCLUDE:nxrt_tls_callback"))                                                   \
     __attribute__((section(".CRT$XLB"), used)) void (__stdcall *const nxrt_tls_callback)(void *, unsigned long, void *) = nxrt_tls_cb_;
+#endif
 
 /* ---- Start-up (host/main.c) ---- */
 typedef struct nxrt_options {

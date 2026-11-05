@@ -8,7 +8,9 @@
 #define VA_B (NXRT_MODULE_BASE + 0x200)
 #define VA_C (NXRT_MODULE_BASE + 0x300)
 
+#ifdef _WIN32
 extern IMAGE_DOS_HEADER __ImageBase;
+#endif
 
 static void fn_a(NxwGuestCpu *c) { c->x[0] = c->x[0] * 3 + 1; }
 /* an indirect call as nxw_sem_lookup makes it: the table, else rt_miss */
@@ -24,6 +26,16 @@ __declspec(dllexport) const char nxw_game_build_id[41] = "";   /* no modules are
 __declspec(dllexport) const uint32_t nxw_game_function_count = 3;
 __declspec(dllexport) NxwGameFunction nxw_game_functions[3];
 
+#ifndef _WIN32
+/* Linux (libnxrt_test_game.so): self-relative entries, as nxlift writes them into game.so (docs/LINUX-PLAN.md L-D2) */
+static uint32_t selfrel(NxwGuestFn fn, const uint32_t *field) { return (uint32_t)(int32_t)((intptr_t)(uintptr_t)fn - (intptr_t)(uintptr_t)field); }
+__attribute__((constructor)) static void fill(void) {
+    NxwGameFunction *e = nxw_game_functions;
+    e[0] = (NxwGameFunction){VA_A, selfrel(fn_a, &e[0].rva), NXW_GAME_FN_SELFREL};
+    e[1] = (NxwGameFunction){VA_B, selfrel(fn_b, &e[1].rva), NXW_GAME_FN_SELFREL};
+    e[2] = (NxwGameFunction){VA_C, selfrel(fn_c, &e[2].rva), NXW_GAME_FN_SELFREL};
+}
+#else
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
     (void)h; (void)r;
     if (reason == DLL_PROCESS_ATTACH) {
@@ -34,3 +46,4 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r) {
     }
     return TRUE;
 }
+#endif

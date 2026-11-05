@@ -6,11 +6,17 @@ set(NXW_SEM_SOURCES src/int.cpp src/mem.cpp src/fp.cpp src/simd.cpp src/state.cp
 if(APPLE)
   set(NXW_SEM_ARCH "-mcpu=apple-m1" CACHE STRING "CPU flags for the semantics (native and bitcode)")
   set(NXW_SEM_TARGET "arm64-apple-macos13.0" CACHE STRING "Target triple of the semantics bitcode (and so of lifted code)")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")   # game.so (docs/LINUX-PLAN.md)
+  set(NXW_SEM_ARCH "-march=x86-64-v3" CACHE STRING "CPU flags for the semantics (native and bitcode)")
+  set(NXW_SEM_TARGET "x86_64-unknown-linux-gnu" CACHE STRING "Target triple of the semantics bitcode (and so of lifted code)")
 else()
   set(NXW_SEM_ARCH "-march=x86-64-v3" CACHE STRING "CPU flags for the semantics (native and bitcode)")
   set(NXW_SEM_TARGET "x86_64-pc-windows-msvc" CACHE STRING "Target triple of the semantics bitcode (and so of lifted code)")
 endif()
 set(NXW_SEM_FLAGS ${NXW_SEM_ARCH} -ffp-contract=off -fno-math-errno)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND NXW_SEM_FLAGS -fPIC)   # the bitcode ends up in game.so
+endif()
 
 add_library(nxw_sem STATIC ${NXW_SEM_SOURCES})
 target_include_directories(nxw_sem PUBLIC include PRIVATE src)

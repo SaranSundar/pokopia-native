@@ -40,9 +40,14 @@ int main(void) {
     if (!dump || !*dump) { printf("NXW_DUMP not set: skipped\n"); return 77; }
     if (nxrt_init(&(nxrt_options){.quiet = 1})) { printf("FAIL nxrt_init\n"); return 1; }
     if (nxrt_load_program(dump)) { printf("FAIL loading %s\n", dump); return 1; }
+#ifdef _WIN32
     uint8_t *img = (uint8_t *)GetModuleHandleW(NULL);
     IMAGE_NT_HEADERS64 *nt = (IMAGE_NT_HEADERS64 *)(img + ((IMAGE_DOS_HEADER *)img)->e_lfanew);
-    T(nxrt_code_attach(img, nt->OptionalHeader.SizeOfImage) == 0);
+    size_t img_size = nt->OptionalHeader.SizeOfImage;
+#else
+    size_t img_size; uint8_t *img = plat_exe_image(&img_size);
+#endif
+    T(nxrt_code_attach(img, img_size) == 0);
     for (int k = 0; k < NSTEP; k++) {
         uint64_t va = 0;
         if (!strncmp(k_names[k], "DT_INIT ", 8)) {

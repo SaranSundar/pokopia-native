@@ -22,7 +22,11 @@ struct audio_dev {
 };
 
 // SDL3.dll is delay-loaded (nxrt starts without it under --gfx null): the first call raises an exception when it is missing
+#ifdef _WIN32
 static int sdl_present(void) { __try { SDL_GetVersion(); return 1; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; } }
+#else
+static int sdl_present(void) { return 1; }   // Linux: nxrt links libSDL3.so.0 (beside it in the kit), so it is there whenever nxrt runs
+#endif
 static INIT_ONCE g_up_once = INIT_ONCE_STATIC_INIT; static int g_up;
 static BOOL CALLBACK sdl_audio_start(PINIT_ONCE o, PVOID p, PVOID *c) {
     (void)o; (void)p; (void)c;

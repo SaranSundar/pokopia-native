@@ -88,7 +88,9 @@ int vkw_open(const char *title, int width, int height, int hidden) {
     snprintf(g_w.title, sizeof g_w.title, "%s", title ? title : "pokopia-native");
     g_w.req_w = width > 0 ? width : 1280; g_w.req_h = height > 0 ? height : 720; g_w.hidden = hidden; g_w.fail = 0;
     // SDL3.dll is delay-loaded: a missing DLL raises an exception here instead of stopping nxrt.exe at start
+#ifdef _WIN32
     __try { SDL_GetVersion(); } __except (EXCEPTION_EXECUTE_HANDLER) { VKRED("SDL3.dll is missing next to the executable: no window"); return -1; }
+#endif
     g_w.ready = CreateEventW(NULL, TRUE, FALSE, NULL);
     g_w.thread = (HANDLE)_beginthreadex(NULL, 0, window_main, NULL, 0, NULL);
     if (!g_w.thread) return -1;

@@ -46,6 +46,23 @@ uint64_t plat_ram_bytes(void);
 /* Entropy (BCryptGenRandom) */
 void plat_random(void *out, size_t n);
 
+#ifndef _WIN32
+/* Linux (plat_linux.c, docs/LINUX-PLAN.md) */
+void plat_thread_lower(int nice_offset);   /* the calling thread a few nice steps below the process, for good */
+void *plat_exe_image(size_t *size);        /* this executable's load address and the extent of its segments (tests attach it as a code image) */
+
+/* A recovery point around reads of memory that may be unmapped (Windows: __try / __except). After the fault hooks decline a fault, crash.c's
+   handler pops the innermost guard and siglongjmps to it:
+       plat_guard g; PLAT_GUARD_PUSH(&g);
+       if (sigsetjmp(g.jb, 0)) return -1;      // faulted (the guard is popped already)
+       ...;  PLAT_GUARD_POP(&g);  return 0; */
+#include <setjmp.h>
+typedef struct plat_guard { sigjmp_buf jb; struct plat_guard *prev; } plat_guard;
+extern __thread plat_guard *plat_guard_top;
+#define PLAT_GUARD_PUSH(g) ((g)->prev = plat_guard_top, plat_guard_top = (g))
+#define PLAT_GUARD_POP(g) (plat_guard_top = (g)->prev)
+#endif
+
 #ifdef __cplusplus
 }
 #endif

@@ -14,7 +14,23 @@ NXRT_EARLY_RESERVE()
 static int g_fail;
 #define T(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); g_fail = 1; } } while (0)
 
+#ifdef _WIN32
 static DWORD prot(uint64_t a) { MEMORY_BASIC_INFORMATION m; return VirtualQuery((void *)(uintptr_t)a, &m, sizeof m) ? m.Protect : 0; }
+#else
+/* Linux: the protection of the /proc/self/maps line that holds a, as the PAGE_* value */
+static DWORD prot(uint64_t a) {
+    FILE *f = fopen("/proc/self/maps", "r"); char line[512], p[8] = ""; DWORD r = 0;
+    while (f && fgets(line, sizeof line, f)) {
+        unsigned long long lo, hi;
+        if (sscanf(line, "%llx-%llx %7s", &lo, &hi, p) == 3 && a >= lo && a < hi) {
+            r = p[0] != 'r' ? PAGE_NOACCESS : p[2] == 'x' ? (p[1] == 'w' ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ) : p[1] == 'w' ? PAGE_READWRITE : PAGE_READONLY;
+            break;
+        }
+    }
+    if (f) fclose(f);
+    return r;
+}
+#endif
 
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);

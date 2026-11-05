@@ -2,6 +2,7 @@
    vk_astc (fast pass, then the high-quality pass from the background worker), decoded with bc7enc's decoder and compared with the reference within a
    tolerance; the cache serves the high-quality result after a restart; the passes' speed on this PC. Needs no GPU. */
 #include "vk_test.h"
+#include "nxrt/path_sep.h"
 #include "third_party/astcenc/astcenc.h"
 
 NXRT_EARLY_RESERVE()
@@ -47,7 +48,7 @@ extern uint64_t g_t0_ns;
 int main(void) {
     crash_install(); g_t0_ns = now_ns();
     char dir[MAX_PATH]; const char *e = getenv("NXRT_VK_CACHE_DIR");
-    snprintf(dir, sizeof dir, "%s\\astc-test-%lu", e && *e ? e : ".", GetCurrentProcessId());
+    snprintf(dir, sizeof dir, "%s" NXRT_SEP "astc-test-%lu", e && *e ? e : ".", GetCurrentProcessId());
     CreateDirectoryA(e && *e ? e : ".", NULL); CreateDirectoryA(dir, NULL);
     vka_init(dir);
     static const struct { int bw, bh, srgb; } blocks[] = {{4, 4, 0}, {5, 5, 0}, {6, 6, 0}, {8, 8, 0}, {10, 10, 0}, {12, 12, 0}, {4, 4, 1}, {8, 8, 1}};

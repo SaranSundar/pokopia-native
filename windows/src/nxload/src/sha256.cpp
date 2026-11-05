@@ -4,8 +4,10 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <bcrypt.h>
-#else
+#elif defined(__APPLE__)
 #include <CommonCrypto/CommonDigest.h>   // the Mac build (the swap-in harness, docs/m4-swapin.md)
+#else
+#include "nxw/sha256.h"                  // Linux (docs/LINUX-PLAN.md)
 #endif
 
 namespace nxload {
@@ -26,6 +28,15 @@ std::array<uint8_t, 32> sha256(std::span<const uint8_t> data) {
     if (h) BCryptDestroyHash(h);
     if (alg) BCryptCloseAlgorithmProvider(alg, 0);
     if (!ok) fail("SHA-256: BCrypt failed");
+    return out;
+}
+#elif !defined(__APPLE__)
+std::array<uint8_t, 32> sha256(std::span<const uint8_t> data) {
+    std::array<uint8_t, 32> out{};
+    nxw_sha256 c;
+    nxw_sha256_init(&c);
+    nxw_sha256_update(&c, data.data(), data.size());
+    nxw_sha256_final(&c, out.data());
     return out;
 }
 #else
