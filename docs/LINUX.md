@@ -137,13 +137,12 @@ When you are done, or when something goes wrong:
 It collects the game's logs, the build's logs and facts about your computer (CPU, GPU, driver and Mesa version, SteamOS or distribution version,
 memory, display) into one `pokopia-report-<date>.tar.gz` in your home folder. **It never includes your save, the game's files, shader files or your
 dump**, and it replaces your home folder, user name and computer name with placeholders. It lists every file and asks before it writes the archive,
-so you can read them first. Send that file, and tell me:
+so you can read them first.
 
-1. Steam Deck LCD or OLED (or your PC's GPU), and the SteamOS version (Settings → System).
-2. Did the build finish? How long did it take?
-3. Did the title screen show? The field after it? About how smooth was it?
-4. Did the controls work, in Desktop Mode and in Game Mode?
-5. Anything wrong on screen (white or black areas, missing models, flicker)?
+Then fill in the **[Linux / Steam Deck beta report](https://github.com/xFractals/pokopia-native/issues/new?template=linux-beta-report.yml)**
+form on GitHub and attach that archive: the form asks the rest (your device, the build, the title screen and the game, controls, sound,
+saves). Screenshots and short recordings help too; a recording over 10 MB goes in as a link. No GitHub account? Send me the same answers and
+the archive directly.
 
 ## Common problems
 
