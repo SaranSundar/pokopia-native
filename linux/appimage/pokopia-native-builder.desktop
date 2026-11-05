@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Pokopia Native Builder
+Comment=Builds Pokemon Pokopia for Linux and the Steam Deck from your own dump (pokopia-native)
+Exec=AppRun
+Icon=pokopia-native-builder
+Terminal=false
+Categories=Game;

@@ -32,6 +32,7 @@ while [ $# -gt 0 ]; do
 done
 HERE=$(cd "$(dirname "$0")" && pwd)
 PY=$(command -v python3.12 || command -v python3 || true)
+[ -n "${POKOPIA_PY:-}" ] && [ -x "$POKOPIA_PY" ] && PY=$POKOPIA_PY   # the launcher's: the builder's own Python (the AppImage's)
 if [ -n "$CONFIG" ]; then
   [ -f "$CONFIG" ] || die "not found: $CONFIG"
   [ -n "$PY" ] || die "python3 is needed to read $CONFIG"
@@ -45,7 +46,7 @@ def p(v):
     return v if os.path.isabs(v) else os.path.normpath(os.path.join(d, v))
 for key, var in (('exefs', 'C_EXEFS'), ('game', 'C_GAME'), ('romfs', 'C_ROMFS'), ('save', 'C_SAVE'), ('work', 'C_WORK'), ('exe', 'C_EXE'), ('shaders', 'C_SHADERS'),
                  ('shader_build', 'C_SHADER_BUILD'), ('shader_tool', 'C_SHADER_TOOL'), ('python', 'C_PYTHON'), ('installer', 'C_INSTALLER'),
-                 ('spirv_tools', 'C_SPIRV_TOOLS'), ('fonts', 'C_FONTS'), ('pipeline_seed', 'C_SEED')):
+                 ('spirv_tools', 'C_SPIRV_TOOLS'), ('fonts', 'C_FONTS'), ('pipeline_seed', 'C_SEED'), ('dotnet', 'C_DOTNET')):
     print(f'{var}={shlex.quote(p(c.get(key)))}')
 EOF
 )"
@@ -53,6 +54,8 @@ EOF
   : "${SHADER_BUILD:=$C_SHADER_BUILD}" "${SHADER_TOOL:=$C_SHADER_TOOL}" "${PYTHON:=$C_PYTHON}" "${INSTALLER:=$C_INSTALLER}" "${SPIRV_TOOLS:=$C_SPIRV_TOOLS}"
   : "${FONTS:=$C_FONTS}" "${SEED:=$C_SEED}"
   [ -z "$SAVE" ] && SAVE=$C_SAVE && NEWSAVE=1
+  # the .NET the build used (the AppImage's own, or ~/.dotnet): the shader translator runs on it for shaders the game makes in play
+  [ -n "$C_DOTNET" ] && [ -x "$C_DOTNET/dotnet" ] && [ -z "${DOTNET_ROOT:-}" ] && export DOTNET_ROOT=$C_DOTNET PATH=$C_DOTNET:$PATH
 fi
 for n in EXEFS GAME ROMFS SAVE; do [ -n "${!n}" ] || die "--$(echo "$n" | tr 'A-Z' 'a-z') is needed (or --config <play.json>)"; done
 if [ -z "$EXE" ]; then

@@ -1,0 +1,35 @@
+#!/bin/sh
+# Pokopia Native Builder for Linux, the AppImage's start (docs/LINUX.md). The first start copies the builder (its own Python with Tk, lz4,
+# fonttools and pillow, the .NET runtime, the Linux tools and nxnative) to ${XDG_DATA_HOME:-~/.local/share}/pokopia-native/builder/<version>,
+# because games built with it run its Python and .NET from there once the AppImage has closed. Then the window opens. With arguments,
+# nxs2.py runs them instead: Pokopia-Native-Builder-*.AppImage doctor | build <dump> --linux | import-save <build folder> <save folder> | ...
+set -eu
+APPDIR=${APPDIR:-$(dirname "$(readlink -f "$0")")}
+VER=$(cat "$APPDIR/payload/VERSION")
+ID=$(cat "$APPDIR/payload/ID")
+BASE=${XDG_DATA_HOME:-$HOME/.local/share}/pokopia-native/builder
+DEST=$BASE/$VER
+
+if [ "$(cat "$DEST/.installed" 2>/dev/null || true)" != "$ID" ]; then
+  mkdir -p "$BASE"
+  NEW=$DEST.new-$$
+  mkdir "$NEW"
+  echo "Pokopia Native Builder $VER: copying the builder to $DEST (once per version)" >&2
+  cp -a "$APPDIR/payload/." "$NEW/" &
+  pid=$!
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v zenity >/dev/null 2>&1; then
+    while kill -0 $pid 2>/dev/null; do sleep 1; done | zenity --progress --pulsate --auto-close --no-cancel --title "Pokopia Native Builder" \
+      --text "Unpacking the builder (only the first time)..." 2>/dev/null || true
+  fi
+  wait $pid
+  echo "$ID" > "$NEW/.installed"
+  if [ -d "$DEST" ]; then mv "$DEST" "$DEST.old-$$"; fi   # the same version unpacked before (an older build of it): replaced
+  mv "$NEW" "$DEST"
+  rm -rf "$DEST.old-$$"
+fi
+
+export DOTNET_ROOT="$DEST/dotnet" PATH="$DEST/dotnet:$PATH" DOTNET_CLI_TELEMETRY_OPTOUT=1
+unset PYTHONHOME PYTHONPATH
+cd "$DEST/installer"
+if [ $# -gt 0 ]; then exec "$DEST/python/bin/python3" -s nxs2.py "$@"; fi
+exec "$DEST/python/bin/python3" -s nxs2_gui.py
