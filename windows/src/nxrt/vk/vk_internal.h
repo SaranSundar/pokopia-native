@@ -28,7 +28,8 @@ typedef struct {
         eds2_logic_op, eds2_patch_points, eds3, viewport_swizzle_nv, memory_budget, present_id, present_wait, swap_maint1, line_raster,
         vertex_divisor, prim_list_restart, stencil_export, fs_interlock, blend_adv, gs_passthrough_nv, viewport_array2_nv, feedback_loop,
         color_write_enable, depth_clamp_01, push_descriptor, gpl, sparse_buffer, sparse_aliased, bc, astc_ldr, mirror_clamp_edge,
-        minmax_filter, debug_utils, surface_maint1, fmt_4444, vertex_input_dynamic;
+        minmax_filter, debug_utils, surface_maint1, fmt_4444, vertex_input_dynamic, device_fault;
+    int checkpoints;   // VK_NV_device_diagnostic_checkpoints: 1 = before each dispatch, 2 = draws too (NXRT_VK_CHECKPOINTS=all), 0 = off (=0, or not NVIDIA)
     int corpus_ok;   // everything the translated corpus declares (docs/m5-record-shaders.md section 7): draw parameters, subgroup ballot / vote / shuffle, formatless storage images, gather, geometry
     uint32_t subgroup_stages, subgroup_ops, subgroup_size;
 } vk_caps;
@@ -57,6 +58,7 @@ typedef struct {
     VkPipelineCache pcache;
     _Atomic uint64_t presents;        // presents handed to the GPU: retirement also waits 3 of them (the present thread samples images without the timeline)
     _Atomic int presenting;
+    _Atomic int lost;                 // the device was lost (reported once by vk_lost)
     int up;                           // device usable
 } vk_device;
 extern vk_device g_vk;
@@ -67,6 +69,9 @@ void vk_dev_close(void);
 const char *vk_vendor_name(uint32_t vendor);
 int vk_mem_type(uint32_t bits, VkMemoryPropertyFlags want, VkMemoryPropertyFlags avoid);   // -1 = none
 void vk_name(uint64_t handle, VkObjectType type, const char *name);   // debug-utils object name (validation builds)
+// A lost device (#12, #17): the first VK_ERROR_DEVICE_LOST logs what the GPU was doing (the checkpoints each stage reached) and the driver's fault report
+void vk_lost(const char *where, VkResult r);
+void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect);   // kind 'c' dispatch, 'd' draw
 
 // One-shot command buffers on the universal queue (uploads at bring-up, readbacks, tests): begin, record, then submit and wait
 VkCommandBuffer vk_once_begin(void);

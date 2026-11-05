@@ -139,6 +139,7 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
         {VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME, NULL, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, sizeof(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT), &h->gpl},
         {VK_EXT_4444_FORMATS_EXTENSION_NAME, NULL, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_4444_FORMATS_FEATURES_EXT, sizeof(VkPhysicalDevice4444FormatsFeaturesEXT), &h->fmt_4444},
         {VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME, NULL, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT, sizeof(VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT), &h->vertex_input_dynamic},   // the replay (M5-C)
+        {VK_EXT_DEVICE_FAULT_EXTENSION_NAME, NULL, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT, sizeof(VkPhysicalDeviceFaultFeaturesEXT), &h->device_fault},   // vk_lost's report
     };
     enum { NEF = sizeof ef / sizeof *ef };
     // Extensions without a feature structure
@@ -147,7 +148,9 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
         {VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME, &h->stencil_export}, {VK_NV_GEOMETRY_SHADER_PASSTHROUGH_EXTENSION_NAME, &h->gs_passthrough_nv},
         {VK_NV_VIEWPORT_ARRAY_2_EXTENSION_NAME, &h->viewport_array2_nv}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, &h->push_descriptor},
         {VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME, NULL},   // with the graphics pipeline library only
+        {VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME, &h->checkpoints},   // vk_lost's report; NXRT_VK_CHECKPOINTS=0 leaves it off
     };
+    const char *ck = getenv("NXRT_VK_CHECKPOINTS");
     feat_any *fs[NEF]; const char *dexts[64]; uint32_t nd = 0;
     if (!o->headless) dexts[nd++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     VkPhysicalDeviceVulkan13Features f13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
@@ -169,8 +172,10 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
     for (unsigned i = 0; i < sizeof ex / sizeof *ex; i++) {
         if (!has_ext(de, nde, ex[i].ext)) continue;
         if (!ex[i].flag && !(has_ext(de, nde, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME))) continue;
+        if (ex[i].flag == &h->checkpoints && ck && *ck == '0') continue;
         dexts[nd++] = ex[i].ext; if (ex[i].flag) *ex[i].flag = 1;
     }
+    if (h->checkpoints && ck && !strcmp(ck, "all")) h->checkpoints = 2;
     free(de);
     // Required: what the replay cannot do without (docs/m5-vulkan.md §2)
     const char *miss = NULL;
@@ -201,9 +206,12 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
             VkPhysicalDeviceExtendedDynamicState2FeaturesEXT *x = (void *)fs[i]; h->eds2_logic_op = x->extendedDynamicState2LogicOp != 0; h->eds2_patch_points = x->extendedDynamicState2PatchControlPoints != 0; continue; }
         if (ef[i].st == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT) {
             VkPhysicalDeviceProvokingVertexFeaturesEXT *x = (void *)fs[i]; x->transformFeedbackPreservesProvokingVertex = x->transformFeedbackPreservesProvokingVertex && h->xfb; h->provoking_last = x->provokingVertexLast != 0; continue; }
+        if (ef[i].st == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT) {
+            VkPhysicalDeviceFaultFeaturesEXT *x = (void *)fs[i]; x->deviceFaultVendorBinary = 0; h->device_fault = x->deviceFault != 0; continue; }
         *ef[i].flag = count_true(fs[i], ef[i].size) > 0;
     }
-    h->sparse_buffer = q_sparse && en.sparseBinding && en.sparseResidencyBuffer;
+    const char *sp = getenv("NXRT_VK_SPARSE");   // test switch (#12): 0 backs every memory pool fully at once instead of sparse granules on first use
+    h->sparse_buffer = q_sparse && en.sparseBinding && en.sparseResidencyBuffer && !(sp && *sp == '0');
     h->sparse_aliased = h->sparse_buffer && en.sparseResidencyAliased;
     h->bc = en.textureCompressionBC; h->astc_ldr = en.textureCompressionASTC_LDR;
     h->mirror_clamp_edge = f12.samplerMirrorClampToEdge; h->minmax_filter = f12.samplerFilterMinmax;
@@ -238,6 +246,8 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
           h->custom_border, h->custom_border_noformat, h->xfb, h->depth_clip_control, h->index_u8, h->cond_render, h->provoking_last, h->null_descriptor,
           h->eds2_logic_op, h->eds3, h->viewport_swizzle_nv, h->memory_budget, h->present_wait, h->line_raster, h->vertex_divisor, h->prim_list_restart, h->stencil_export,
           h->fs_interlock, h->gpl, h->mirror_clamp_edge, h->minmax_filter, f12.bufferDeviceAddress, en.shaderInt64, f12.shaderFloat16);
+    VKLOG("if the GPU stops responding: checkpoints %s, the driver's fault report %s", h->checkpoints == 2 ? "before every dispatch and draw" : h->checkpoints ? "before every dispatch" : "off",
+          h->device_fault ? "on" : "not available");
     for (uint32_t i = 0; i < g_vk.memp.memoryHeapCount; i++)
         VKLOG("memory heap %u: %.0f MB%s", i, g_vk.memp.memoryHeaps[i].size / 1048576.0, g_vk.memp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT ? " device local" : "");
     // What the translated corpus declares (docs/m5-record-shaders.md section 7, track A's 3,967 modules): DrawParameters, GroupNonUniformBallot / Vote / Shuffle,
@@ -389,7 +399,71 @@ uint64_t vk_tl_value(void) { uint64_t v = 0; if (g_vk.tl) vkGetSemaphoreCounterV
 int vk_tl_wait(uint64_t value, uint64_t timeout_ns) {
     if (!value) return 1;
     VkSemaphoreWaitInfo wi = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, NULL, 0, 1, &g_vk.tl, &value};
-    return vkWaitSemaphores(g_vk.dev, &wi, timeout_ns) == VK_SUCCESS;
+    VkResult r = vkWaitSemaphores(g_vk.dev, &wi, timeout_ns);
+    vk_lost("a wait for the GPU", r);
+    return r == VK_SUCCESS;
+}
+
+// ---------- A lost device (#12, #17): a checkpoint before each dispatch (and draw) names what the GPU had started and finished when it stopped ----------
+enum { CK_N = 4096 };
+static struct { uint64_t seq; char kind, indirect, key[17]; uint32_t x, y, z; } g_ck[CK_N];
+static _Atomic uint64_t g_ck_seq;
+
+void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect) {
+    if (!vkCmdSetCheckpointNV || g_vk.has.checkpoints < (kind == 'd' ? 2 : 1)) return;
+    uint64_t s = atomic_fetch_add(&g_ck_seq, 1) + 1;
+    g_ck[s % CK_N].seq = s; g_ck[s % CK_N].kind = kind; g_ck[s % CK_N].indirect = (char)indirect;
+    g_ck[s % CK_N].x = x; g_ck[s % CK_N].y = y; g_ck[s % CK_N].z = z;
+    snprintf(g_ck[s % CK_N].key, sizeof g_ck[0].key, "%s", key ? key : "?");
+    vkCmdSetCheckpointNV(cb, (const void *)(uintptr_t)s);
+}
+
+static const char *ck_text(uint64_t s, char *out, size_t n) {
+    if (!s || g_ck[s % CK_N].seq != s) { snprintf(out, n, "checkpoint #%llu (no longer kept)", (unsigned long long)s); return out; }
+    if (g_ck[s % CK_N].kind == 'd') snprintf(out, n, "#%llu a draw with shader %s", (unsigned long long)s, g_ck[s % CK_N].key);
+    else snprintf(out, n, "#%llu a dispatch of shader %s, %ux%ux%u groups%s", (unsigned long long)s, g_ck[s % CK_N].key, g_ck[s % CK_N].x, g_ck[s % CK_N].y,
+                  g_ck[s % CK_N].z, g_ck[s % CK_N].indirect ? " (indirect: what guest memory held when it was recorded; the GPU reads its own copy)" : "");
+    return out;
+}
+
+void vk_lost(const char *where, VkResult r) {
+    if (r != VK_ERROR_DEVICE_LOST || !g_vk.dev || atomic_exchange(&g_vk.lost, 1)) return;
+    VKRED("the GPU stopped responding (device lost, first seen at %s); what it was doing:", where);
+    char t[256];
+    if (g_vk.has.checkpoints && vkGetQueueCheckpointData2NV) {
+        VkCheckpointData2NV cd[32]; uint32_t n = 32; uint64_t lo = 0, hi = 0;
+        for (uint32_t i = 0; i < n; i++) cd[i] = (VkCheckpointData2NV){VK_STRUCTURE_TYPE_CHECKPOINT_DATA_2_NV};
+        AcquireSRWLockExclusive(&g_vk.qlock); vkGetQueueCheckpointData2NV(g_vk.q, &n, cd); ReleaseSRWLockExclusive(&g_vk.qlock);
+        for (uint32_t i = 0; i < n; i++) {
+            uint64_t s = (uint64_t)(uintptr_t)cd[i].pCheckpointMarker;
+            const char *at = cd[i].stage == VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT ? "started" : cd[i].stage == VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT ? "finished everything before" : "reached";
+            VKRED("  the GPU %s %s (stage %#llx)", at, ck_text(s, t, sizeof t), (unsigned long long)cd[i].stage);
+            if (cd[i].stage == VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT) lo = s; else if (s > hi) hi = s;
+        }
+        if (!n) VKRED("  no checkpoint was reached");
+        for (uint64_t s = lo + 1; lo && s <= hi && s <= lo + 8; s++) VKRED("  in flight: %s", ck_text(s, t, sizeof t));
+    } else VKRED("  (no checkpoints on this GPU: they need NVIDIA's VK_NV_device_diagnostic_checkpoints)");
+    if (g_vk.has.device_fault && vkGetDeviceFaultInfoEXT) {
+        VkDeviceFaultCountsEXT c = {VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT};
+        VkDeviceFaultAddressInfoEXT ai[8]; VkDeviceFaultVendorInfoEXT vi[8];
+        if (vkGetDeviceFaultInfoEXT(g_vk.dev, &c, NULL) == VK_SUCCESS) {
+            if (c.addressInfoCount > 8) c.addressInfoCount = 8;
+            if (c.vendorInfoCount > 8) c.vendorInfoCount = 8;
+            c.vendorBinarySize = 0;
+            VkDeviceFaultInfoEXT fi = {VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT, NULL, {0}, c.addressInfoCount ? ai : NULL, c.vendorInfoCount ? vi : NULL, NULL};
+            VkResult fr = vkGetDeviceFaultInfoEXT(g_vk.dev, &c, &fi);
+            static const char *const aty[] = {"none", "invalid read", "invalid write", "invalid execute", "unknown instruction pointer", "invalid instruction pointer",
+                                              "instruction pointer of the fault"};
+            if (fr == VK_SUCCESS || fr == VK_INCOMPLETE) {
+                VKRED("  the driver's fault report: %s", fi.description[0] ? fi.description : "(no description)");
+                for (uint32_t i = 0; i < c.addressInfoCount; i++)
+                    VKRED("  fault address: %s at %#llx (within %#llx)", ai[i].addressType < 7 ? aty[ai[i].addressType] : "?", (unsigned long long)ai[i].reportedAddress,
+                          (unsigned long long)ai[i].addressPrecision);
+                for (uint32_t i = 0; i < c.vendorInfoCount; i++)
+                    VKRED("  vendor fault: %s (code %#llx, data %#llx)", vi[i].description, (unsigned long long)vi[i].vendorFaultCode, (unsigned long long)vi[i].vendorFaultData);
+            } else VKRED("  the driver's fault report could not be read (%d)", fr);
+        } else VKRED("  the driver has no fault report for this loss");
+    } else VKRED("  (this driver gives no fault report: VK_EXT_device_fault)");
 }
 
 void vk_image_barrier(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,

@@ -72,7 +72,7 @@ static void flush_locked(void) {
     AcquireSRWLockExclusive(&g_vk.qlock);
     VkResult r = vkQueueSubmit2(g_vk.q, (uint32_t)n, si, VK_NULL_HANDLE);
     ReleaseSRWLockExclusive(&g_vk.qlock);
-    if (r != VK_SUCCESS) VKRED("vkQueueSubmit2 failed (%d) for %d submissions up to %llu", r, n, (unsigned long long)last);
+    if (r != VK_SUCCESS) { VKRED("vkQueueSubmit2 failed (%d) for %d submissions up to %llu", r, n, (unsigned long long)last); vk_lost("a submit", r); }
     atomic_store(&g_vk.tl_submitted, last);
     atomic_fetch_add(&g_qsubs, 1);
 }

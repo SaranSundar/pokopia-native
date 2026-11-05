@@ -141,6 +141,7 @@ void vks_shot_present(const tex_t *t, uint64_t frame, const int crop[4]) {
     uint8_t *px; int w, h;
     uint64_t t0 = now_ns();
     if (vks_shot_capture(t, crop, origin_ll(), &px, &w, &h)) { VKLOG("screenshot of present %llu: nothing to read back", (unsigned long long)frame); return; }
+    for (size_t i = 0; i < (size_t)w * h; i++) px[4 * i + 3] = 255;   // opaque, as the window shows it: the game leaves alpha 0 under some HUD panels
     int rc = vks_png_write(path, px, w, h);
     free(px);
     g_count++;

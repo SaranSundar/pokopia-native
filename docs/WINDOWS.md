@@ -73,8 +73,17 @@ Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in
   their own layout.
 - **Controllers:** Xbox, PlayStation and Switch Pro controllers work as Switch controllers (face buttons by position),
   with rumble and motion. Close Steam or turn off Steam Input for the controller if it does not show up.
+- **Typing (your name, for one):** a small box opens over the game. Type and press Enter, or with only a controller
+  press A, B or + to accept it (an empty box becomes "Player"; the game won't let you change your name later, so a
+  keyboard is best for this one).
+- **The picture:** the same window's **Display** tab sets the console mode (docked draws at 1920x1080, handheld at
+  1280x720 and is lighter), window or full screen and the window size, **Upscaling** (Sharp, the default, or Standard)
+  with its **Sharpness**, 60 or 30 fps, and vsync. Upscaling matters when the window is larger than the game's picture,
+  as in full screen on a 1440p or 4K screen: Sharp keeps it crisp where Standard is softer. Saved for this PC in
+  `%APPDATA%\Pokopia Native\display.json`. The game itself does not draw above 1080p yet.
 - Switches for the launcher go after its name in a terminal: `-Fullscreen`, `-Window 1600x900`, `-Silent`, `-PadCheck`
-  (the controller check: every button and stick is logged and shown in the title bar).
+  (the controller check: every button and stick is logged and shown in the title bar). A switch given there wins over
+  the Display tab.
 
 **The first start** takes a moment longer: the game makes some of its shaders while it runs (about 150 of them, 20 on the
 title screen alone). The Windows game records each one the first time the game asks for it and translates it on the

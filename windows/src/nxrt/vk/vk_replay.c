@@ -996,10 +996,12 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (S->vis_on && P.query < 0) { int q = q_alloc(); if (q >= 0) { vkCmdBeginQuery(cb, R0.qp, (uint32_t)q, 0); P.query = q; g_st.queries++; } }
     // the draw
     uint32_t inst = (uint32_t)((dw ? dw->instances : di->instances) > 0 ? (dw ? dw->instances : di->instances) : 1);
+    vk_checkpoint(cb, 'd', sh[1] ? sh[1]->key : sh[0]->key, inst, 0, 0, ind != 0);
     if (dw) {
         if (ind && expand == VKP_EXPAND_QUADS) {   // no indirect form of the expansion: the arguments as guest memory holds them now (as the indexed count below; M6, gameplay)
             uint32_t a[4] = {0, 1, 0, 0}; for (int k = 0; k < 4; k++) if (!read_u32(ind + 4 * (uint64_t)k, &a[k])) { RED_ONCE(58, "indirect quads whose arguments cannot be read: not drawn"); return; }
             RED_ONCE(57, "indirect quads: drawn with the arguments guest memory holds when they are recorded (%u vertices, %u instances)", a[0], a[1]);
+            if (a[1] > 65536) { RED_ONCE(56, "indirect quads with %u instances in guest memory (a count the GPU had not written yet?): not drawn", a[1]); return; }   // #17: a stale count must not keep the GPU busy past Windows' timeout
             if (a[0] >= 4 && a[1]) { vkCmdBindIndexBuffer(cb, R0.quads, 0, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexed(cb, (a[0] / 4 < 65536 ? a[0] / 4 : 65536) * 6, a[1], 0, (int32_t)a[2], a[3]); }
         }
         else if (ind) { VkBuffer b; VkDeviceSize o;
@@ -1061,6 +1063,7 @@ static void dispatch(const p_dispatch *dp) {
             else if (bb->kind == VKB_DRV) PD("  b%u drv c%d read %d (s2 %d ssbo %u tex %u n %u)", bb->binding, bb->bank, cs->drv_read[bb->bank], cs->s2cs, cs->s2_ssbo_base, cs->s2_tex_base, cs->s2_ntex);
         }
     }
+    vk_checkpoint(cb, 'c', cs->key, g_dispatch_dim[0], g_dispatch_dim[1], g_dispatch_dim[2], dp->ind != 0);
     if (dp->ind) { VkBuffer b; VkDeviceSize o; if (!vkm_use(dp->ind, 12, &b, &o)) { RED_ONCE(70, "indirect dispatch arguments are in no memory pool"); return; } vkCmdDispatchIndirect(cb, b, o); }
     else if (dp->x > 0 && dp->y > 0 && dp->z > 0) vkCmdDispatch(cb, (uint32_t)dp->x, (uint32_t)dp->y, (uint32_t)dp->z);
     g_st.dispatches++;

@@ -31,7 +31,7 @@ or newer with lz4, fontTools and Pillow, the .NET 10 runtime, git, a Vulkan driv
 """
 import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shutil, struct, subprocess, sys, time
 
-TOOL_VERSION = '1.2.1'   # this tool's release (co-op needs the same one on every device); the game's own version is separate
+TOOL_VERSION = '1.2.3'   # this tool's release (co-op needs the same one on every device); the game's own version is separate
 TITLE = '0400A3A01EE4C000'
 NAME = 'Pokemon Pokopia'
 UPSTREAM = 'https://github.com/seedds/nxnative'

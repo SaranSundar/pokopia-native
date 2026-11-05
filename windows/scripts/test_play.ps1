@@ -50,6 +50,20 @@ $env:DM_KEYMAP = "$t\controls.json"
 $out = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$play' $a" 2>&1
 Remove-Item env:DM_KEYMAP
 if (-not ($out | Where-Object { $_ -like "*keys: DM_KEYMAP=$t\controls.json*" })) { Write-Host "FAIL: DM_KEYMAP`n$($out -join "`n")"; $fail++ } else { Write-Host "ok: DM_KEYMAP" }
+# The Display tab's settings (display.json in POKOPIA_SETTINGS_DIR) with -Ask or -Config: the defaults, a saved choice, a switch from outside winning; nothing without
+$env:POKOPIA_SETTINGS_DIR = "$t\settings"; New-Item -ItemType Directory -Force $env:POKOPIA_SETTINGS_DIR | Out-Null
+function Display-Line($o) { ($o | Where-Object { $_ -like "display:*" }) -join "" }
+function Check-Display($name, $extra, $want) {
+    $o = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$play' $a $extra" 2>&1
+    $d = Display-Line $o
+    if ($d -notlike "*$want*") { Write-Host "FAIL: display, $name`n  got:  $d`n  want: $want"; $script:fail++ } else { Write-Host "ok: display, $name" }
+}
+Check-Display "the defaults" "-Ask" "DM_OPMODE=1 NXRT_VK_WINDOW=1280x720 NXRT_VK_FULLSCREEN= NXRT_VK_UPSCALE=sharp NXRT_VK_SHARPNESS=0.5 DM_FPS= NXRT_VK_PRESENT="
+@{ console = 0; fullscreen = $true; window = "1600x900"; upscale = "standard"; sharpness = 3; fps = 30; vsync = $false } | ConvertTo-Json | Set-Content -Encoding UTF8 "$t\settings\display.json"
+Check-Display "a saved choice" "-Ask" "DM_OPMODE=0 NXRT_VK_WINDOW= NXRT_VK_FULLSCREEN=1 NXRT_VK_UPSCALE=standard NXRT_VK_SHARPNESS=0.3 DM_FPS=30 NXRT_VK_PRESENT=mailbox"
+Check-Display "-Window from outside wins" "-Ask -Window 1920x1080" "NXRT_VK_WINDOW=1920x1080 NXRT_VK_FULLSCREEN= "
+Check-Display "nothing without -Ask or -Config" "" "DM_OPMODE= NXRT_VK_WINDOW= NXRT_VK_FULLSCREEN= NXRT_VK_UPSCALE= NXRT_VK_SHARPNESS= DM_FPS= NXRT_VK_PRESENT="
+Remove-Item env:POKOPIA_SETTINGS_DIR
 Remove-Item env:NXRT_TEST_PLAY
 Remove-Item -Recurse -Force $t
 if ($fail) { Write-Host "scripts.play_defaults: $fail failed"; exit 1 }

@@ -250,7 +250,7 @@ static int pool_bind(pool_t_ *p, uint64_t o, uint64_t n) {
         AcquireSRWLockExclusive(&g_vk.qlock);
         VkResult r = vkQueueBindSparse(g_vk.q, 1, &si, f);
         ReleaseSRWLockExclusive(&g_vk.qlock);
-        if (r == VK_SUCCESS) vkWaitForFences(g_vk.dev, 1, &f, VK_TRUE, UINT64_MAX); else { VKRED("vkQueueBindSparse failed (%d)", r); rc = -1; }
+        if (r == VK_SUCCESS) vkWaitForFences(g_vk.dev, 1, &f, VK_TRUE, UINT64_MAX); else { VKRED("vkQueueBindSparse failed (%d)", r); vk_lost("a sparse bind", r); rc = -1; }
         vkDestroyFence(g_vk.dev, f, NULL);
         if (rc) return rc;
     }

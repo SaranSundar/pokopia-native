@@ -28,6 +28,7 @@ static struct {
     double st_iv[STAT_N]; int st_n; uint64_t st_t0, last_t, acq_ns, src_frames, pattern_frames;
     // capture
     _Atomic int cap_want; int cap_ok, cap_w, cap_h; VkBuffer cap_buf; vk_alloc cap_mem; HANDLE cap_ev; uint32_t *cap_px;
+    int sharp; float sharpness;   // NXRT_VK_UPSCALE=sharp (the default) / standard, NXRT_VK_SHARPNESS 0..1: present.frag's sharp upscale when the window is larger
 } g_p;
 
 static uint64_t t0_ns;
@@ -210,7 +211,8 @@ static int present_one(const pq_item *it) {
     vkCmdBindPipeline(f->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_p.pipe);
     vkCmdSetViewport(f->cb, 0, 1, &vp); vkCmdSetScissor(f->cb, 0, 1, &sc);
     vkCmdBindDescriptorSets(f->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_p.pl, 0, 1, &f->ds, 0, NULL);
-    float pc[8] = {u0, v0, u1, v1, have ? 0.0f : 1.0f, (float)(atomic_load(&g_p.count) + 1), pw, ph};
+    float mode = !have ? 1.0f : g_p.sharp && s > 1.01f ? 2.0f : 0.0f;
+    float pc[12] = {u0, v0, u1, v1, mode, (float)(atomic_load(&g_p.count) + 1), pw, ph, g_p.sharpness, 0, 0, 0};
     vkCmdPushConstants(f->cb, g_p.pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, pc);
     vkCmdDraw(f->cb, 3, 1, 0, 0);
     vkCmdEndRendering(f->cb);
@@ -238,7 +240,7 @@ static int present_one(const pq_item *it) {
     VkResult pr = r == VK_SUCCESS ? vkQueuePresentKHR(g_vk.q, &pi) : r;
     ReleaseSRWLockExclusive(&g_vk.qlock);
     f->used = r == VK_SUCCESS;
-    if (r != VK_SUCCESS) { VKRED("present submit failed (%d)", r); return -1; }
+    if (r != VK_SUCCESS) { VKRED("present submit failed (%d)", r); vk_lost("a present", r); return -1; }
     if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR) g_p.stale = 1;
     if (cap) {
         vkWaitForFences(g_vk.dev, 1, &f->fence, VK_TRUE, UINT64_MAX);
@@ -298,7 +300,12 @@ int vkp_init(int mode) {
     VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
     VkDescriptorSetLayoutCreateInfo dl = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, NULL, 0, 1, &b};
     vkCreateDescriptorSetLayout(g_vk.dev, &dl, NULL, &g_p.dsl);
-    VkPushConstantRange pcr = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 32};
+    VkPushConstantRange pcr = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48};
+    const char *e = getenv("NXRT_VK_UPSCALE"); g_p.sharp = !(e && !strcmp(e, "standard"));
+    e = getenv("NXRT_VK_SHARPNESS"); g_p.sharpness = e && *e ? (float)atof(e) : 0.5f;
+    if (g_p.sharpness < 0) g_p.sharpness = 0; else if (g_p.sharpness > 1) g_p.sharpness = 1;
+    VKLOG("present: upscaling to a window larger than the picture %s", g_p.sharp ? "sharp (contrast-adaptive)" : "standard (bilinear)");
+    if (g_p.sharp) VKLOG("present: sharpness %.2f (NXRT_VK_SHARPNESS 0..1)", g_p.sharpness);
     VkPipelineLayoutCreateInfo pl = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, NULL, 0, 1, &g_p.dsl, 1, &pcr};
     vkCreatePipelineLayout(g_vk.dev, &pl, NULL, &g_p.pl);
     VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, NFR};
