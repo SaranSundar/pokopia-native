@@ -35,6 +35,12 @@ if [ -d "$LOGROOT" ]; then
   find "$LOGROOT" -type f \( -name 'nxrt-*.log' -o -name '*.crash.txt' \) -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 10 | cut -d' ' -f2- |
     while read -r f; do cp "$f" "$R/logs/"; done
 fi
+# the game's view of the GPU, from its newest log: the device, the largest buffer (maxBufferSize) and sparse aliasing, memory pools split over
+# several buffers, robust access
+NEWEST=$(ls "$R"/logs/nxrt-*.log 2>/dev/null | sort | tail -1)   # by name (nxrt-<date>-<time>-<pid>.log): the copies all have the copy's time
+{ echo "== the game's Vulkan device (${NEWEST##*/})"
+  [ -n "$NEWEST" ] && grep -E '\[vk\] (device:|memory:|memory pool .* buffers|robust|swapchain)' "$NEWEST" | cut -c1-300 || echo "no game log yet"
+} >> "$R/system.txt"
 if [ -n "$BUILD" ] && [ -d "$BUILD/logs" ]; then
   for f in "$BUILD"/logs/*.log "$BUILD"/logs/*.txt; do [ -f "$f" ] && cp "$f" "$R/build-logs/"; done
   [ -f "$BUILD/build-log.txt" ] && cp "$BUILD/build-log.txt" "$R/build-logs/"
