@@ -1185,6 +1185,9 @@ def doctor_linux(ok, bad, need_game=True):
     ok('git', shutil.which('git') is not None, 'your distribution\'s git package (SteamOS has it)')
     ok('a standard font (fontconfig: DejaVu Sans, Noto Sans or Liberation Sans)', bool(os.environ.get('STD_FONT')) or linux_font('DejaVu Sans', 'Noto Sans', 'Liberation Sans', 'sans-serif') is not None,
        'STD_FONT=<a Unicode .ttf>')
+    if not (shutil.which('zenity') or shutil.which('kdialog')):   # the game's name box (text_input_linux.c): without one, A gives "Player"
+        print('  note     no zenity or kdialog: a new game\'s name box cannot show, and A on the controller names you "Player" '
+              '(Arch, CachyOS: sudo pacman -S zenity; Debian, Ubuntu: sudo apt install zenity)')
     if need_game:
         fl = cpu_flags()
         ok('a CPU with AVX2 and FMA3 (the recompiled game needs them)', {'avx2', 'fma'} <= fl, 'Intel Haswell (2013) or AMD Excavator (2015) and newer; the Steam Deck has them')

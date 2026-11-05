@@ -105,6 +105,11 @@ In Desktop Mode, open **Steam** → **Games** → **Add a Non-Steam Game to My L
 Game Mode shows no Link Play window: it plays the way you chose last time in Desktop Mode (alone the first time). To choose there instead, open the
 game's **Properties** → **Launch Options** and put `%command% --link-play` (host) or `%command% --join 192.168.1.20` (visit that address).
 
+**Your character's name** (a new game asks for it once, and it cannot be changed later): a box comes up for it. If the box shows in Game Mode,
+**Steam + X** opens Steam's keyboard to type into it; tap OK on the screen when done. If no box shows, or you have only a controller, press **A**
+(or +) and the name is "Player". In Desktop Mode the same works, and a keyboard types into the box as usual. To choose the name yourself, start a new
+game in Desktop Mode.
+
 ## Link Play
 
 Linux plays Link Play with Windows PCs, Macs and iPhones that run the same pokopia-native version. Linux does not find hosts on its own network yet:
