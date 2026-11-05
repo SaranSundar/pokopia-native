@@ -17,6 +17,27 @@ report (the last section). Nothing of the game is in the download: everything ma
 
 No root, no `sudo`, no compiler: the download carries its own tools in `linux/bin` (see `linux/bin/MANIFEST.txt` and `THIRD-PARTY-NOTICES.txt`).
 
+## Arch Linux and CachyOS (a PC, or a Steam Deck running them)
+
+The steps below are the same. First install what the build and the game use from pacman (Python with Tk, git, unzip, zenity for the game's
+name box and the Link Play choice, the Vulkan loader), then the Vulkan driver for your GPU:
+
+```bash
+sudo pacman -S --needed python tk git unzip zenity vulkan-icd-loader
+```
+
+```bash
+sudo pacman -S --needed vulkan-radeon
+```
+
+(AMD, and the Steam Deck.) For an NVIDIA card (GTX 16xx and newer) instead:
+
+```bash
+sudo pacman -S --needed nvidia-utils
+```
+
+On KDE, kdialog works in place of zenity. Python's modules still go into the venv of step 2.
+
 ## Steam Deck: build in Desktop Mode
 
 Press the **Steam** button → **Power** → **Switch to Desktop**, then open **Konsole** (the terminal, in the application menu under System). Each
@@ -25,7 +46,7 @@ step is one command; copy them as they are. Start the screen recording (the "Rec
 1. **Unzip** the download into your home folder (Dolphin: right-click → Extract → Extract archive here), or:
 
    ```bash
-   cd ~ && unzip ~/Downloads/Pokopia-Native-for-Linux.zip
+   cd ~ && unzip ~/Downloads/Pokopia-Native-for-Linux-beta.zip
    ```
 
 2. **Python's modules**, in a folder of their own (SteamOS keeps its system folders read-only, so they go into your home):
@@ -33,6 +54,10 @@ step is one command; copy them as they are. Start the screen recording (the "Rec
    ```bash
    python3 -m venv ~/pokopia-venv && ~/pokopia-venv/bin/pip install lz4 fonttools pillow
    ```
+
+   Add `zstandard` to that list if your dump is a `.nup` file. **Python 3.15** (`python3 --version`) has no ready-made lz4 package yet, so pip
+   builds lz4 itself and needs a C compiler first: `sudo pacman -S --needed base-devel` on Arch and CachyOS (`build-essential python3-dev` on
+   Debian and Ubuntu), then the same command again.
 
 3. **The .NET 10 runtime** (the shader translator), with Microsoft's own installer script, into `~/.dotnet`:
 

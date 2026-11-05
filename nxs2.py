@@ -1172,7 +1172,11 @@ def doctor_linux(ok, bad, need_game=True):
     for mod, pip in (('lz4', 'lz4'), ('fontTools', 'fonttools'), ('PIL', 'pillow')):
         try: __import__(mod); have = True
         except ImportError: have = False
-        ok(f'python module {mod}', have, f'{PY} -m pip install --user "{pip}"   (or in a venv: docs/LINUX.md)')
+        hint = f'{PY} -m pip install --user "{pip}"   (or in a venv: docs/LINUX.md)'
+        if mod == 'lz4' and sys.version_info >= (3, 15):   # no lz4 wheel for 3.15 yet: pip compiles it, which needs a C compiler
+            hint = (f'lz4 has no ready-made package for Python {platform.python_version()} yet: pip builds it, which needs a C compiler '
+                    '(Arch, CachyOS: sudo pacman -S --needed base-devel; Debian, Ubuntu: sudo apt install build-essential python3-dev), then pip install lz4 again')
+        ok(f'python module {mod}', have, hint)
     d = dotnet_root(); have_rt = False
     if d:
         r = subprocess.run([str(d / 'dotnet'), '--list-runtimes'], capture_output=True, text=True)
