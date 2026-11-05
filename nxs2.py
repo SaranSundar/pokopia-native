@@ -435,11 +435,12 @@ def setup(args):
         run(['git', 'apply', '--whitespace=nowarn', patch], HERE / 'setup-patch.log', cwd=NX)
         marker.write_text(want + '\n')
     bin_dst = NX / 'dm/gfx/tools/dmsh_xlate_bin'
-    for f in sorted((HERE / ('host/windows/dmsh_xlate_bin' if WIN else 'host/dmsh_xlate_bin')).iterdir()):
+    # Linux has the portable IL only (run with dotnet, as the Linux stages do); the Mac build has its own launcher
+    for f in sorted((HERE / ('host/windows/dmsh_xlate_bin' if WIN or LINUX else 'host/dmsh_xlate_bin')).iterdir()):
         dst = bin_dst / f.name
         if not dst.is_file() or dst.read_bytes() != f.read_bytes():
             shutil.copy2(f, dst); say(f'translator: {f.name} installed')
-    if not WIN: (bin_dst / 'dmsh_xlate').chmod(0o755)
+    if not WIN and not LINUX: (bin_dst / 'dmsh_xlate').chmod(0o755)
     if WIN and not args.no_ios: setup_windows(want)
     elif WIN: say('the iPhone toolchain is skipped (--no-ios): this setup builds the Windows game; run setup without --no-ios for the iPhone app')
     elif LINUX and AMPERE.parent.name == 'linux': say('ampere-lower: the download\'s Linux build')
