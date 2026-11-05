@@ -445,6 +445,8 @@ def check_writable(folder, what):
 
 def setup(args):
     """nxnative at the pinned commit with the Switch 2 patch and the rebuilt translator, and ampere-lower built."""
+    if (NX / '.bundled').is_file() and not (NX / '.git').is_dir():   # the Linux AppImage carries nxnative set up already, without its git history
+        return say(f'setup: nothing to do, this download carries nxnative set up ({(NX / ".bundled").read_text().strip()}) and ampere-lower at {AMPERE}')
     bad = doctor(need_ios=not args.no_ios, need_windows=False)
     if bad: raise Fail('install the missing tools above, then run setup again')
     check_writable(HERE, 'the pokopia-native folder')
@@ -1291,7 +1293,7 @@ def st_lin_play(b, t):
     cfg = {'pokopia_native': TOOL_VERSION, 'game_version': b.version, 'exe': 'runtime/nxrt', 'exefs': '../extract/ExeFS', 'game': 'game.so',
            'romfs': '../extract/RomFS.img', 'save': save, 'work': work, 'shaders': 'shaders', 'shader_build': '..', 'fonts': 'fonts',
            'pipeline_seed': 'pipelines-seed.tsv' if seed.is_file() else '', 'python': PY, 'shader_tool': 'runtime/nxshader/nxshader.py',
-           'installer': 'runtime/installer', 'spirv_tools': 'runtime'}
+           'installer': 'runtime/installer', 'spirv_tools': 'runtime', 'dotnet': str(dotnet_root() or '')}   # the translator's .NET for shaders made in play
     old = b.lin / 'play.json'
     if old.is_file():   # a save or work folder the player chose stays
         prev = json.loads(old.read_text(encoding='utf-8')); cfg.update({k: prev[k] for k in ('save', 'work') if prev.get(k)})
@@ -1305,6 +1307,7 @@ def st_lin_play(b, t):
 # follow: --fullscreen, --window 1600x900, --silent, --pad-check; --save and --work with other folders for a second player; --link-play, --join,
 # --internet, --room and --relay instead of the choice (docs/LINUX.md). In Steam: Add a Non-Steam Game, then this file.
 here=$(cd "$(dirname "$0")" && pwd)
+export POKOPIA_PY="${{POKOPIA_PY:-{PY}}}"   # the builder's Python reads play.json where the system has none
 exec "$here/../linux/runtime/play.sh" --config "$here/../linux/play.json" "$@"
 ''', encoding='utf-8')
     sh.chmod(0o755)
