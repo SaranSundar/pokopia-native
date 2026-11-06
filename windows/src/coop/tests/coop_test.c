@@ -914,6 +914,25 @@ static void test_interact(void) {
     env_set("DM_COOP_INTERACT", "0"); CHECK(!coop_interact_on());
     env_set("DM_COOP_INTERACT", NULL); CHECK(!coop_interact_on());
 }
+static void test_story(void) {
+    fprintf(stderr, "== story\n");
+    const coop_site *s = NULL;
+    CHECK_EQ(coop_story_sites("76a489f3bd3642fa5e18bd83d32c98bacc5f7d0e", &s), 1);
+    CHECK(s && s->id == COOP_SITE_TALK && s->off == 0x4c06d8 && s->fn == 0x4c024c && s->word == 0x2a000328u);
+    CHECK_EQ(coop_story_sites("816c5358e8178d802fcec4a7ce5a741a", &s), 0);   // 1.0.5: none
+    CHECK(s == NULL);
+    uint64_t x[31] = {0};
+    env_set("DM_COOP_STORY", NULL);
+    coop_interact_site(COOP_SITE_TALK, x); CHECK_EQ(x[0], 0);   // off: IsHost's answer stands
+    env_set("DM_COOP_STORY", "1"); CHECK(coop_story_on()); CHECK(coop_interact_on());   // Story co-op brings Interact everywhere
+    coop_interact_site(COOP_SITE_TALK, x); CHECK_EQ(x[0], 1);
+    x[13] = 0x87800000; coop_interact_site(COOP_SITE_TALK, x); CHECK_EQ(x[13], 0x87800000);   // the talk site leaves the mask alone
+    const char *two[] = {COOP_INTERACT_MOD, COOP_STORY_MOD};
+    CHECK(coop_mods_add(coop_mods_add(0, COOP_INTERACT_MOD), COOP_STORY_MOD) == fnv_names(two, 2));
+    CHECK(coop_mods_add(coop_mods_add(0, COOP_INTERACT_MOD), COOP_STORY_MOD) == 0xc75a2da0380038c1ull);   // as the Mac hosts logged it
+    env_set("DM_COOP_STORY", "0"); CHECK(!coop_story_on()); CHECK(!coop_interact_on());
+    env_set("DM_COOP_STORY", NULL);
+}
 
 int main(int argc, char **argv) {
     const char *v = getenv("COOP_TEST_VERBOSE"), *m = getenv("COOP_TEST_MDNS");
@@ -948,7 +967,7 @@ int main(int argc, char **argv) {
     if (want_inet) test_inet();
     if (want_relay) test_relay();
     if (want_probe) test_probe();
-    if (want_interact) test_interact();
+    if (want_interact) { test_interact(); test_story(); }
     fprintf(stderr, "%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

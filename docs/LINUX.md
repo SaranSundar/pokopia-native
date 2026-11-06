@@ -26,7 +26,9 @@ runtime, the Linux tools and nxnative): no terminal steps, no Python packages, n
    Or in a terminal: `chmod +x ~/Downloads/Pokopia-Native-Builder-*.AppImage`
 2. **Double-click it.** The first start unpacks the builder to `~/.local/share/pokopia-native/builder/<version>` (about 1 GB, once per version;
    the games you build use its Python and .NET from there), then the window opens.
-3. In the window: **Choose…** your dump folder, then **Build**, then **Play**. **Import save…** brings your save from Eden, the phone or a Mac.
+3. The window walks you through it, one page at a time: what to make (the game for this computer), a check of your computer, your game files,
+   the build, then **Play**. **Bring my save** on the last page brings your save from Eden, the phone or a Mac. **Advanced** (top right) has
+   the one-screen view with every button.
 
 The game itself is still built on your computer from your own dump, into the build folder; the AppImage carries nothing of the game. To play from
 Steam (Game Mode), add the game's launcher `<build folder>/out/play-pokopia-<game version>.sh` as a non-Steam game, as below, not the AppImage.
@@ -114,6 +116,9 @@ start translates the shaders the game makes while it runs: for about a minute th
 
 - **Controls**: the Steam Deck's own controls work as a Switch controller (A/B/X/Y by position, the sticks, the triggers). Keyboard and mouse:
   WASD to move, the mouse to look (click the picture; Esc releases the mouse), J/K/U/I for A/B/X/Y, Return for +, Tab for −, F11 for full screen.
+- **Settings in the game**: **F1**, or **−** and **+** together on a controller (the Steam Deck's View and Menu buttons, either side of the screen),
+  opens the settings over the game: the picture (Resolution, window or full screen, Upscaling, 30 fps, Vsync, an FPS counter) and the keyboard's
+  keys. Changes apply at once (Console mode from the next start) and are kept in `~/.config/pokopia-native/` for the next start.
 - **Your save**: `~/.local/share/pokopia-native/<version>/save`. To bring your save from Eden, a Mac or the phone:
   `~/pokopia-venv/bin/python nxs2.py import-save ~/Games/Pokopia_native <the folder with B00, G00 and S00>` (`--eden` finds Eden's own).
   The save that was there is kept beside it.
@@ -124,7 +129,8 @@ In Desktop Mode, open **Steam** → **Games** → **Add a Non-Steam Game to My L
 `~/Games/Pokopia_native/out/play-pokopia-<version>.sh`, and add it. Back in Game Mode it is in your library under "Non-Steam".
 
 Game Mode shows no Link Play window: it plays the way you chose last time in Desktop Mode (alone the first time). To choose there instead, open the
-game's **Properties** → **Launch Options** and put `%command% --link-play` (host) or `%command% --join 192.168.1.20` (visit that address).
+game's **Properties** → **Launch Options** and put `%command% --link-play` (host) or `%command% --join 192.168.1.20` (visit that address);
+add ` --story` for Story co-op (below).
 
 **Your character's name** (a new game asks for it once, and it cannot be changed later): a box comes up for it. If the box shows in Game Mode,
 **Steam + X** opens Steam's keyboard to type into it; tap OK on the screen when done. If no box shows, or you have only a controller, press **A**
@@ -141,6 +147,10 @@ Linux plays Link Play with Windows PCs, Macs and iPhones that run the same pokop
 - **over the internet**: as on Windows (docs/WINDOWS.md, "Playing together"): a room code, and the host's router forwards port 47600.
 
 In the game: Link Play, then **Local connection** (not Online connection). Every player needs a save of their own.
+
+**Interact everywhere** (visitors use moves and items and build in every town) and **Story co-op** (on top of it: visitors talk to the story
+characters too) are experimental, and every player needs the same choice: the Link Play choice asks for both, or give `--interact` or `--story`
+after the launcher's name. With both off, Linux plays with 1.2.x as well.
 
 ## Recording (for the beta)
 

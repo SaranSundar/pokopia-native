@@ -31,7 +31,7 @@ int vkr_fmt_as_ct(int nvn_format, int ct);
 typedef struct {
     uint64_t handles, records, draws, draws_skipped, dispatches, passes, clears, copies, tex_copies, updates, fills, barriers, queries, bad;
     uint64_t skip_no_shader, skip_no_pipeline, skip_no_target, skip_state, inexact_vertex;
-    uint64_t desc_sets, writebacks;
+    uint64_t desc_sets, writebacks, scaled_sets, sets_reused;   // scaled_sets: with their own support buffer (F-5 render scales); sets_reused: bound again (same content)
 } vkr_stats_t;
 void vkr_stats(vkr_stats_t *s);
 void vkr_frame(uint64_t frame);              // per present: statistics every 300 frames

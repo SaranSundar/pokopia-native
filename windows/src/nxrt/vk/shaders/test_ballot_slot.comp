@@ -1,0 +1,20 @@
+#version 450
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+// vkspv_ballot_per_lane's test (t_vk_ballot.c): the warp-aggregated counter of shader 2cb5df5cb96b324e (D-1) after an early return, whose result is read:
+// the leader adds the lanes' number, each lane takes the leader's result (a shuffle from the leader's lane, in a function of its own as the translator
+// makes NVN's SHFL.IDX) plus its rank among the lanes, and writes its slot (1-based; 0 = returned)
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) buffer Count { uint count; };
+layout(set = 0, binding = 1) buffer Data { uint data[]; };
+int from_lane(int v, int lane) { return subgroupShuffle(v, uint(lane)); }
+void main() {
+    if (data[gl_GlobalInvocationID.x] == 0u) return;
+    uint mask = subgroupBallot(true).x;
+    int leader = findMSB(mask);
+    int n = bitCount(mask);
+    int base = n;
+    if (gl_SubgroupInvocationID == uint(leader)) base = int(atomicAdd(count, uint(n)));
+    int slot = from_lane(base, leader) + bitCount(gl_SubgroupLtMask.x & mask);
+    data[gl_GlobalInvocationID.x] = uint(slot) + 1u;
+}

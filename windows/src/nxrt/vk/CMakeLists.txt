@@ -29,7 +29,7 @@ message(STATUS "nxrt: Vulkan backend with SDL3 ${SDL3_VERSION} (${NXRT_SDL3_DIR}
 
 # The backend's own shaders, compiled to SPIR-V headers
 set(_spv)
-foreach(sh present.vert present.frag test_fill.comp test_pervertex.vert test_pervertex_cull.vert test_bind.frag clear.vert clear_f.frag clear_u.frag clear_i.frag test_dual.frag test_tri.vert test_ballot.comp test_ballot_used.comp quad_args.comp)
+foreach(sh present.vert present.frag menu.vert menu.frag test_fill.comp test_pervertex.vert test_pervertex_cull.vert test_bind.frag clear.vert clear_f.frag clear_u.frag clear_i.frag test_dual.frag test_tri.vert test_ballot.comp test_ballot_used.comp test_ballot_slot.comp test_ballot_slot4.comp test_ballot_rank.comp quad_args.comp)
   string(REPLACE "." "_" var ${sh})
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${var}.h
     COMMAND ${NXRT_GLSLANG} -V --target-env vulkan1.3 --vn ${var}_spv -o ${CMAKE_CURRENT_BINARY_DIR}/${var}.h ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${sh}
@@ -47,7 +47,7 @@ target_compile_options(nxrt_bc7enc PRIVATE -w)
 
 add_library(nxrt_vk OBJECT
   gfx_vk.c vk_fn.c vk_dev.c vk_window.c vk_submit.c vk_present.c vk_pcache.c vk_mem.c vk_fmt.c vk_tex.c vk_astc.cpp
-  vk_json.c vk_shader.c vk_pipe.c vk_replay.c vk_shot.c ${_spv})
+  vk_json.c vk_shader.c vk_pipe.c vk_replay.c vk_shot.c vk_menu.c ${_spv})
 target_include_directories(nxrt_vk PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../include "${_vk_inc}" "${NXRT_SDL3_DIR}/include"
   ${CMAKE_CURRENT_SOURCE_DIR}/../gfx ${CMAKE_CURRENT_SOURCE_DIR}/../host ${CMAKE_CURRENT_SOURCE_DIR}/../front ${CMAKE_SOURCE_DIR}/src/s2tex)
 target_compile_definitions(nxrt_vk PRIVATE NXRT_GFX_VK $<$<PLATFORM_ID:Windows>:VK_USE_PLATFORM_WIN32_KHR>)
@@ -59,8 +59,9 @@ target_compile_options(nxrt_vk PRIVATE -fms-extensions $<$<COMPILE_LANGUAGE:C>:-
 
 # Into the runtime: gfx_select.c lists the backend, the executables link SDL3 (delay-loaded: nxrt starts without SDL3.dll under --gfx null)
 target_sources(nxrt_core PRIVATE $<TARGET_OBJECTS:nxrt_vk>)
-# M6 (docs/m6-input-gameplay.md): the SDL3 front end (keyboard, mouse look, controllers) and the SDL3 audio output, built with the runtime's own includes
-target_sources(nxrt_core PRIVATE ../front/front_sdl.c ../front/audio_sdl.c)
+# M6 (docs/m6-input-gameplay.md): the SDL3 front end (keyboard, mouse look, controllers) and the SDL3 audio output, built with the runtime's own includes;
+# the in-game settings menu (docs/in-game-menu.md)
+target_sources(nxrt_core PRIVATE ../front/front_sdl.c ../front/audio_sdl.c ../front/menu.c)
 target_include_directories(nxrt_core PRIVATE ../front)
 target_compile_definitions(nxrt_core PRIVATE NXRT_GFX_VK)
 if(WIN32)
@@ -75,7 +76,7 @@ endif()
 
 # Tests (docs/m5-vulkan.md §6): skipped (77) without a Vulkan GPU or without the data they need
 set(NXRT_VK_TEST_INC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} "${_vk_inc}" "${NXRT_SDL3_DIR}/include" ${CMAKE_CURRENT_SOURCE_DIR}/../gfx ${CMAKE_SOURCE_DIR}/src/s2tex)
-foreach(t device dirty tex astc pcache replay windows ballot quads)
+foreach(t device dirty tex astc pcache replay windows ballot quads scale)
   nxrt_executable(nxrt-tests-vk-${t} tests/t_vk_${t}.c)
   target_include_directories(nxrt-tests-vk-${t} PRIVATE ${NXRT_VK_TEST_INC})
   target_compile_options(nxrt-tests-vk-${t} PRIVATE -fms-extensions -Wno-sign-compare -Wno-missing-field-initializers -Wno-missing-braces)
@@ -87,8 +88,11 @@ add_test(NAME nxrt.vk_windows_side COMMAND nxrt-tests-vk-windows)
 set_tests_properties(nxrt.vk_windows_side PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NXRT_VK_NO_ALIAS=1;NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache")
 target_link_libraries(nxrt-tests-vk-astc PRIVATE nxrt_astcenc nxrt_bc7enc)
 target_sources(nxrt-tests-vk-pcache PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_fill_comp.h)
-target_sources(nxrt-tests-vk-ballot PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_used_comp.h)
+target_sources(nxrt-tests-vk-ballot PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_used_comp.h
+  ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_slot_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_slot4_comp.h
+  ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_rank_comp.h)
 target_sources(nxrt-tests-vk-quads PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/quad_args_comp.h)
+target_sources(nxrt-tests-vk-scale PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_bind_frag.h)
 target_sources(nxrt-tests-vk-replay PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_cull_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_bind_frag.h
   ${CMAKE_CURRENT_BINARY_DIR}/test_dual_frag.h ${CMAKE_CURRENT_BINARY_DIR}/test_tri_vert.h)
 # M6 (docs/m6-input-gameplay.md): input (scripted input, the front end's mapping) and the SDL3 sound card on SDL's dummy driver

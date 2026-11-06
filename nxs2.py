@@ -31,7 +31,7 @@ or newer with lz4, fontTools and Pillow, the .NET 10 runtime, git, a Vulkan driv
 """
 import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shutil, struct, subprocess, sys, time
 
-TOOL_VERSION = '1.2.6'   # this tool's release (co-op needs the same one on every device); the game's own version is separate
+TOOL_VERSION = '1.3.0'   # this tool's release (co-op needs the same one on every device); the game's own version is separate
 TITLE = '0400A3A01EE4C000'
 NAME = 'Pokemon Pokopia'
 UPSTREAM = 'https://github.com/seedds/nxnative'
@@ -1329,7 +1329,8 @@ def st_lin_play(b, t):
 # The save is {cfg["save"]} (linux/play.json names it; nxs2.py import-save brings one from Eden, the phone or a Mac).
 # A choice comes first: alone, Link Play here, or over the internet (POKOPIA_ASK=1 brings it back after "don't ask again"). play.sh's switches can
 # follow: --fullscreen, --window 1600x900, --silent, --pad-check; --save and --work with other folders for a second player; --link-play, --join,
-# --internet, --room and --relay instead of the choice (docs/LINUX.md). In Steam: Add a Non-Steam Game, then this file.
+# --internet, --room and --relay instead of the choice, --interact and --story with them (docs/LINUX.md). In the game, F1 changes the picture and
+# the keys. In Steam: Add a Non-Steam Game, then this file.
 here=$(cd "$(dirname "$0")" && pwd)
 export POKOPIA_PY="${{POKOPIA_PY:-{PY}}}"   # the builder's Python reads play.json where the system has none
 exec "$here/../linux/runtime/play.sh" --config "$here/../linux/play.json" "$@"
@@ -1337,7 +1338,7 @@ exec "$here/../linux/runtime/play.sh" --config "$here/../linux/play.json" "$@"
     sh.chmod(0o755)
     st = b.outputs / f'pokopia-settings-{b.version}.sh'   # Windows' "Pokopia Settings": the choice again after "don't ask again", then the game
     st.write_text(f'''#!/bin/sh
-# The Link Play choice before Pokemon Pokopia {b.version} starts (alone, Link Play, internet; Interact everywhere), even after "don't ask again", then the game.
+# The Link Play choice before Pokemon Pokopia {b.version} starts (alone, Link Play, internet; Interact everywhere, Story co-op), even after "don't ask again", then the game.
 export POKOPIA_ASK=1
 exec "$(cd "$(dirname "$0")" && pwd)/play-pokopia-{b.version}.sh" "$@"
 ''', encoding='utf-8')

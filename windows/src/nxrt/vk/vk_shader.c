@@ -113,38 +113,56 @@ static void wput(wbuf *b, const uint32_t *x, size_t k) { if (b->n + k > b->cap) 
 // NVN's compiler aggregates an atomic add over a warp: ballot(true), the ballot's highest lane leads and adds its bit count for all of them. After some lanes have
 // returned, that ballot never completes on NVIDIA's RTX 50 cards (#12, #21, #22: shader d2c50cca6e386abc, driver 617). Where the add's result is never read, a
 // ballot of only the lane's own bit gives the same sum: every lane leads itself and adds 1. Only that shape is rewritten: ballot(true) whose value reaches a
-// FindUMsb / FindSMsb and a bit count, the bit count an OpAtomicIAdd whose result goes nowhere (or only into a variable nothing reads). The new word count
-// (*pw replaced) and *rewritten ballots; n when nothing changed
+// FindUMsb / FindSMsb and a bit count, the bit count an OpAtomicIAdd whose result goes nowhere (or only into a variable nothing reads), or is handed out from
+// the leader by a shuffle (below). The new word count (*pw replaced) and *rewritten ballots; n when nothing changed
 size_t vkspv_ballot_per_lane(uint32_t **pw, size_t n, int *rewritten) {
     enum { B_NAME = 5, B_EXT_INST = 12, B_TYPE_INT = 21, B_TYPE_VECTOR = 23, B_TYPE_POINTER = 32, B_CONSTANT_TRUE = 41, B_CONSTANT = 43, B_FUNCTION = 54,
            B_VARIABLE = 59, B_LOAD = 61, B_STORE = 62, B_ACCESS_CHAIN = 65, B_IN_BOUNDS_ACCESS_CHAIN = 66, B_DECORATE = 71, B_COMPOSITE_CONSTRUCT = 80,
-           B_COMPOSITE_EXTRACT = 81, B_COPY_OBJECT = 83, B_BITCAST = 124, B_SHL = 196, B_AND = 199, B_BIT_COUNT = 205, B_ATOMIC_IADD = 234, B_BALLOT = 339,
-           B_DEC_BUILTIN = 11, B_BI_SUBGROUP_LANE = 41, B_FIND_SMSB = 74, B_FIND_UMSB = 75, MAXB = 32 };
+           B_COMPOSITE_EXTRACT = 81, B_COPY_OBJECT = 83, B_BITCAST = 124, B_IADD = 128, B_IMUL = 132, B_SHR_L = 194, B_SHR_A = 195, B_SHL = 196, B_AND = 199,
+           B_BIT_COUNT = 205, B_ATOMIC_IADD = 234, B_BALLOT = 339,
+           B_DEC_BUILTIN = 11, B_BI_SUBGROUP_LANE = 41, B_BI_LT_MASK = 4420, B_SC_FUNCTION = 7, B_FIND_SMSB = 74, B_FIND_UMSB = 75, MAXB = 32 };
     uint32_t *w = *pw;
     *rewritten = 0;
     if (!spv_ok(w, n)) return n;
-    uint32_t bound = w[3], tu = 0, c0 = 0, c1 = 0, lane_var = 0, lane_ptr = 0, nb = 0, bres[MAXB], bat[MAXB];
+    uint32_t bound = w[3], tu = 0, c0 = 0, c1 = 0, lane_var = 0, lane_ptr = 0, lt_var = 0, nb = 0, bres[MAXB], bat[MAXB];
     size_t first_fn = 0;
-    uint32_t *def = calloc(bound, sizeof *def); uint8_t *is_true = calloc(bound, 1);
+    uint32_t *def = calloc(bound, sizeof *def);
+    uint8_t *is_true = calloc(bound, 1), *nst = calloc(bound, 1);   // 1: the constant true, 2: a constant; the stores into each variable (2: more than one)
     for (size_t i = 5; i < n; ) {
         uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
-        if (!wc || i + wc > n) { free(def); free(is_true); return n; }
+        if (!wc || i + wc > n) { free(def); free(is_true); free(nst); return n; }
+        if (op == B_STORE && wc >= 3 && w[i + 1] < bound && nst[w[i + 1]] < 2) nst[w[i + 1]]++;
+        if (op == B_DECORATE && wc == 4 && w[i + 2] == B_DEC_BUILTIN && w[i + 3] == B_BI_LT_MASK) lt_var = w[i + 1];
         if ((op == B_TYPE_INT || op == B_TYPE_VECTOR || op == B_TYPE_POINTER) && wc >= 2 && w[i + 1] < bound) def[w[i + 1]] = (uint32_t)i;
         if (op == B_VARIABLE && wc >= 4 && w[i + 2] < bound) def[w[i + 2]] = (uint32_t)i;
         if (op == B_TYPE_INT && wc == 4 && w[i + 2] == 32 && !w[i + 3] && !tu) tu = w[i + 1];
         if (op == B_CONSTANT_TRUE && wc == 3 && w[i + 2] < bound) is_true[w[i + 2]] = 1;
         if (op == B_CONSTANT && wc == 4 && tu && w[i + 1] == tu) { if (w[i + 3] == 0 && !c0) c0 = w[i + 2]; if (w[i + 3] == 1 && !c1) c1 = w[i + 2]; }
+        if (op == B_CONSTANT && wc >= 4 && w[i + 2] < bound) is_true[w[i + 2]] |= 2;
         if (op == B_DECORATE && wc == 4 && w[i + 2] == B_DEC_BUILTIN && w[i + 3] == B_BI_SUBGROUP_LANE) lane_var = w[i + 1];
         if (op == B_FUNCTION && !first_fn) first_fn = i;
-        if (op == B_BALLOT && wc == 5 && w[i + 4] < bound && is_true[w[i + 4]] && nb < MAXB) { bres[nb] = w[i + 2]; bat[nb++] = (uint32_t)i; }
+        if (op == B_BALLOT && wc == 5 && w[i + 4] < bound && (is_true[w[i + 4]] & 1) && nb < MAXB) { bres[nb] = w[i + 2]; bat[nb++] = (uint32_t)i; }
         i += wc;
     }
     // the lane's index must be an Input uint (as NVN's leader test reads it), the ballot a vector of 4 of them
     if (lane_var && lane_var < bound && def[lane_var]) { uint32_t pt = w[def[lane_var] + 1];
         if (pt < bound && def[pt] && (w[def[pt]] & 0xffff) == B_TYPE_POINTER && w[def[pt] + 3] == tu) lane_ptr = pt; }
-    if (!nb || !tu || !lane_ptr || !first_fn) { free(def); free(is_true); return n; }
-    // what each ballot's value reaches (bit k for ballot k): D its bits, C a bit count of them, through variables, access chains and bit casts
-    uint32_t *D = calloc(bound, 4), *C = calloc(bound, 4), msb = 0, atom = 0, atom_used = 0;
+    if (!nb || !tu || !lane_ptr || !first_fn) { free(def); free(is_true); free(nst); return n; }
+    // the LtMask (Mk) through loads, bit casts and the variables stored once (the translator's temporaries; one stored more than once is a register)
+    uint32_t *D = calloc(bound, 4), *C = calloc(bound, 4), *Mk = calloc(bound, 4), msb = 0, atom = 0, atom_used = 0;
+    if (lt_var && lt_var < bound) Mk[lt_var] = 1;
+    for (int pass = 0, changed = 1; changed && pass < 32; pass++) {
+        changed = 0;
+        for (size_t i = 5; i < n; i += w[i] >> 16) {
+            uint32_t wc = w[i] >> 16, op = w[i] & 0xffff, dst = 0, src = 0;
+            if (op == B_STORE && wc >= 3 && w[i + 1] < bound && w[i + 2] < bound && nst[w[i + 1]] == 1) dst = w[i + 1], src = w[i + 2];
+            else if ((op == B_LOAD || op == B_ACCESS_CHAIN || op == B_IN_BOUNDS_ACCESS_CHAIN || op == B_COMPOSITE_EXTRACT || op == B_COPY_OBJECT || op == B_BITCAST)
+                     && wc >= 4 && w[i + 2] < bound && w[i + 3] < bound) dst = w[i + 2], src = w[i + 3];
+            if (dst && Mk[src] && !Mk[dst]) { Mk[dst] = 1; changed = 1; }
+        }
+    }
+    // what each ballot's value reaches (bit k for ballot k): D its bits, C a bit count of them, through variables, access chains and bit casts (not the
+    // rank's AND with the LtMask: followed below)
     for (uint32_t k = 0; k < nb; k++) D[bres[k]] |= 1u << k;
     for (int pass = 0, changed = 1; changed && pass < 32; pass++) {
         changed = 0; atom = 0;
@@ -154,8 +172,12 @@ size_t vkspv_ballot_per_lane(uint32_t **pw, size_t n, int *rewritten) {
             if (op == B_STORE && wc >= 3 && w[i + 1] < bound && w[i + 2] < bound) FLOW(w[i + 1], D[w[i + 2]], C[w[i + 2]]);
             else if ((op == B_LOAD || op == B_ACCESS_CHAIN || op == B_IN_BOUNDS_ACCESS_CHAIN || op == B_COMPOSITE_EXTRACT || op == B_COPY_OBJECT || op == B_BITCAST)
                      && wc >= 4 && w[i + 2] < bound && w[i + 3] < bound) FLOW(w[i + 2], D[w[i + 3]], C[w[i + 3]]);
-            else if (op == B_AND && wc == 5 && w[i + 2] < bound && w[i + 3] < bound && w[i + 4] < bound) FLOW(w[i + 2], D[w[i + 3]] | D[w[i + 4]], C[w[i + 3]] | C[w[i + 4]]);
+            else if (op == B_AND && wc == 5 && w[i + 2] < bound && w[i + 3] < bound && w[i + 4] < bound && !Mk[w[i + 3]] && !Mk[w[i + 4]])
+                FLOW(w[i + 2], D[w[i + 3]] | D[w[i + 4]], C[w[i + 3]] | C[w[i + 4]]);
             else if (op == B_BIT_COUNT && wc == 4 && w[i + 2] < bound && w[i + 3] < bound) FLOW(w[i + 2], 0, D[w[i + 3]] | C[w[i + 3]]);
+            else if ((op == B_SHL || op == B_IMUL) && wc == 5 && w[i + 2] < bound && w[i + 3] < bound && w[i + 4] < bound &&
+                     ((is_true[w[i + 4]] & 2) || (op == B_IMUL && (is_true[w[i + 3]] & 2))))   // a count of entries of a constant size (7f1a413b3fe36690 adds count << 2)
+                FLOW(w[i + 2], 0, C[w[i + 3]] | C[w[i + 4]]);
             else if (op == B_EXT_INST && wc == 6 && (w[i + 4] == B_FIND_UMSB || w[i + 4] == B_FIND_SMSB) && w[i + 5] < bound) msb |= D[w[i + 5]];
             else if (op == B_ATOMIC_IADD && wc == 7 && w[i + 6] < bound && C[w[i + 6]]) {
                 atom |= C[w[i + 6]];
@@ -178,12 +200,93 @@ size_t vkspv_ballot_per_lane(uint32_t **pw, size_t n, int *rewritten) {
         }
         #undef FLOW
     }
-    uint32_t ok = msb & atom & ~atom_used, vt = 0;
+    // A counter whose result is read (D-1: shader 2cb5df5cb96b324e on an RTX 3050 Laptop, driver 621, the same hang): NVN hands each lane its slot as the
+    // leader's result shuffled from the leader's lane plus the lane's rank, bitCount(LtMask & ballot). With a per-lane ballot every lane leads itself, adds 1
+    // and gets its own slot: the shuffle reads the lane's own value and the rank is 0, so the slots are as many and as unique as before (only which lane
+    // takes which within a warp changes). Taken only when the result reaches nothing but such a shuffle (a call of a function that shuffles, with the
+    // leader among its arguments), the count nothing but the add and the result's variables, the leader nothing but the leader test and that call, the
+    // ballot nothing but the leader, the count and the rank, the rank nothing but masks, constant scales and adds
+    uint32_t cand = msb & atom & atom_used, rd_ok = 0;
+    if (cand) {
+        enum { R_FUNCTION_END = 56, R_FUNCTION_CALL = 57, R_IEQUAL = 170, R_SHUFFLE = 345 };
+        uint32_t *L = calloc(bound, 4), *R = calloc(bound, 4), *RK = calloc(bound, 4);
+        uint8_t *shuf_fn = calloc(bound, 1);
+        for (size_t i = 5, fn = 0; i < n; i += w[i] >> 16) {   // the functions that shuffle
+            uint32_t op = w[i] & 0xffff;
+            if (op == B_FUNCTION && (w[i] >> 16) >= 3) fn = w[i + 2]; else if (op == R_FUNCTION_END) fn = 0;
+            if (op == R_SHUFFLE && fn && fn < bound) shuf_fn[fn] = 1;
+        }
+        for (int pass = 0, changed = 1; changed && pass < 32; pass++) {   // the leader (L), the result (R), the rank (RK: not into a register, see below)
+            changed = 0;
+            #define FLOW2(a, dst, v) do { if ((a[dst] | (v)) != a[dst]) { a[dst] |= (v); changed = 1; } } while (0)
+            for (size_t i = 5; i < n; i += w[i] >> 16) {
+                uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
+                if (op == B_STORE && wc >= 3 && w[i + 1] < bound && w[i + 2] < bound) {
+                    FLOW2(L, w[i + 1], L[w[i + 2]]); FLOW2(R, w[i + 1], R[w[i + 2]]); if (nst[w[i + 1]] == 1) FLOW2(RK, w[i + 1], RK[w[i + 2]]);
+                } else if ((op == B_LOAD || op == B_ACCESS_CHAIN || op == B_IN_BOUNDS_ACCESS_CHAIN || op == B_COMPOSITE_EXTRACT || op == B_COPY_OBJECT || op == B_BITCAST)
+                           && wc >= 4 && w[i + 2] < bound && w[i + 3] < bound) {
+                    FLOW2(L, w[i + 2], L[w[i + 3]]); FLOW2(R, w[i + 2], R[w[i + 3]]); FLOW2(RK, w[i + 2], RK[w[i + 3]]);
+                } else if (op == B_BIT_COUNT && wc == 4 && w[i + 2] < bound && w[i + 3] < bound) FLOW2(RK, w[i + 2], RK[w[i + 3]]);   // the rank
+                else if ((op == B_SHL || op == B_SHR_L || op == B_SHR_A || op == B_IMUL) && wc == 5 && w[i + 2] < bound && w[i + 3] < bound && w[i + 4] < bound)
+                    FLOW2(RK, w[i + 2], RK[w[i + 3]] | RK[w[i + 4]]);
+                else if (op == B_EXT_INST && wc == 6 && (w[i + 4] == B_FIND_UMSB || w[i + 4] == B_FIND_SMSB) && w[i + 5] < bound && w[i + 2] < bound) FLOW2(L, w[i + 2], D[w[i + 5]]);
+                else if (op == B_ATOMIC_IADD && wc == 7 && w[i + 6] < bound && w[i + 2] < bound) FLOW2(R, w[i + 2], C[w[i + 6]]);
+                else if (op == B_AND && wc == 5 && w[i + 2] < bound && w[i + 3] < bound && w[i + 4] < bound) {
+                    if (Mk[w[i + 3]]) FLOW2(RK, w[i + 2], D[w[i + 4]]);
+                    if (Mk[w[i + 4]]) FLOW2(RK, w[i + 2], D[w[i + 3]]);
+                    FLOW2(RK, w[i + 2], RK[w[i + 3]] | RK[w[i + 4]]);   // the rank masked (7f1a413b3fe36690: & 65535)
+                }
+            }
+            #undef FLOW2
+        }
+        // every use of what each candidate's ballot, count, leader and result reach
+        uint32_t bad = 0;
+        for (size_t i = 5; i < n; i += w[i] >> 16) {
+            uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
+            if (op == B_NAME || op == B_DECORATE || op == 6 /* OpMemberName */) continue;
+            // the operands: after the result type and id, the extended set and its instruction, or the function called; from the start where there is no
+            // result (a store or copy, an atomic store, an image write, a branch, a switch, a returned value)
+            uint32_t first = op == B_EXT_INST ? 5 : op == R_FUNCTION_CALL ? 4 : 3;
+            if (op == B_STORE || op == 63 || op == 99 || op == 228 || op == 250 || op == 251 || op == 254) first = 1;
+            uint32_t call_lead = 0, call_ok = op == R_FUNCTION_CALL && wc >= 4 && w[i + 3] < bound && shuf_fn[w[i + 3]];
+            if (call_ok) for (uint32_t a = 4; a < wc; a++) if (w[i + a] < bound) call_lead |= L[w[i + a]];
+            for (uint32_t a = first; a < wc; a++) {
+                uint32_t id = w[i + a]; if (id >= bound) continue;
+                uint32_t d = D[id] & cand, c = C[id] & cand, l = L[id] & cand, r = R[id] & cand, k = RK[id] & cand;
+                if (!(d | c | l | r | k)) continue;
+                // the rank (0 in every lane once rewritten): only counted, masked or scaled by a constant, added (to the slot) or kept in a variable; one
+                // stored more than once is a register, not followed (NVN's rank is dead after its add: 560a0262fe47818a reads its register again only
+                // in a predicated add whose compare is masked by the same predicate)
+                if (k) {
+                    uint32_t p = w[i + 1];
+                    int var = op == B_STORE && p < bound && def[p] && (w[def[p]] & 0xffff) == B_VARIABLE && w[def[p] + 3] == B_SC_FUNCTION;
+                    int by_const = wc == 5 && w[i + 3] < bound && w[i + 4] < bound && ((is_true[w[i + 4]] & 2) || ((op == B_AND || op == B_IMUL) && (is_true[w[i + 3]] & 2)));
+                    if (!(var || op == B_LOAD || op == B_BITCAST || op == B_COPY_OBJECT || op == B_BIT_COUNT || op == B_IADD ||
+                          ((op == B_AND || op == B_IMUL || op == B_SHL || op == B_SHR_L || op == B_SHR_A) && by_const))) bad |= k;
+                    if (!(d | c | l | r)) continue;
+                }
+                int pass_op = op == B_STORE || op == B_LOAD || op == B_COPY_OBJECT || op == B_BITCAST || op == B_COMPOSITE_EXTRACT;
+                if (pass_op) continue;
+                if (op == R_FUNCTION_CALL && call_ok) { bad |= (c | r | l) & ~call_lead; bad |= d; continue; }   // the result handed out from the leader
+                if (op == B_ATOMIC_IADD && a == 6) { bad |= d | l | r; continue; }   // the count added
+                if (op == B_EXT_INST && (w[i + 4] == B_FIND_UMSB || w[i + 4] == B_FIND_SMSB)) { bad |= c | l | r; continue; }   // the leader elected
+                if (op == B_BIT_COUNT) { bad |= l | r; continue; }   // the count
+                if (op == B_AND && wc == 5 && w[i + 3] < bound && w[i + 4] < bound && (Mk[w[i + 3]] || Mk[w[i + 4]])) { bad |= c | l | r; continue; }   // the rank
+                if (op == R_IEQUAL) { bad |= d | c | r; continue; }   // the leader test
+                if ((op == B_SHL || op == B_IMUL) && wc == 5 && w[i + 3] < bound && w[i + 4] < bound &&
+                    ((is_true[w[i + 4]] & 2) || (op == B_IMUL && (is_true[w[i + 3]] & 2)))) { bad |= d | l | r; continue; }   // the count scaled by a constant
+                bad |= d | c | l | r;
+            }
+        }
+        rd_ok = cand & ~bad;
+        free(L); free(R); free(RK); free(shuf_fn);
+    }
+    uint32_t ok = (msb & atom & ~atom_used) | rd_ok, vt = 0;
     for (uint32_t k = 0; k < nb; k++) if (ok >> k & 1) {   // the ballot's type: a vector of 4 uints
         vt = w[bat[k] + 1];
         if (!(vt < bound && def[vt] && (w[def[vt]] & 0xffff) == B_TYPE_VECTOR && w[def[vt] + 2] == tu && w[def[vt] + 3] == 4)) ok &= ~(1u << k);
     }
-    free(D); free(C); free(is_true);
+    free(D); free(C); free(Mk); free(is_true); free(nst);
     if (!ok) { free(def); return n; }
     // the rewrite: the constants 0 and 1 when missing (before the first function), each ballot → this lane's bit in .x
     wbuf o = {0};
@@ -208,6 +311,32 @@ size_t vkspv_ballot_per_lane(uint32_t **pw, size_t n, int *rewritten) {
     free(def); free(w);
     *pw = o.w;
     return o.n;
+}
+
+int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env) { return env ? *env != '0' : vendor == 0x10de; }
+
+int vkspv_reads_member(const uint32_t *w, size_t n, uint32_t binding, uint32_t member) {
+    enum { OP_CONSTANT = 43, OP_ACCESS_CHAIN = 65, OP_IN_BOUNDS_ACCESS_CHAIN = 66 };
+    if (!spv_ok(w, n)) return 0;
+    uint32_t bound = w[3], var = 0;
+    for (size_t i = 5; i < n; ) {
+        uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
+        if (!wc || i + wc > n) return 0;
+        if (op == OP_DECORATE && wc >= 4 && w[i + 2] == DEC_BINDING && w[i + 3] == binding) { var = w[i + 1]; break; }
+        i += wc;
+    }
+    if (!var || var >= bound) return 0;
+    uint8_t *is_m = calloc(bound, 1);   // the ids of 32-bit constants equal to member
+    int found = 0;
+    for (size_t i = 5; i < n && !found; ) {
+        uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
+        if (!wc || i + wc > n) break;
+        if (op == OP_CONSTANT && wc == 4 && w[i + 2] < bound && w[i + 3] == member) is_m[w[i + 2]] = 1;
+        else if ((op == OP_ACCESS_CHAIN || op == OP_IN_BOUNDS_ACCESS_CHAIN) && wc >= 5 && w[i + 3] == var && w[i + 4] < bound && is_m[w[i + 4]]) found = 1;
+        i += wc;
+    }
+    free(is_m);
+    return found;
 }
 
 int vkspv_image_of(const uint32_t *w, size_t n, uint32_t binding, vkspv_img *o) {
@@ -592,11 +721,17 @@ vks_shader *vksh_make(const char *key, const uint8_t *spv, size_t spv_size, cons
         size_t tn = vkspv_trim_cull(&w, nw, g_vk.props.limits.maxCombinedClipAndCullDistances);
         if (tn) nw = tn; else { static int n; if (n++ < 4) VKRED("shader %s: more clip and cull distances than the device takes, and the cull ones are used", key); }
     }
-    static int ballot_fix = -1;   // NXRT_VK_BALLOT_FIX=0 leaves the ballots as translated (to compare)
-    if (ballot_fix < 0) { const char *e = getenv("NXRT_VK_BALLOT_FIX"); ballot_fix = !(e && *e == '0'); }
+    static int ballot_fix = -1;   // decided at the first shader
+    if (ballot_fix < 0) {
+        const char *e = getenv("NXRT_VK_BALLOT_FIX");
+        ballot_fix = vkspv_ballot_fix_wanted(g_vk.props.vendorID, e);
+        if (e) VKLOG("subgroup ballots: the per-lane rewrite %s (NXRT_VK_BALLOT_FIX=%s)", ballot_fix ? "on" : "off", e);
+        else if (ballot_fix) VKLOG("subgroup ballots: counters made per lane on this NVIDIA GPU (the hang after early returns: #12, D-1)");
+        else VKLOG("subgroup ballots left as translated: their rewrite is for NVIDIA's GPUs (NXRT_VK_BALLOT_FIX=1 makes it anyway)");
+    }
     if (ballot_fix) {
         int nb = 0; size_t bn = vkspv_ballot_per_lane(&w, nw, &nb);
-        if (nb) { nw = bn; VKLOG("shader %s: %d subgroup ballot%s for a counter made per lane (RTX 50 hang, #12)", key, nb, nb > 1 ? "s" : ""); }
+        if (nb) { nw = bn; VKLOG("shader %s: %d subgroup ballot%s for a counter made per lane (NVIDIA hang after early returns: #12, D-1)", key, nb, nb > 1 ? "s" : ""); }
     }
     // bindings
     const vj *bs = vj_get(j, "bindings");
@@ -621,6 +756,17 @@ vks_shader *vksh_make(const char *key, const uint8_t *spv, size_t spv_size, cons
         vkspv_img im; b->vtype = VK_IMAGE_VIEW_TYPE_2D;
         if (!vkspv_image_of(w, nw, b->binding, &im) && im.is_image) { b->dim = im.dim; b->vtype = view_type(im.dim, im.arrayed); b->ct = im.ct; b->depth = im.depth; b->ms = im.ms; }
         lb[i] = (VkDescriptorSetLayoutBinding){b->binding, b->type, b->count, (VkShaderStageFlags)vksh_vk_stage(s->stage), NULL};
+        b->scale_idx = -1;
+        if (b->kind == VKB_SUPPORT) s->reads_scale = (uint8_t)vkspv_reads_member(w, nw, b->binding, 5);   // Ryujinx's SupportBuffer.RenderScale
+    }
+    // F-5: the render scale entry of each texture and image, as the translator numbers them (its texture descriptors sorted by binding, the images after
+    // them: Ryujinx's TexelFetchScale / TextureSizeUnscale index). The reflection's "translator" entries are those descriptors, the bindings come sorted
+    int ntex = 0;
+    for (int i = 0; i < s->nb; i++) ntex += vj_get(vj_get(vj_at(bs, i), "nvn"), "translator") && s->b[i].kind != VKB_IMG;
+    for (int i = 0, t = 0, m = 0; i < s->nb && s->reads_scale; i++) {
+        if (!vj_get(vj_get(vj_at(bs, i), "nvn"), "translator")) continue;
+        int idx = 1 + (s->b[i].kind == VKB_IMG ? ntex + m++ : t++);
+        if (idx < 73) s->b[i].scale_idx = (int8_t)idx;
     }
     // interface
     const vj *in = vj_get(j, "inputs");

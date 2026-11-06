@@ -6,12 +6,16 @@
       Escape releases) reach player 1; focus lost releases everything;
    4. (M6 phase B) a gamepad with rumble and motion sensors as player 2: the game's vibration (GetVibrationDeviceHandles, SendVibrationValue on No2) reaches its
       strong and weak motors as front_rumble_mix has it and stops again; its accelerometer and gyroscope (flat, turning left) read as the Switch's (0, 0, -1) G and one
-      turn a second about z on player 2's six-axis sensor; detached, the game's later vibration goes nowhere.
+      turn a second about z on player 2's six-axis sensor; detached, the game's later vibration goes nowhere;
+   5. the in-game settings menu (front/menu.c): F1 opens it and the game sees no key and no controller button while it is open; a key bound in its Controls
+      tab is the game's at once and the action that had it takes the old one; a key let go while it is open is let go in the game; Esc closes it; a
+      controller's Back + Start opens it, B closes it.
    A hidden window, no game data. */
 #include "guest_test.h"
 #include "hle_adapters.h"
 #include "dm_input.h"
 #include "front_sdl.h"
+#include "menu.h"
 #include <math.h>
 
 NXRT_EARLY_RESERVE()
@@ -51,6 +55,8 @@ static SDL_Event key(SDL_Scancode sc, int down) { SDL_Event e; memset(&e, 0, siz
 int main(void) {
     _putenv_s("DM_OPMODE", "1");
     _putenv_s("DM_PAD_CHECK", "1");   /* the controller check's logging and its F5 / F6 / F7 tests run along (M6 phase B) */
+    char sd[600]; const char *ld = getenv("NXRT_LOG_DIR"); snprintf(sd, sizeof sd, "%s/pad-test-settings", ld && *ld ? ld : ".");
+    _putenv_s("NXRT_SETTINGS_DIR", sd);   /* the menu's controls.json goes there, never into the player's own settings */
     gt_init();
     g_st = gt_alloc(sizeof *g_st); g_id = gt_alloc(4);
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");   /* the hidden window never has focus: SDL would hold controllers at rest */
@@ -148,6 +154,39 @@ int main(void) {
     memset(&e, 0, sizeof e); e.type = SDL_EVENT_WINDOW_FOCUS_LOST; front_sdl_event(&e);
     rd(0); T(!(rd(0).buttons & 0xffff));   /* out of focus: released */
     printf("keyboard J / W, mouse look (capture, a turn, the left button as A, Escape), focus lost: as the Mac front end\n");
+
+    /* 5. the in-game menu; the menu's input is taken up when it is laid out (menu_build, the present thread's in the game) */
+    SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_EAST, false); pump(30);
+    memset(&e, 0, sizeof e); e.type = SDL_EVENT_WINDOW_FOCUS_GAINED; front_sdl_event(&e);
+    mn_list ml = {0};
+    e = key(SDL_SCANCODE_F1, 1); front_sdl_event(&e); e = key(SDL_SCANCODE_F1, 0); front_sdl_event(&e); pump(30);
+    T(menu_is_open());
+    e = key(SDL_SCANCODE_J, 1); front_sdl_event(&e); T(!(rd(0).buttons & DM_BTN_A)); e = key(SDL_SCANCODE_J, 0); front_sdl_event(&e);
+    SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_DPAD_UP, true); pump(50); T(!(rd(0).buttons & 0xffff)); SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_DPAD_UP, false); pump(30);
+    menu_build(&ml, 1920, 1080);
+    e = key(SDL_SCANCODE_E, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);        /* the Controls tab, its first action: A */
+    e = key(SDL_SCANCODE_RETURN, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);   /* waits for a key */
+    e = key(SDL_SCANCODE_K, 1); front_sdl_event(&e); e = key(SDL_SCANCODE_K, 0); front_sdl_event(&e);   /* K, B's key until now: the two swap */
+    menu_build(&ml, 1920, 1080); T(ml.n > 100);   /* it is drawn: panels and text */
+    e = key(SDL_SCANCODE_ESCAPE, 1); front_sdl_event(&e); pump(30); T(!menu_is_open());
+    memset(&e, 0, sizeof e); e.type = SDL_EVENT_WINDOW_FOCUS_GAINED; front_sdl_event(&e);   /* the hidden window never has the focus to take the input up again */
+    e = key(SDL_SCANCODE_K, 1); front_sdl_event(&e); T(rd(0).buttons & DM_BTN_A); e = key(SDL_SCANCODE_K, 0); front_sdl_event(&e); rd(0);
+    e = key(SDL_SCANCODE_J, 1); front_sdl_event(&e); s = rd(0); T((s.buttons & 0xffff) == DM_BTN_B); e = key(SDL_SCANCODE_J, 0); front_sdl_event(&e); rd(0);
+    /* a key held when the menu opens, let go while it is open: its key-up reaches the game, nothing stays held */
+    e = key(SDL_SCANCODE_K, 1); front_sdl_event(&e); T(rd(0).buttons & DM_BTN_A);
+    e = key(SDL_SCANCODE_F1, 1); front_sdl_event(&e); pump(30); e = key(SDL_SCANCODE_K, 0); front_sdl_event(&e);
+    e = key(SDL_SCANCODE_F1, 1); front_sdl_event(&e); pump(30); T(!menu_is_open());
+    memset(&e, 0, sizeof e); e.type = SDL_EVENT_WINDOW_FOCUS_GAINED; front_sdl_event(&e);
+    rd(0); T(!(rd(0).buttons & 0xffff));
+    SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_BACK, true); pump(30); SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_START, true); pump(50);
+    T(menu_is_open());
+    SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_BACK, false); SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_START, false); pump(30);
+    rd(0); T(!(rd(0).buttons & 0xffff));   /* Minus, which reached the game before Plus made the pair, let go */
+    SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_EAST, true); pump(50); T(!menu_is_open());   /* B by its label */
+    SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_EAST, false); pump(30);
+    free(ml.q);
+    printf("the in-game menu: F1 opens it, nothing reaches the game while it is open, a key bound in it (K for A, J now B's) plays at once, a key let go "
+           "while it is open is let go in the game, Esc closes it; Back + Start opens it, B closes it\n");
 
     SDL_CloseJoystick(j1); SDL_DetachVirtualJoystick(p1); pump(50);
     SDL_DestroyWindow(w); SDL_Quit();

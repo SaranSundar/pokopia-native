@@ -186,3 +186,25 @@ data, no game files, no video or debug symbols); the zip passes `--strict`.
 under a real X11 or XWayland desktop (WSLg gives no pixels back, so the window's own picture switch `NXS2_GUI_SHOT` was checked only for its error);
 the copy's 1 GB on the Deck's disk; the zenity unpacking progress and the name box (WSL has no zenity); Game Mode with the launcher added to Steam;
 RADV. **Known:** the bundled Tk draws with the X server's core fonts only (the bitmap "fixed" face, no bold): the window works but looks plain.
+
+### 1.3.0 (2026-11-06, open beta)
+
+Main 432544e merged (3904b7b): the in-game settings menu, the Resolution setting, Story co-op, Quantum's CPU work, the wider ballot fix. On Linux:
+`play.sh` applies `display.json` at every start with `--config` or `--ask` (as `play.ps1`), hands the menu its folder (`NXRT_SETTINGS_DIR`,
+`~/.config/pokopia-native`) and has `--story`; `vk_tex.c`'s page hash reads guest memory under `plat_guard`; and the subgroup-ballot rewrite
+(`vk_shader.c`, docs/ballot-hang.md) applies only on NVIDIA's GPUs, whose hang it is (`NXRT_VK_BALLOT_FIX=1` or `0` still decides): main's
+78a368c, on Windows too.
+
+Why the last one: in WSL, lavapipe (Mesa 23.2.1, LLVM 15) crashed 84–137 s into every start at 2560x1440 (8 of 8; also at 1.5x, and at 1x one
+start in two) inside the JIT code of one rewritten compute shader, reading past a heap block; the Khronos validation layer saw nothing. With
+`NXRT_VK_BALLOT_FIX=0` it ran (2 of 2); Quantum's three switches made no difference. 1.2.6 rewrote one shader (d2c50cca); 1.3.0's new shapes are
+the ones it crashes in. And the rewrite's lane bit (`1 << lane`, unmasked) assumes 32-lane subgroups, which RADV's compute (64) is not.
+
+Checked in WSL (Ubuntu 22.04, lavapipe at 2 threads), on copies of the VM's test save: ctest 54 (51 pass, 3 skip; `nxrt.pad_sdl`, the menu's
+input through SDL events, and `nxrt.vk_scale` among them); the AppImage's doctor and build (15 min, mostly cached); the menu draws over the game
+(Graphics tab, the Resolution list "Default: your monitor (3840x2160)" on WSLg's 4K monitor, 1920x1080, 2560x1440, 3840x2160; the FPS counter);
+real keys through X11's XTEST (a click first, for the keyboard): F1 opens it, Esc closes it, F1 opens and closes it again; the Resolution reaches
+the game from the variable, from `display.json` and live from the menu (render targets re-made at once, saved, read again at the next start); with
+the gate, the game's first screen (the language choice) at ~240 s. With the rewrite off or gated the crash got rare but not gone: at 2560x1440 1 start
+in 5 still crashed (149 s, the same JIT code), at 1080 none in 3 (200-260 s): something else reads past a heap block too. **Not checked:** the field
+(lavapipe draws 2 fps), a real controller's Minus + Plus, any real GPU.

@@ -35,8 +35,10 @@ No compiler, no SDK, no installer and no administrator rights: the download carr
 
 ### Build
 
-Unzip the download, double-click **Pokopia Native Builder.cmd**, untick "iPhone IPA" (unless you want it too), press
-**Setup** once (it fetches nxnative; with the IPA unticked it needs none of Apple's tools), choose your dump folder, tick
+Unzip the download and double-click **Pokopia Native Builder.cmd**. The walkthrough asks what you want to make (pick
+**Play on this PC**; the iPhone app only if you want it too), checks your PC and runs Setup for you (it fetches
+nxnative; without the iPhone app it needs none of Apple's tools), asks for your dump folder and builds. In
+**Advanced** (top right) the same is: untick "iPhone IPA", press **Setup** once, choose your dump folder, tick
 **Windows: play on this PC** and press **Build**. From a terminal:
 
 ```
@@ -76,11 +78,15 @@ Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in
 - **Typing (your name, for one):** a small box opens over the game. Type and press Enter, or with only a controller
   press A, B or + to accept it (an empty box becomes "Player"; the game won't let you change your name later, so a
   keyboard is best for this one).
-- **The picture:** the same window's **Display** tab sets the console mode (docked draws at 1920x1080, handheld at
-  1280x720 and is lighter), window or full screen and the window size, **Upscaling** (Sharp, the default, or Standard)
-  with its **Sharpness**, 60 or 30 fps (30 has no effect yet: the game runs at 60), and vsync. Upscaling matters when the window is larger than the game's picture,
-  as in full screen on a 1440p or 4K screen: Sharp keeps it crisp where Standard is softer. Saved for this PC in
-  `%APPDATA%\Pokopia Native\display.json`. The game itself does not draw above 1080p yet.
+- **The picture:** **Resolution** is the size the game draws itself at: **Default: your monitor** (where it starts),
+  1920x1080 (the game's own size), 2560x1440 or 3840x2160. Bigger is sharper and asks more of the graphics card; on a card
+  with 4 GB of its own memory or less, Default stops at 2560x1440. The same settings hold the console mode (**Docked (TV)**
+  or **Handheld**), window or full screen and the window size, **Upscaling** (Sharp or Standard) with its **Sharpness**
+  (they only matter when the window is larger than the picture), 60 or 30 fps, vsync and an FPS counter.
+- **Settings while you play:** press **F1** (or **Minus + Plus** together on a controller) for a settings menu over the
+  game, with a **Graphics** tab (everything above) and a **Controls** tab (your keys). Changes apply at once; Console mode
+  applies from the next start. The window before the game has the same settings in its **Display** and **Controls**
+  tabs; both are saved for this PC in `%APPDATA%\Pokopia Native\display.json` and `controls.json`.
 - Switches for the launcher go after its name in a terminal: `-Fullscreen`, `-Window 1600x900`, `-Silent`, `-PadCheck`
   (the controller check: every button and stick is logged and shown in the title bar). A switch given there wins over
   the Display tab.
@@ -127,7 +133,9 @@ a save copied from one device to another cannot join itself).
 
 Under them, **Interact everywhere (experimental)** lets Link Play players use moves and items and build in every town, not only
 Palette Town (the README's [Playing together](../README.md#playing-together-link-play) explains it). Every player needs it on,
-the iPhone and Mac in their launcher.
+the iPhone and Mac in their launcher. **Story co-op (experimental)** goes one step further: visitors can also talk to the
+town's story characters (it turns Interact everywhere on with it). Story requests still count only for the host; the README
+says what does and doesn't count. Every player needs it on too.
 
 It remembers your choice. **Don't ask again** starts the same way every time; **`Pokopia Settings <version>.cmd`**, beside
 the Play launcher in `<build folder>\out`, shows the window again (so does holding **Shift** while starting the game). The
@@ -135,7 +143,7 @@ settings live in `%APPDATA%\Pokopia Native\linkplay.json`.
 
 From a terminal, switches after the launcher's name skip the window: `-LinkPlay`; `-Join <address>[:<port>]` visits one
 host by address; `-Internet` with `-Room <code>` (a host without one gets a new code); `-Relay <address>[:<port>]` goes
-through a relay you trust; `-Interact` turns on Interact everywhere.
+through a relay you trust; `-Interact` turns on Interact everywhere; `-Story` turns on Story co-op (and Interact everywhere).
 
 - **The first time**, Windows Firewall asks whether the game may use networks: allow **Private networks**. Your network
   must be Private (Settings → Network & internet → your connection → Network profile type: Private): on a Public network

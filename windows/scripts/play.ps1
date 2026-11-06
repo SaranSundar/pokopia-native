@@ -1,6 +1,6 @@
 # play.ps1: plays Pokemon Pokopia 2.0.1 with nxrt (the Vulkan renderer, SDL3 input and sound). See docs/m6-input-gameplay.md for the controls.
 #   play.ps1 -ExeFS <ExeFS folder> -Dll <game.dll> -RomFS <RomFS.img or folder> -Save <save folder> [-Work <folder>] [-Silent] [-Fullscreen] [-Window 1600x900] [-Exe <nxrt.exe>]
-#            [-LinkPlay] [-Join <IPv4[:port]>|ask] [-Internet [-Room <code>|ask] [-Relay <IPv4[:port]>]] [-CoopHost <port> | -CoopJoin <address:port> [-CoopTcp]] [-Interact]
+#            [-LinkPlay] [-Join <IPv4[:port]>|ask] [-Internet [-Room <code>|ask] [-Relay <IPv4[:port]>]] [-CoopHost <port> | -CoopJoin <address:port> [-CoopTcp]] [-Interact] [-Story]
 #            [-Settings] [-PadCheck] [-DryRun]
 #   play.ps1 -Config <play.json> [any switch above]: an installer build's launcher (docs/M7-REPORT.md): the paths come from play.json, relative ones from its folder,
 #            %VARIABLES% expanded; a switch given here wins over the file. A save folder named only by the file is created empty the first time.
@@ -19,6 +19,8 @@
 # Each player needs a save of their own (the game refuses a second copy of the host's save). A second instance on one PC needs its own -Save and -Work.
 # -Interact turns on "Interact everywhere" (experimental, docs/coop-interact.md): in every town, not only Palette Town, Link Play visitors can use moves and
 # items and build. Every player in a session needs it on (a session refuses a player whose setting differs).
+# -Story turns on "Story co-op" (experimental, docs/story-coop.md) on top of Interact everywhere: a visitor talks to the town's NPCs as the host does.
+# Every player needs it on too.
 # The Link Play window (an installer build's launcher, or -Ask, when no Link Play switch is given): play alone, on this network, host or visit over the
 # internet, remembered in %APPDATA%\Pokopia Native\linkplay.json. "Don't ask again" starts the remembered way; Shift held while starting brings it back,
 # and so does -Settings (the installer's "Pokopia Settings" launcher).
@@ -26,8 +28,10 @@
 # The window's Controls tab sets this PC's keyboard keys (%APPDATA%\Pokopia Native\controls.json, handed to the game as DM_KEYMAP; the game logs the map):
 # click an action, press its key. Keys count by their place on the keyboard; "Reset to defaults" brings back the usual layout. Controllers keep their buttons.
 # Its Display tab sets the picture (%APPDATA%\Pokopia Native\display.json; with -Ask or -Config at every start, switches from outside winning): console mode
-# (DM_OPMODE), window or full screen and the window size, upscaling (NXRT_VK_UPSCALE) and its sharpness (NXRT_VK_SHARPNESS), 30 fps (DM_FPS), vsync off
-# (NXRT_VK_PRESENT=mailbox). POKOPIA_SETTINGS_DIR puts linkplay.json, controls.json and display.json in another folder (tests).
+# (DM_OPMODE), the size the game draws its picture at (NXRT_VK_RESOLUTION: "default" = the monitor's height, or <w>x<h>, never below the game's own;
+# NXRT_VK_SCALE, a factor, wins), window or full screen and the window size, upscaling (NXRT_VK_UPSCALE) and its sharpness (NXRT_VK_SHARPNESS), 30 fps
+# (DM_FPS), vsync off (NXRT_VK_PRESENT=mailbox), the FPS counter (NXRT_FPS_COUNTER). In the game, F1 (or a controller's Minus + Plus) opens the same settings and changes them at once; it saves to the same files
+# (NXRT_SETTINGS_DIR, docs/in-game-menu.md). POKOPIA_SETTINGS_DIR puts linkplay.json, controls.json and display.json in another folder (tests).
 param(
     [string]$ExeFS = "",
     [string]$Dll = "",
@@ -58,6 +62,7 @@ param(
     [string]$CoopJoin = "",
     [switch]$CoopTcp,
     [switch]$Interact,
+    [switch]$Story,
     [switch]$PadCheck,
     [switch]$DryRun
 )
@@ -152,13 +157,14 @@ $ControlsDefault = [ordered]@{ A = 13; B = 14; X = 24; Y = 12; L = 20; R = 8; ZL
 $ControlsLabel = [ordered]@{ A = "A"; B = "B"; X = "X"; Y = "Y"; L = "L"; R = "R"; ZL = "ZL"; ZR = "ZR"; Plus = "+ (Plus)"; Minus = "- (Minus)"
                              StickUp = "Stick up"; StickLeft = "Stick left"; StickDown = "Stick down"; StickRight = "Stick right"; Up = "D-pad up"; Down = "D-pad down"
                              Left = "D-pad left"; Right = "D-pad right"; LS = "Left stick press"; RS = "Right stick press"; Shake = "Shake" }
-# The keys a map can use: {set-1 scan code (0xE0.. for the extended ones): @(SDL scancode, name)}. Esc, F11, Alt and the Windows keys are the window's and Windows'
+# The keys a map can use: {set-1 scan code (0xE0.. for the extended ones): @(SDL scancode, name)}. Esc, F11, Alt and the Windows keys are the window's and Windows',
+# F1 the in-game menu's
 function Get-KeyTable {
     $t = @{}
     $rows = 'QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'; $first = 0x10, 0x1E, 0x2C
     for ($r = 0; $r -lt 3; $r++) { for ($i = 0; $i -lt $rows[$r].Length; $i++) { $ch = $rows[$r][$i]; $t[$first[$r] + $i] = @((4 + [int]$ch - [int][char]'A'), "$ch") } }
     for ($d = 1; $d -le 10; $d++) { $t[1 + $d] = @((29 + $d), "$($d % 10)") }   # 1..9, 0
-    for ($n = 1; $n -le 10; $n++) { $t[0x3A + $n] = @((57 + $n), "F$n") }
+    for ($n = 2; $n -le 10; $n++) { $t[0x3A + $n] = @((57 + $n), "F$n") }
     foreach ($m in @(@(0x58, 69, 'F12'), @(0x1C, 40, 'Enter'), @(0x0E, 42, 'Backspace'), @(0x0F, 43, 'Tab'), @(0x39, 44, 'Space'), @(0x0C, 45, '-'), @(0x0D, 46, '='),
                      @(0x1A, 47, '['), @(0x1B, 48, ']'), @(0x2B, 49, '\'), @(0x27, 51, ';'), @(0x28, 52, "'"), @(0x29, 53, '`'), @(0x33, 54, ','), @(0x34, 55, '.'),
                      @(0x35, 56, '/'), @(0x3A, 57, 'Caps Lock'), @(0x56, 100, '\ (ISO)'), @(0xE052, 73, 'Insert'), @(0xE047, 74, 'Home'), @(0xE049, 75, 'Page Up'),
@@ -181,12 +187,36 @@ function Read-Controls([string]$file) {
     $m
 }
 # The picture (the window's Display tab, %APPDATA%\Pokopia Native\display.json), applied at every start through the switches and variables below; a switch
-# or variable given from outside wins. The Mac's launcher has the same names (Console mode, Display mode, Upscaling)
-$DisplayDefault = [ordered]@{ console = 1; fullscreen = $false; window = "1280x720"; upscale = "sharp"; sharpness = 5; fps = 60; vsync = $true }
+# or variable given from outside wins. The Mac's launcher has the same names (Console mode, Display mode, Upscaling); the in-game menu (F1) the same choices
+$DisplayDefault = [ordered]@{ console = 1; resolution = "default"; fullscreen = $false; window = "1280x720"; upscale = "sharp"; sharpness = 5; fps = 60; vsync = $true
+                              fps_counter = "off" }
+$DisplayCounters = @("off", "corner", "detailed")
 $DisplaySizes = @("1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160")
+# The tallest Default the game draws: 1440 on a graphics card with 4 GB of its own memory or less, as nxrt picks it (front/menu.c monitor_h). The
+# registry's display adapters; one under 1 GB is an integrated GPU (nxrt sees its shared memory instead); the 32-bit size stops near 4 GB, so it only
+# counts below that. NXRT_VK_VRAM_MB pretends a size, as in nxrt
+function Get-DefaultTop {
+    $mb = 0
+    if ($env:NXRT_VK_VRAM_MB) { $mb = [int64]$env:NXRT_VK_VRAM_MB } else {
+        foreach ($k in Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" -ErrorAction SilentlyContinue) {
+            $p = Get-ItemProperty $k.PSPath -ErrorAction SilentlyContinue; if (-not $p) { continue }
+            $b = [int64]$p.'HardwareInformation.qwMemorySize'; $d = $p.'HardwareInformation.MemorySize'
+            if (-not $b -and $d) { $b = if ($d -is [byte[]]) { [int64][BitConverter]::ToUInt32($d, 0) } else { [int64]$d }; if ($b -ge 4293918720) { $b = 0 } }
+            if ($b -ge 1GB -and $b / 1MB -gt $mb) { $mb = $b / 1MB }
+        }
+    }
+    if ($mb -gt 0 -and $mb -le 4608) { 1440 } else { 2160 }
+}
 function Read-Display([string]$file) {
     $d = [ordered]@{}; foreach ($k in $DisplayDefault.Keys) { $d[$k] = $DisplayDefault[$k] }
     try { if (Test-Path -LiteralPath $file) { (Get-Content -Raw -LiteralPath $file | ConvertFrom-Json).PSObject.Properties | ForEach-Object { if ($d.Contains($_.Name)) { $d[$_.Name] = $_.Value } } } } catch {}
+    # the resolution is the size the game draws at ("default" or "<w>x<h>", kept as saved); a factor from before the sizes (1 / 1.5 / 2 / 3) was meant docked
+    $r = "$($d.resolution)"; $f = 0.0
+    if ($r -ne "default" -and $r -notmatch '^\d+x\d+$') {
+        $d.resolution = if ([double]::TryParse($r, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$f) -and $f -ge 1) {
+            $h = [int][math]::Round(1080 * $f); "$([int][math]::Round($h * 16 / 9))x$h" } else { $DisplayDefault.resolution }
+    }
+    if ($DisplayCounters -notcontains "$($d.fps_counter)") { $d.fps_counter = $DisplayDefault.fps_counter }
     return $d
 }
 
@@ -194,7 +224,7 @@ function Read-Display([string]$file) {
 # $keys the keyboard map, $disp the display settings; the new choice with the map in .controls and the settings in .display, or $null (Cancel)
 function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $f, $outer = New-LinkPlayForm $title
-    $addrRx = $ipPort; $codeRx = $roomRx; $labels = $ControlsLabel; $def = $ControlsDefault; $ddef = $DisplayDefault   # copied here: the event handlers' closures see this function's variables, not the script's
+    $addrRx = $ipPort; $codeRx = $roomRx; $labels = $ControlsLabel; $def = $ControlsDefault; $ddef = $DisplayDefault; $dcnt = $DisplayCounters  # copied here: the event handlers' closures see this function's variables, not the script's
     $tabs = New-Object System.Windows.Forms.TabControl; $tabs.Margin = New-Object System.Windows.Forms.Padding(0)
     $pages = @{}
     foreach ($n in 'Link Play', 'Controls', 'Display') {
@@ -229,6 +259,12 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $ie.Text = "Interact everywhere (experimental)"; $ie.Checked = [bool]$pref.interact; $flow.Controls.Add($ie)
     $ieNote = New-Label "Visitors can use moves and items and build in every town, not only Palette Town. Every player needs it on." 450
     $ieNote.ForeColor = [System.Drawing.SystemColors]::GrayText; $ieNote.Margin = New-Object System.Windows.Forms.Padding(20, 0, 0, 0); $flow.Controls.Add($ieNote)
+    $sc = New-Object System.Windows.Forms.CheckBox; $sc.AutoSize = $true; $sc.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
+    $sc.Text = "Story co-op (experimental)"; $sc.Checked = [bool]$pref.story; $flow.Controls.Add($sc)
+    $scNote = New-Label "With Interact everywhere: visitors can talk to the town's story characters. Story requests still count only for the host. Every player needs it on." 450
+    $scNote.ForeColor = [System.Drawing.SystemColors]::GrayText; $scNote.Margin = New-Object System.Windows.Forms.Padding(20, 0, 0, 0); $flow.Controls.Add($scNote)
+    $sc.Add_CheckedChanged({ if ($sc.Checked) { $ie.Checked = $true } }.GetNewClosure())   # Story co-op needs Interact everywhere
+    $ie.Add_CheckedChanged({ if (-not $ie.Checked) { $sc.Checked = $false } }.GetNewClosure())
     $hint = New-Label "In the game: Link Play, then Local connection (not Online connection). Every player needs their own save and the same pokopia-native version."
     $hint.ForeColor = [System.Drawing.SystemColors]::GrayText; $hint.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0); $flow.Controls.Add($hint)
     # Controls: an action's button shows its key; click it, then press the new key. A key another action had moves over, and that action gets this one's old key
@@ -280,36 +316,77 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $addRow = { param($text, $ctl) $l = New-Label $text 150; $l.Margin = New-Object System.Windows.Forms.Padding(0, 7, 6, 0); $dg.Controls.Add($l, 0, $script:drow); $dg.Controls.Add($ctl, 1, $script:drow); $script:drow++ }
     $script:drow = 0
     $combo = { param($items, $sel) $c = New-Object System.Windows.Forms.ComboBox; $c.DropDownStyle = 'DropDownList'; $c.Width = 280; foreach ($i in $items) { [void]$c.Items.Add($i) }; $c.SelectedIndex = [math]::Max(0, [array]::IndexOf($items, $sel)); $c }
-    $consoleItems = @("Docked (1920x1080)", "Handheld (1280x720, lighter)")
+    $consoleItems = @("Docked (TV)", "Handheld")
     $cm = & $combo $consoleItems $consoleItems[$(if ([int]$disp.console -eq 0) { 1 } else { 0 })]; & $addRow "Console mode:" $cm
+    # Resolution: the size the game draws its picture at, as the in-game menu lists it: Default (the monitor's height, from the game's own up to 2160, or
+    # 1440 on a 4 GB card), the game's own and larger. A saved size not in the list stays as it is; one below the game's own draws the game's own. The
+    # game's own is 1920x1080 in both console modes (front/menu.c base_h)
+    $rst = @{ mon = $(try { [PokopiaKeys]::ScreenHeight() } catch { 0 }); monw = $(try { [PokopiaKeys]::ScreenWidth() } catch { 0 }); vals = @(); orig = [string]$disp.resolution
+              top = $(try { Get-DefaultTop } catch { 2160 }) }
+    $rs = New-Object System.Windows.Forms.ComboBox; $rs.DropDownStyle = 'DropDownList'; $rs.Width = 280
+    $resFill = {
+        param([string]$want)
+        $base = 1080
+        $mh = if ($rst.mon -gt 0) { [math]::Min($rst.top, [math]::Max($base, $rst.mon)) } else { $base }
+        $vals = @("default"); $labs = @("Default: your monitor ($([int]($mh * 16 / 9))x$mh)")
+        foreach ($h in 720, 1080, 1440, 2160) { if ($h -ge $base) { $vals += "$([int]($h * 16 / 9))x$h"; $labs += "$([int]($h * 16 / 9))x$h$(if ($h -eq $base) { " (the game's own)" })" } }
+        $i = [array]::IndexOf($vals, $want)
+        if ($i -lt 0 -and $want -match '^\d+x(\d+)$') { if ([int]$Matches[1] -le $base) { $i = 1 } else { $vals += $want; $labs += $want; $i = $vals.Count - 1 } }
+        $rst.vals = $vals; $rs.Items.Clear(); foreach ($l in $labs) { [void]$rs.Items.Add($l) }; $rs.SelectedIndex = [math]::Max(0, $i)
+    }.GetNewClosure()
+    & $resFill $rst.orig; $rst.origIdx = $rs.SelectedIndex; $rst.cmIdx = $cm.SelectedIndex
+    & $addRow "Resolution:" $rs
     $dmItems = @("Window", "Full screen")
     $dm = & $combo $dmItems $dmItems[$(if ($disp.fullscreen) { 1 } else { 0 })]; & $addRow "Display mode:" $dm
     $ws = & $combo $DisplaySizes ([string]$disp.window); & $addRow "Window size:" $ws
     $upItems = @("Sharp", "Standard (softer)")
-    $up = & $combo $upItems $upItems[$(if ($disp.upscale -eq 'standard') { 1 } else { 0 })]; & $addRow "Upscaling:" $up
+    $up = & $combo $upItems $upItems[$(if ($disp.upscale -eq 'standard') { 1 } else { 0 })]
+    $upNote = New-Label "" 260; $upNote.ForeColor = [System.Drawing.SystemColors]::GrayText; $upNote.Margin = New-Object System.Windows.Forms.Padding(6, 7, 0, 0)
+    $upBox = New-Object System.Windows.Forms.FlowLayoutPanel; $upBox.AutoSize = $true; $upBox.WrapContents = $false; $upBox.Margin = New-Object System.Windows.Forms.Padding(0)
+    $upBox.Controls.Add($up); $upBox.Controls.Add($upNote); & $addRow "Upscaling:" $upBox
     $sh = New-Object System.Windows.Forms.TrackBar; $sh.Minimum = 0; $sh.Maximum = 10; $sh.TickFrequency = 1; $sh.Width = 280; $sh.Value = [math]::Min(10, [math]::Max(0, [int]$disp.sharpness)); & $addRow "Sharpness:" $sh
     $fpsItems = @("60 fps", "30 fps")
     $fp = & $combo $fpsItems $fpsItems[$(if ([int]$disp.fps -eq 30) { 1 } else { 0 })]; & $addRow "Frame rate:" $fp
     $vs = New-Object System.Windows.Forms.CheckBox; $vs.Text = "On (off: less delay, may tear)"; $vs.AutoSize = $true; $vs.Checked = [bool]$disp.vsync; $vs.Margin = New-Object System.Windows.Forms.Padding(3, 6, 0, 0); & $addRow "Vsync:" $vs
+    $cnItems = @("Off", "Corner", "Detailed")
+    $cn = & $combo $cnItems $cnItems[[math]::Max(0, [array]::IndexOf($dcnt, [string]$disp.fps_counter))]; & $addRow "FPS counter:" $cn
     $df.Controls.Add($dg)
-    $dnote = New-Label "The game draws at 1920x1080 docked. Upscaling and sharpness apply when the window is larger than that, as in full screen on a 1440p or 4K screen."
+    $fitNote = New-Label ""; $fitNote.Margin = New-Object System.Windows.Forms.Padding(0, 6, 0, 0); $df.Controls.Add($fitNote)
+    $dnote = New-Label ("Resolution is the size the game draws its picture at: bigger looks sharper but works your graphics card harder; Default matches your monitor. " +
+                        "Console mode: docked is the game's TV mode, handheld its portable mode; both draw 1920x1080 here, and Resolution keeps its size. " +
+                        "In the game, F1 opens these settings too.")
     $dnote.ForeColor = [System.Drawing.SystemColors]::GrayText; $dnote.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0); $df.Controls.Add($dnote)
     $dreset = New-Object System.Windows.Forms.Button; $dreset.Text = "Reset to defaults"; $dreset.AutoSize = $true; $dreset.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0); $df.Controls.Add($dreset)
-    $dsync = { $ws.Enabled = $dm.SelectedIndex -eq 0; $sh.Enabled = $up.SelectedIndex -eq 0 }.GetNewClosure()
-    $dm.Add_SelectedIndexChanged($dsync); $up.Add_SelectedIndexChanged($dsync); & $dsync
+    # The picture against the window, as the in-game menu says it: larger (the extra detail is not seen), stretched (upscaling and sharpness matter), the same
+    $dsync = {
+        $ws.Enabled = $dm.SelectedIndex -eq 0
+        $base = 1080
+        $mh = if ($rst.mon -gt 0) { $rst.mon } else { 1080 }; $mw = if ($rst.monw -gt 0) { $rst.monw } else { [int]($mh * 16 / 9) }
+        $v = [string]$rst.vals[[math]::Max(0, $rs.SelectedIndex)]
+        $ph = if ($v -match 'x(\d+)$') { [int]$Matches[1] } else { [math]::Min($rst.top, $mh) }; $ph = [math]::Min(2160, [math]::Max($base, $ph))
+        if ($dm.SelectedIndex -eq 0 -and [string]$ws.SelectedItem -match '^(\d+)x(\d+)$') { $wwid = [int]$Matches[1]; $whgt = [int]$Matches[2] } else { $wwid = $mw; $whgt = $mh }
+        $k = [math]::Min($wwid / ($ph * 16 / 9), $whgt / $ph)
+        $fitNote.Text = if ($k -lt 0.99) { "Your window (${wwid}x$whgt) is smaller than the picture, so you won't see the extra detail. Make the window bigger or use full screen." }
+                        elseif ($k -gt 1.01) { "The picture is stretched to fill your window. Upscaling and Sharpness choose how that looks." } else { "" }
+        $up.Enabled = $k -gt 1.01; $sh.Enabled = $k -gt 1.01 -and $up.SelectedIndex -eq 0
+        $upNote.Text = if ($k -gt 1.01) { "" } else { "Not used: the picture isn't stretched" }
+    }.GetNewClosure()
+    $dm.Add_SelectedIndexChanged($dsync); $up.Add_SelectedIndexChanged($dsync); $rs.Add_SelectedIndexChanged($dsync); $ws.Add_SelectedIndexChanged($dsync)
+    $cm.Add_SelectedIndexChanged({ & $resFill ([string]$rst.vals[[math]::Max(0, $rs.SelectedIndex)]); & $dsync }.GetNewClosure())
+    & $dsync
     $dreset.Add_Click({
-        $cm.SelectedIndex = 0; $dm.SelectedIndex = 0; $ws.SelectedIndex = [math]::Max(0, $ws.Items.IndexOf($ddef.window)); $up.SelectedIndex = 0
-        $sh.Value = $ddef.sharpness; $fp.SelectedIndex = 0; $vs.Checked = $ddef.vsync; & $dsync
+        $cm.SelectedIndex = 0; & $resFill "default"; $dm.SelectedIndex = 0; $ws.SelectedIndex = [math]::Max(0, $ws.Items.IndexOf($ddef.window)); $up.SelectedIndex = 0
+        $sh.Value = $ddef.sharpness; $fp.SelectedIndex = 0; $vs.Checked = $ddef.vsync; $cn.SelectedIndex = 0; & $dsync
     }.GetNewClosure())
+    $outer.Controls.Add($tabs)   # first: the pages measure their wrapped labels in the window's font
     $w = ($pages.Values | ForEach-Object { $_.PreferredSize.Width } | Measure-Object -Maximum).Maximum + 16
     $h = ($pages.Values | ForEach-Object { $_.PreferredSize.Height } | Measure-Object -Maximum).Maximum + 16
     $tabs.Size = New-Object System.Drawing.Size($w, ($h + $tabs.ItemSize.Height + 20))
-    $outer.Controls.Add($tabs)
     $again = New-Object System.Windows.Forms.CheckBox; $again.AutoSize = $true; $again.Margin = New-Object System.Windows.Forms.Padding(0, 12, 0, 0)
     $again.Text = "Don't ask again (Pokopia Settings, or Shift held while starting, shows this window)"; $again.Checked = -not $pref.ask
     $outer.Controls.Add($again)
     $row, $btn = New-Buttons $f @('Play', 'Cancel'); $row.Width = $w; $outer.Controls.Add($row)
-    $sync = { $grid.Enabled = $radio['visit'].Checked; $keep.Enabled = $radio['host'].Checked; $ie.Enabled = -not $radio['alone'].Checked }.GetNewClosure()
+    $sync = { $grid.Enabled = $radio['visit'].Checked; $keep.Enabled = $radio['host'].Checked; $ie.Enabled = -not $radio['alone'].Checked; $sc.Enabled = $ie.Enabled }.GetNewClosure()
     foreach ($r in $radio.Values) { $r.Add_CheckedChanged($sync) }
     & $sync
     $btn['Play'].Add_Click({
@@ -324,11 +401,14 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     if ($f.ShowDialog() -ne 'OK') { return $null }
     $mode = ($radio.Keys | Where-Object { $radio[$_].Checked } | Select-Object -First 1)
     $new = @{} + $pref
-    $new.mode = $mode; $new.ask = -not $again.Checked; $new.keep_room = $keep.Checked; $new.interact = $ie.Checked
+    $new.mode = $mode; $new.ask = -not $again.Checked; $new.keep_room = $keep.Checked; $new.interact = $ie.Checked; $new.story = $sc.Checked
     if ($mode -eq 'visit') { $new.join = $addr.Text.Trim(); $new.room = $code.Text.Trim().ToUpper() }
     $new.controls = $st.map
-    $new.display = [ordered]@{ console = $(if ($cm.SelectedIndex -eq 1) { 0 } else { 1 }); fullscreen = ($dm.SelectedIndex -eq 1); window = [string]$ws.SelectedItem
-                               upscale = $(if ($up.SelectedIndex -eq 1) { "standard" } else { "sharp" }); sharpness = $sh.Value; fps = $(if ($fp.SelectedIndex -eq 1) { 30 } else { 60 }); vsync = $vs.Checked }
+    $new.display = [ordered]@{ console = $(if ($cm.SelectedIndex -eq 1) { 0 } else { 1 })
+                               resolution = $(if ($rs.SelectedIndex -eq $rst.origIdx -and $cm.SelectedIndex -eq $rst.cmIdx) { $rst.orig } else { [string]$rst.vals[$rs.SelectedIndex] })   # untouched: as saved
+                               fullscreen = ($dm.SelectedIndex -eq 1); window = [string]$ws.SelectedItem
+                               upscale = $(if ($up.SelectedIndex -eq 1) { "standard" } else { "sharp" }); sharpness = $sh.Value; fps = $(if ($fp.SelectedIndex -eq 1) { 30 } else { 60 }); vsync = $vs.Checked
+                               fps_counter = $dcnt[$cn.SelectedIndex] }
     return $new
 }
 # A host's room code, big, with a Copy button: the players who visit need it (and this PC's internet address)
@@ -356,20 +436,25 @@ function Show-RoomCode([string]$code, [string]$title, [string]$relay) {
 $windowed = $false   # the Link Play window chose this session's way: the room code goes in a window too
 $settingsDir = if ($env:POKOPIA_SETTINGS_DIR) { $env:POKOPIA_SETTINGS_DIR } else { Join-Path ([Environment]::GetFolderPath('ApplicationData')) "Pokopia Native" }   # POKOPIA_SETTINGS_DIR: another folder (tests)
 $keysFile = Join-Path $settingsDir "controls.json"; $dispFile = Join-Path $settingsDir "display.json"
+$env:NXRT_SETTINGS_DIR = $settingsDir   # the in-game menu (F1) saves its changes there too
 $disp = Read-Display $dispFile
 if (($Config -or $Ask) -and -not ($LinkPlay -or $Join -or $Internet -or $Room -or $Relay -or $CoopHost -or $CoopJoin -or $env:DM_COOP) -and -not $DryRun) {
     $prefFile = Join-Path $settingsDir "linkplay.json"
-    $pref = @{ mode = "alone"; join = ""; room = ""; host_room = ""; keep_room = $false; ask = $true; interact = $false }
+    $pref = @{ mode = "alone"; join = ""; room = ""; host_room = ""; keep_room = $false; ask = $true; interact = $false; story = $false }
     try { if (Test-Path -LiteralPath $prefFile) { (Get-Content -Raw -LiteralPath $prefFile | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $pref[$_.Name] = $_.Value } } } catch {}
     try { Add-Type -AssemblyName System.Windows.Forms, System.Drawing; $forms = $true } catch { $forms = $false; Write-Warning "no Windows Forms: Link Play starts the remembered way" }
     if ($forms) {
         [System.Windows.Forms.Application]::EnableVisualStyles()
         $shift = ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) -ne 0
         if ($pref.ask -or $shift -or $Settings) {
-            if (-not ('PokopiaKeys' -as [type])) {   # the Controls tab: a key's scan code (its place) and which Shift or Ctrl it was
-                Add-Type -TypeDefinition ('using System.Runtime.InteropServices; public static class PokopiaKeys { [DllImport("user32.dll")] static extern uint MapVirtualKey(uint c, uint t); ' +
+            if (-not ('PokopiaKeys' -as [type])) {   # the Controls tab: a key's scan code (its place) and which Shift or Ctrl it was; the Display tab: the monitor's height in pixels
+                Add-Type -TypeDefinition ('using System; using System.Runtime.InteropServices; public static class PokopiaKeys { [DllImport("user32.dll")] static extern uint MapVirtualKey(uint c, uint t); ' +
                     '[DllImport("user32.dll")] static extern short GetKeyState(int k); public static uint Scan(int vk) { return MapVirtualKey((uint)vk, 4); } ' +
-                    'public static bool Down(int vk) { return (GetKeyState(vk) & 0x8000) != 0; } }')
+                    'public static bool Down(int vk) { return (GetKeyState(vk) & 0x8000) != 0; } ' +
+                    '[DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr w); [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr w, IntPtr dc); ' +
+                    '[DllImport("gdi32.dll")] static extern int GetDeviceCaps(IntPtr dc, int i); ' +
+                    'public static int ScreenHeight() { IntPtr dc = GetDC(IntPtr.Zero); int h = GetDeviceCaps(dc, 117); ReleaseDC(IntPtr.Zero, dc); return h; } ' +   # DESKTOPVERTRES
+                    'public static int ScreenWidth() { IntPtr dc = GetDC(IntPtr.Zero); int w = GetDeviceCaps(dc, 118); ReleaseDC(IntPtr.Zero, dc); return w; } }')   # DESKTOPHORZRES
             }
             $keys = Read-Controls $keysFile
             $new = Show-LinkPlay $pref "Pokopia" $keys $disp
@@ -395,6 +480,7 @@ if (($Config -or $Ask) -and -not ($LinkPlay -or $Join -or $Internet -or $Room -o
         'visit' { $Internet = $true; $Join = $pref.join; $Room = $pref.room }
     }
     if ($pref.mode -ne 'alone' -and $pref.interact) { $Interact = $true }
+    if ($pref.mode -ne 'alone' -and $pref.story) { $Story = $true }
 }
 if ($Join -or $Internet -or $Room -or $Relay) { $LinkPlay = $true }
 if ($LinkPlay -and ($CoopHost -or $CoopJoin)) { Write-Error "-LinkPlay / -Join / -Internet and -CoopHost / -CoopJoin: give one kind"; exit 2 }
@@ -437,10 +523,12 @@ if ($LinkPlay) {
     }
 } elseif ($CoopHost) { $env:DM_COOP = "host:$CoopHost" } elseif ($CoopJoin) { $env:DM_COOP = "join:$CoopJoin" }
 if ($CoopTcp) { $env:DM_COOP_TCP = "1" }
+if ($Story) { $Interact = $true }
 if ($Interact) {
-    if (-not $env:DM_COOP) { Write-Error "-Interact goes with Link Play (-LinkPlay, -Join, -Internet, -CoopHost or -CoopJoin)"; exit 2 }
+    if (-not $env:DM_COOP) { Write-Error "-Interact$(if ($Story) { ' (and -Story)' }) goes with Link Play (-LinkPlay, -Join, -Internet, -CoopHost or -CoopJoin)"; exit 2 }
     $env:DM_COOP_INTERACT = "1"
     Write-Host "Interact everywhere: on (experimental). Every player needs it on; a session refuses a player whose setting differs."
+    if ($Story) { $env:DM_COOP_STORY = "1"; Write-Host "Story co-op: on (experimental). Every player needs it on as well." }
 }
 if ($env:DM_COOP -and -not $LinkPlay) { Write-Host "Link Play: DM_COOP=$env:DM_COOP$(if ($env:DM_COOP_TCP) { ', datagrams over TCP' })" }
 $cache = Join-Path $Work "cache"; $temp = Join-Path $Work "temp"; $logs = Join-Path $Work "logs"
@@ -450,11 +538,13 @@ $env:NXRT_VK_CACHE_DIR = $cache            # shaders and pipelines, kept between
 $env:DM_AUDIO = if ($Silent) { "0" } else { "1" }   # the sound card (SDL3); the silent sink stands in when there is none
 if ($Config -or $Ask) {   # the Display tab's settings, saved for this PC; a switch or variable given from outside wins
     if (-not $env:DM_OPMODE) { $env:DM_OPMODE = "$([int]$disp.console)" }
+    if (-not $env:NXRT_VK_SCALE -and -not $env:NXRT_VK_RESOLUTION) { $env:NXRT_VK_RESOLUTION = [string]$disp.resolution }
     if (-not $Window -and -not $Fullscreen -and -not $env:NXRT_VK_WINDOW -and -not $env:NXRT_VK_FULLSCREEN) { if ($disp.fullscreen) { $Fullscreen = $true } elseif ($disp.window) { $Window = [string]$disp.window } }
     if (-not $env:NXRT_VK_UPSCALE) { $env:NXRT_VK_UPSCALE = [string]$disp.upscale }
     if (-not $env:NXRT_VK_SHARPNESS) { $env:NXRT_VK_SHARPNESS = ([int]$disp.sharpness / 10.0).ToString([System.Globalization.CultureInfo]::InvariantCulture) }
     if (-not $env:DM_FPS -and [int]$disp.fps -eq 30) { $env:DM_FPS = "30" }
     if (-not $env:NXRT_VK_PRESENT -and -not $disp.vsync) { $env:NXRT_VK_PRESENT = "mailbox" }
+    if (-not $env:NXRT_FPS_COUNTER -and $disp.fps_counter -ne "off") { $env:NXRT_FPS_COUNTER = [string]$disp.fps_counter }
 }
 if ($Window) { $env:NXRT_VK_WINDOW = $Window }
 if ($Fullscreen) { $env:NXRT_VK_FULLSCREEN = "1" }
@@ -487,9 +577,9 @@ if ($DryRun) {
     Write-Host "env: NXRT_VK_CACHE_DIR=$env:NXRT_VK_CACHE_DIR DM_AUDIO=$env:DM_AUDIO DM_PAD_CHECK=$env:DM_PAD_CHECK"
     if ($Shaders) { Write-Host "shaders: NXRT_SHADER_CACHE=$env:NXRT_SHADER_CACHE NXRT_SHADER_BUILD=$env:NXRT_SHADER_BUILD NXSHADER_TOOLS=$env:NXSHADER_TOOLS"; Write-Host "shader tool: $env:NXRT_SHADER_TOOL" }
     if ($Fonts -or $PipelineSeed) { Write-Host "fonts: $env:DM_FONT_DIR; pipeline seed: $env:NXRT_VK_PIPELINE_SEED" }
-    if ($env:DM_COOP) { Write-Host "link play: DM_COOP=$env:DM_COOP DM_COOP_INTERACT=$env:DM_COOP_INTERACT" }
+    if ($env:DM_COOP) { Write-Host "link play: DM_COOP=$env:DM_COOP DM_COOP_INTERACT=$env:DM_COOP_INTERACT DM_COOP_STORY=$env:DM_COOP_STORY" }
     if ($env:DM_KEYMAP) { Write-Host "keys: DM_KEYMAP=$env:DM_KEYMAP" }
-    Write-Host "display: DM_OPMODE=$env:DM_OPMODE NXRT_VK_WINDOW=$env:NXRT_VK_WINDOW NXRT_VK_FULLSCREEN=$env:NXRT_VK_FULLSCREEN NXRT_VK_UPSCALE=$env:NXRT_VK_UPSCALE NXRT_VK_SHARPNESS=$env:NXRT_VK_SHARPNESS DM_FPS=$env:DM_FPS NXRT_VK_PRESENT=$env:NXRT_VK_PRESENT"
+    Write-Host "display: DM_OPMODE=$env:DM_OPMODE NXRT_VK_SCALE=$env:NXRT_VK_SCALE NXRT_VK_RESOLUTION=$env:NXRT_VK_RESOLUTION NXRT_VK_WINDOW=$env:NXRT_VK_WINDOW NXRT_VK_FULLSCREEN=$env:NXRT_VK_FULLSCREEN NXRT_VK_UPSCALE=$env:NXRT_VK_UPSCALE NXRT_VK_SHARPNESS=$env:NXRT_VK_SHARPNESS DM_FPS=$env:DM_FPS NXRT_VK_PRESENT=$env:NXRT_VK_PRESENT NXRT_FPS_COUNTER=$env:NXRT_FPS_COUNTER"
     exit 0
 }
 Write-Host "Pokopia: keyboard WASD move, mouse look (click the picture; Esc releases the mouse), J/K/U/I = A/B/X/Y, Return = +, Tab = -, F11 fullscreen."

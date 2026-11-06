@@ -18,6 +18,7 @@
 #include "hle_haptics.h"
 #include "pad_slots.h"
 #include "front_sdl.h"
+#include "menu.h"
 #include <SDL3/SDL.h>
 #include <stdatomic.h>
 
@@ -46,6 +47,8 @@ static struct {
     // rumble: the levels of the game's latest snapshot per player (the haptics sink writes them on a game thread), sent from the window thread
     int rumble_on, motion_on; float rumble_gain, rumble_min;
     uint32_t ev_rumble; _Atomic int rumble_pending; SRWLOCK rlk;
+    uint32_t ev_menu;             // the in-game menu opened (code 1) or closed (0), from whichever thread it was
+    SRWLOCK klk;                  // the keymap: the in-game menu changes it from the present thread
     struct { uint16_t strong, weak; int dirty; } rum[DM_PLAYERS];
     uint64_t rum_sent[DM_PLAYERS]; uint16_t rum_now[DM_PLAYERS][2];
     // the controller check (DM_PAD_CHECK)
@@ -82,6 +85,13 @@ static void keymap_load(void) {
         o += snprintf(line + o, sizeof line - (size_t)o, "%s%s %s", i ? ", " : "", front_act_names[i], k && *k ? k : "?");
     }
     LOG("front end: keyboard from %s: %s; F11 or Alt+Enter fullscreen", why, line);
+}
+// The in-game menu's Controls tab (menu.c): the map as it is, a new one (the file is the menu's to write)
+void front_sdl_keymap_get(front_keymap *m) { AcquireSRWLockShared(&F.klk); *m = F.keymap; ReleaseSRWLockShared(&F.klk); }
+void front_sdl_keymap_set(const front_keymap *m) { AcquireSRWLockExclusive(&F.klk); F.keymap = *m; ReleaseSRWLockExclusive(&F.klk); }
+void front_sdl_menu_opened(int open) {   // the game's input let go while it is open, taken up again after (on the window thread)
+    if (!F.ev_menu) return;
+    SDL_Event e; SDL_zero(e); e.type = F.ev_menu; e.user.code = open; SDL_PushEvent(&e);
 }
 
 // ---------- Mouse look ----------
@@ -347,8 +357,8 @@ void front_sdl_start(SDL_Window *win) {
     F.rumble_min = env_f("DM_RUMBLE_MIN", 0); if (!(F.rumble_min >= 0)) F.rumble_min = 0; if (F.rumble_min > 0.9f) F.rumble_min = 0.9f;
     e = getenv("DM_MOTION"); F.motion_on = !(e && *e && !atoi(e));
     e = getenv("DM_PAD_CHECK"); F.check = e && atoi(e);
-    InitializeSRWLock(&F.rlk);
-    F.ev_rumble = SDL_RegisterEvents(1);
+    InitializeSRWLock(&F.rlk); InitializeSRWLock(&F.klk);
+    F.ev_rumble = SDL_RegisterEvents(1); F.ev_menu = SDL_RegisterEvents(1);
     dm_haptics_init(rumble_sink, F.rumble_on);   // the game sees vibration devices once a controller that rumbles is a player's (rumble_route)
     static const char kbd = 0;
     if (F.kbd_own) pad_slot_take(&F.slots, &kbd, "keyboard");   // holds player 1 for good
@@ -362,6 +372,7 @@ void front_sdl_start(SDL_Window *win) {
     for (int i = 0; ids && i < n; i++) pad_added(ids[i]);
     SDL_free(ids);
     if (F.check && !n) LOG("pad check: no controller connected yet: plug one in (or switch it on) and it is logged here");
+    menu_init();
 }
 
 void front_sdl_tick(void) {
@@ -371,6 +382,15 @@ void front_sdl_tick(void) {
 
 void front_sdl_event(const SDL_Event *e) {
     if (F.ev_rumble && e->type == F.ev_rumble) { rumble_apply(); return; }
+    if (F.ev_menu && e->type == F.ev_menu) {
+        if (e->user.code) input_release(); else if (SDL_GetWindowFlags(F.win) & SDL_WINDOW_INPUT_FOCUS) input_resume();
+        return;
+    }
+    // The in-game menu first: what it takes the game never sees, and while it is open the game sees nothing but controllers coming and going and keys and
+    // mouse buttons let go (nothing stays held)
+    if (menu_event(e)) return;
+    if (menu_is_open() && e->type != SDL_EVENT_GAMEPAD_ADDED && e->type != SDL_EVENT_GAMEPAD_REMOVED && e->type != SDL_EVENT_WINDOW_FOCUS_LOST &&
+        e->type != SDL_EVENT_KEY_UP && e->type != SDL_EVENT_MOUSE_BUTTON_UP) return;
     switch (e->type) {
     case SDL_EVENT_WINDOW_FOCUS_LOST: input_release(); break;
     case SDL_EVENT_WINDOW_FOCUS_GAINED: input_resume(); break;
@@ -381,9 +401,11 @@ void front_sdl_event(const SDL_Event *e) {
         if (down && (e->key.mod & SDL_KMOD_ALT)) break;   // Alt+Enter is the window's (fullscreen), Alt+Tab the system's
         if (F.check && down && e->key.scancode >= SDL_SCANCODE_F5 && e->key.scancode <= SDL_SCANCODE_F7) { check_test(e->key.scancode - SDL_SCANCODE_F5 + 1); break; }
 #ifndef _WIN32   // a name box waiting in the game window (no dialog could show: text_input_linux.c): the keys of A, B and + answer it
-        if (down && front_text_pad(front_keymap_button(&F.keymap, e->key.scancode))) break;
+        if (down) { AcquireSRWLockShared(&F.klk); uint64_t nb = front_keymap_button(&F.keymap, e->key.scancode); ReleaseSRWLockShared(&F.klk);
+                    if (front_text_pad(nb)) break; }
 #endif
-        if (front_kbd_key_map(&F.kbd, &F.keymap, e->key.scancode, down)) push();
+        AcquireSRWLockShared(&F.klk); int hit = front_kbd_key_map(&F.kbd, &F.keymap, e->key.scancode, down); ReleaseSRWLockShared(&F.klk);
+        if (hit) push();
         break;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN:

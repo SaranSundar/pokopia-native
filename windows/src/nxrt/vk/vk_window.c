@@ -12,7 +12,7 @@
 static struct {
     SDL_Window *win;
     HANDLE thread, ready;
-    _Atomic int open, minimized, closing, w, h, hz;
+    _Atomic int open, minimized, closing, w, h, hz, dw, dh, fullscreen;
     _Atomic uint32_t resize_serial;
     uint32_t ev_req;                 // our user event: data1/data2 = width/height, code = 1 resize, 2 fullscreen, 3 title, 4 quit
     void (*on_close)(void);
@@ -28,6 +28,9 @@ static void refresh_size(void) {
     SDL_DisplayID d = SDL_GetDisplayForWindow(g_w.win);
     const SDL_DisplayMode *m = d ? SDL_GetCurrentDisplayMode(d) : NULL;
     atomic_store(&g_w.hz, m && m->refresh_rate > 0 ? (int)(m->refresh_rate + 0.5f) : 0);
+    const SDL_DisplayMode *dm = d ? SDL_GetDesktopDisplayMode(d) : NULL;   // the monitor's own resolution (the in-game menu's "Default")
+    if (dm) { atomic_store(&g_w.dw, (int)(dm->w * (dm->pixel_density > 0 ? dm->pixel_density : 1) + 0.5f)); atomic_store(&g_w.dh, (int)(dm->h * (dm->pixel_density > 0 ? dm->pixel_density : 1) + 0.5f)); }
+    atomic_store(&g_w.fullscreen, (SDL_GetWindowFlags(g_w.win) & SDL_WINDOW_FULLSCREEN) != 0);
 }
 
 static unsigned __stdcall window_main(void *arg) {
@@ -118,6 +121,8 @@ void vkw_pixel_size(int *w, int *h) { *w = atomic_load(&g_w.w); *h = atomic_load
 uint32_t vkw_resize_serial(void) { return atomic_load(&g_w.resize_serial); }
 int vkw_minimized(void) { return atomic_load(&g_w.minimized); }
 int vkw_display_hz(void) { return atomic_load(&g_w.hz); }
+void vkw_desktop_size(int *w, int *h) { *w = atomic_load(&g_w.dw); *h = atomic_load(&g_w.dh); }
+int vkw_is_fullscreen(void) { return atomic_load(&g_w.fullscreen); }
 static void post(int code, intptr_t a, intptr_t b) {
     if (!atomic_load(&g_w.open)) return;
     SDL_Event e; memset(&e, 0, sizeof e); e.type = g_w.ev_req; e.user.code = code; e.user.data1 = (void *)a; e.user.data2 = (void *)b; SDL_PushEvent(&e);
