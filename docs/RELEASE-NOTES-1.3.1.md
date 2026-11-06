@@ -31,13 +31,13 @@ As always: **your own copy, your own dump.** Neither download contains anything 
 
 ### Mac, iPhone and Linux
 
-- **Mac and iPhone:** nothing changed but the version number, so there's no need to rebuild.
+- **Mac and iPhone:** nothing changed but the version number, so there's no need to rebuild. If you rebuild the Mac or iPhone app anyway, run **Refresh the graphics** again afterwards.
 - **Linux and the Steam Deck:** the open beta has its own release, **v1.3.0-linux-beta.2**, which fixes the start-up crash on Fedora, SteamOS (the Steam Deck), Arch and others.
 - **Link Play:** 1.3.1 plays with 1.3.0, and with 1.2.x and 1.1.x while Interact everywhere and Story co-op are off; co-op didn't change.
 
 ### Getting it
 
-- **Windows:** unzip 1.3.1 into a new folder and open **Pokopia Native Builder**: it offers **Update my game** and builds again into your build folder in a few minutes (the game's code is relinked, the runtime replaced, no shader translated again). Your settings and save carry over.
+- **Windows:** unzip 1.3.1 into a new folder and open **Pokopia Native Builder**: it offers **Update my game** and builds again into your build folder, about 10 to 20 minutes on a typical PC (the shaders and the game's code are prepared again from what's already there). Your settings, save and recorded shaders carry over.
 
 ## Known issues
 
