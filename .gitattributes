@@ -1,0 +1,3 @@
+# Patches are applied byte for byte to sources with LF line endings: a Windows clone (core.autocrlf=true, as on GitHub's Windows runners)
+# must not turn them into CRLF, or setup's git apply fails on every file
+*.patch -text
