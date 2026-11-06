@@ -35,8 +35,10 @@ No compiler, no SDK, no installer and no administrator rights: the download carr
 
 ### Build
 
-Unzip the download, double-click **Pokopia Native Builder.cmd**, untick "iPhone IPA" (unless you want it too), press
-**Setup** once (it fetches nxnative; with the IPA unticked it needs none of Apple's tools), choose your dump folder, tick
+Unzip the download and double-click **Pokopia Native Builder.cmd**. The walkthrough asks what you want to make (pick
+**Play on this PC**; the iPhone app only if you want it too), checks your PC and runs Setup for you (it fetches
+nxnative; without the iPhone app it needs none of Apple's tools), asks for your dump folder and builds. In
+**Advanced** (top right) the same is: untick "iPhone IPA", press **Setup** once, choose your dump folder, tick
 **Windows: play on this PC** and press **Build**. From a terminal:
 
 ```

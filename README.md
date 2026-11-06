@@ -232,9 +232,11 @@ phone has less memory than the recent Pro models, expect trouble.
 There is a window and there is a command line; they do the same thing.
 
 **The window.** Clone or download the repository, then double-click **Pokopia Native Builder.app** on the Mac
-(**Pokopia Native Builder.cmd** on Windows). Press **Setup** once, choose your dump folder, tick what you want, press
-**Build**. The stages scroll by in the window with the elapsed time; **Refresh shaders** is the refresh step explained
-further down, **Open build folder** shows the outputs. If the app will not open, it tells you what to install (Python
+(**Pokopia Native Builder.cmd** on Windows). A walkthrough takes you through it a step at a time: what you want to make,
+a check of your computer (it runs Setup for you), your dump folder, then the build, and what to do with what it made.
+It remembers where you are: open it again after your first play and the refresh step explained further down is
+waiting; open it from a new download and it offers to update your build. **Advanced** (top right) is the one-screen
+view with every button (**Check tools**, **Setup**, **Build**, **Refresh shaders**, ...). If the app will not open, it tells you what to install (Python
 3.12 with Tk: `brew install python@3.12 python-tk@3.12`). A clone opens directly. A copy downloaded with a browser is
 blocked the first time, because the app is not signed by a registered developer: try to open it, then System Settings →
 Privacy & Security → **Open Anyway** (or once in Terminal: `xattr -dr com.apple.quarantine "Pokopia Native Builder.app"`).
