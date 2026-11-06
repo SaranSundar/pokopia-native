@@ -720,7 +720,15 @@ vks_shader *vksh_make(const char *key, const uint8_t *spv, size_t spv_size, cons
         if (tn) nw = tn; else { static int n; if (n++ < 4) VKRED("shader %s: more clip and cull distances than the device takes, and the cull ones are used", key); }
     }
     static int ballot_fix = -1;   // NXRT_VK_BALLOT_FIX=0 leaves the ballots as translated (to compare)
-    if (ballot_fix < 0) { const char *e = getenv("NXRT_VK_BALLOT_FIX"); ballot_fix = !(e && *e == '0'); }
+    if (ballot_fix < 0) {
+        const char *e = getenv("NXRT_VK_BALLOT_FIX");
+#ifdef _WIN32
+        ballot_fix = !(e && *e == '0');
+#else   // Linux: NVIDIA's GPUs only, whose hang it is. lavapipe crashes in the rewritten counters, and the lane's own bit assumes 32-lane subgroups (RADV's are 64)
+        ballot_fix = e ? *e != '0' : g_vk.props.vendorID == 0x10de;
+        if (!ballot_fix && !e) VKLOG("subgroup ballots left as translated: their rewrite is for NVIDIA's GPUs (NXRT_VK_BALLOT_FIX=1 makes it anyway)");
+#endif
+    }
     if (ballot_fix) {
         int nb = 0; size_t bn = vkspv_ballot_per_lane(&w, nw, &nb);
         if (nb) { nw = bn; VKLOG("shader %s: %d subgroup ballot%s for a counter made per lane (NVIDIA hang after early returns: #12, D-1)", key, nb, nb > 1 ? "s" : ""); }
