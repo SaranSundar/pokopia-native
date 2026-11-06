@@ -35,7 +35,8 @@ endif()
 target_compile_options(nxrt_core PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wno-sign-compare -Wno-missing-field-initializers -Wno-unused-function>)
 
 # Every executable that hosts guest code: high-entropy ASLR off, so the host's own allocations stay out of the guest range (DESIGN D3)
-# Linux: the executable exports the rt_* ABI and the adapters dynamically, for game.so (docs/LINUX-PLAN.md L-D2), and finds libSDL3.so.0 beside itself
+# Linux: the executable exports the rt_* ABI and the adapters dynamically, for game.so (docs/LINUX-PLAN.md L-D2), and nothing else (plat/linux/nxrt.dynlist:
+# #30), and finds libSDL3.so.0 beside itself
 function(nxrt_executable name)
   add_executable(${name} ${ARGN})
   target_link_libraries(${name} PRIVATE nxrt_core)
@@ -43,7 +44,7 @@ function(nxrt_executable name)
   if(WIN32)
     target_link_options(${name} PRIVATE -Xlinker /HIGHENTROPYVA:NO $<$<BOOL:${NXRT_PDB}>:-g>)
   else()
-    target_link_options(${name} PRIVATE -rdynamic -Wl,-z,noexecstack)
+    target_link_options(${name} PRIVATE "-Wl,--dynamic-list=${CMAKE_CURRENT_FUNCTION_LIST_DIR}/plat/linux/nxrt.dynlist" -Wl,-z,noexecstack)
     # only $ORIGIN: CMake's build-tree rpath would carry the builder's home folder into the kit
     set_target_properties(${name} PROPERTIES BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "$ORIGIN")
   endif()
@@ -51,7 +52,11 @@ function(nxrt_executable name)
 endfunction()
 
 nxrt_executable(nxrt tools/nxrt_main.c)
-set_target_properties(nxrt PROPERTIES ENABLE_EXPORTS ON)   # nxrt.lib: what the game DLL links against
+if(WIN32)
+  set_target_properties(nxrt PROPERTIES ENABLE_EXPORTS ON)   # nxrt.lib: what the game DLL links against
+else()   # on Linux ENABLE_EXPORTS would add --export-dynamic and -rdynamic: every global exported, past the dynamic list
+  add_test(NAME nxrt.exports COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DEXE=$<TARGET_FILE:nxrt> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_exports.cmake)
+endif()
 
 nxrt_executable(nxrt-tests-as tests/test_addrspace.c)
 add_test(NAME nxrt.addrspace COMMAND nxrt-tests-as)

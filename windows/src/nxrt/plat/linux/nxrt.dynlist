@@ -1,0 +1,7 @@
+/* What nxrt's executables export on Linux (--dynamic-list, src/nxrt/CMakeLists.txt): only what game.so imports, the rt_* ABI and the HLE adapters.
+   Nothing else: an exported global with a library's symbol name takes that library's own references (#30: the PFN_vk* variables, exported by
+   -rdynamic, were what Fedora's Vulkan loader handed back for vkEnumerateInstanceExtensionProperties). nxrt.exports checks it. */
+{
+  adapter_*;
+  rt_*;
+};
