@@ -110,9 +110,15 @@ def which(name, *extra):
     return None
 
 
-def dotnet_root():   # the .NET install that holds the runtime: on PATH, in ~/.dotnet, or Homebrew's
-    d = which('dotnet', '~/.dotnet/dotnet', '/usr/local/share/dotnet/dotnet', '/opt/homebrew/opt/dotnet/libexec/dotnet')
-    return pathlib.Path(d).resolve().parent if d else None
+def dotnet_root():
+    """The .NET install that holds the runtime (shared/Microsoft.NETCore.App): the one on PATH, ~/.dotnet, the installer's, or Homebrew's. Homebrew's
+    formula puts a wrapper script on PATH (its bin/dotnet sets DOTNET_ROOT to ../libexec), so a folder counts only when the runtime is in it (#26)"""
+    p = shutil.which('dotnet')
+    near = [pathlib.Path(p).resolve().parent] if p else []
+    near += [d.parent / 'libexec' for d in near]
+    for d in near + [pathlib.Path(os.path.expanduser(x)) for x in ('~/.dotnet', '/usr/local/share/dotnet', '/opt/homebrew/opt/dotnet/libexec', '/usr/local/opt/dotnet/libexec')]:
+        if any((d / n).is_file() for n in ('dotnet', 'dotnet.exe')) and (d / 'shared' / 'Microsoft.NETCore.App').is_dir(): return d
+    return None
 
 
 # ---- Windows: where the fork's toolchain lives (win/toolchain.py reads the same names: NXW_IOS_SDK, SPIRV_CROSS, win/toolchain.json)

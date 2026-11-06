@@ -27,6 +27,7 @@ As always: **your own copy, your own dump.** Neither download contains anything 
 - **Fixed, Windows: "The operation was canceled by the user" when starting the game.** Windows marks everything unzipped from a download as coming from the internet, and then refused to start the game. Setup, Build and the launcher now take that mark off Pokopia Native's own files.
 - **New, Windows: Pokopia Settings**, a launcher beside Play Pokopia in your build folder's `out` folder. It opens the window before the game (Link Play, Controls, Display) even after you ticked "Don't ask again". Holding Shift while starting still works too.
 - **Fixed, Mac: Refresh and rebuilds failed on exFAT drives** ([#23](https://github.com/xFractals/pokopia-native/issues/23)) with "Operation not supported" once the app existed. The app is now replaced in a way those drives support. No shader is rebuilt.
+- **Fixed, Mac: Build stopped with "translation chain tools do not match the lock file: the translator does not run"** ([#26](https://github.com/xFractals/pokopia-native/issues/26)) when .NET came from Homebrew's `dotnet` formula, even though Check tools found it. The builder now finds that .NET's runtime.
 - **Mac download:** the shader translator no longer ships its debug-symbols file.
 - **Getting it:** Windows: unzip 1.2.6, run **Setup** once, then **Build** with the same build folder: the runtime and the launchers are replaced, nothing is recompiled. Mac: unzip 1.2.6, run **Setup** once, then **Build** with the same build folder: no shader is rebuilt. iPhone: nothing changed.
 
