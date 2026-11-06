@@ -1,7 +1,9 @@
 # The NVIDIA hang after early returns (#12, #21, #22, D-1)
 
 Status, 2026-11-06: `vkspv_ballot_per_lane` (`src/nxrt/vk/vk_shader.c`) rewrites every warp-aggregated counter of the shape below in the 2.0.1 shader
-cache: 12 ballots in 11 shaders. Three counters of other shapes are left as translated (below). Local on `gfx`.
+cache: 12 ballots in 11 shaders. Three counters of other shapes are left as translated (below). Only on NVIDIA's GPUs (vendor 0x10de), whose hang
+it is: the lane's own bit assumes 32-lane subgroups (nxrt does not pin the size; AMD's are often 64), and Mesa's lavapipe crashed in the rewritten
+counters (the Linux session's 1.3.0 bisect).
 
 ## What hangs
 
@@ -30,7 +32,8 @@ constant) and the result's variables; the leader nothing but the leader test and
 nothing but masks, constant scales, adds and variables. The translator keeps each value in a variable stored once and each GPU register in a
 variable stored many times: the rank is followed through the first kind, not into a register (NVN's rank is dead after its add; `560a0262fe47818a`
 writes it to a register that a later predicated add reads only when its predicate is false, and that add's compare is masked by the same
-predicate). `NXRT_VK_BALLOT_FIX=0` leaves every ballot as translated. The log names each shader rewritten.
+predicate). `NXRT_VK_BALLOT_FIX=0` leaves every ballot as translated, `=1` rewrites them on any GPU; unset, NVIDIA only. The log says which applies
+and names each shader rewritten.
 
 ## The whole cache
 

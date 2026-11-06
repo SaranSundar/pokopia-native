@@ -5,8 +5,8 @@
 **Join the community on [Discord](https://discord.gg/Aj9GqxZj8V)**: Linux and Steam Deck reports go to **#linux-beta**.
 
 **This is an open beta, and an early one.** The Linux build has **never run on a real Steam Deck**, nor on a Linux PC with a real graphics card. It was
-made and tested only under WSL (Linux inside Windows) with Mesa's software renderer, where it builds the game from a dump and reaches the title
-screen in a window; nobody has played further than that on Linux yet. On your computer the first start may well fail. That is fine, and exactly what this beta is for: when it does, **the logs are
+made and tested only under WSL (Linux inside Windows) with Mesa's software renderer, where it builds the game from a dump and reaches the game's
+first screens in a window; nobody has played further than that on Linux yet. On your computer the first start may well fail. That is fine, and exactly what this beta is for: when it does, **the logs are
 what we need** (how to send them is below). Windows and Mac players: this pre-release is not for you; use [1.3.0](https://github.com/xFractals/pokopia-native/releases/latest).
 
 ## Which download do I need?
@@ -42,10 +42,11 @@ zip). What that means on Linux:
 ## What we checked for 1.3.0, and what we could not
 
 In WSL (Ubuntu 22.04) with Mesa's software renderer, on a copy of a test save: the AppImage checks the computer and builds the game; the game
-starts and draws; **F1** opens the settings over the game (a real key press), with the Graphics tab, the Resolution list and the FPS counter;
-Resolution changes apply at once, are saved and are used again at the next start; Linux's own tests pass (including the menu's keyboard and
-controller input). **Not checked:** anything on a Steam Deck or a real graphics card, playing past the title screen (the software renderer draws
-about 2 frames a second), **−** and **+** on a controller, Story co-op and Link Play from Linux.
+starts and draws its first screen (the language choice); **F1** opens the settings over the game and closes them again, and so does **Esc** (real
+key presses), with the Graphics tab, the Resolution list and the FPS counter; Resolution changes apply at once, are saved and are used again at
+the next start; Linux's own tests pass (including the menu's keyboard and controller input). **Not checked:** anything on a Steam Deck or a real
+graphics card, playing further than that first screen (the software renderer draws about 2 frames a second), **−** and **+** on a real
+controller, Story co-op and Link Play from Linux.
 
 ## Getting started
 

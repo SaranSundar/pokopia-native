@@ -88,6 +88,11 @@ int main(void) {
     size_t kn = sizeof test_ballot_rank_comp_spv / 4; uint32_t *kw = copy_words(test_ballot_rank_comp_spv, kn); int kb = -1;
     CHECK(vkspv_ballot_per_lane(&kw, kn, &kb) == kn && kb == 0, "a counter whose rank is compared keeps its ballot");
     free(kw);
+    // made per lane on NVIDIA's GPUs only (AMD's 64-lane subgroups, Intel, lavapipe keep their ballots); NXRT_VK_BALLOT_FIX decides when given
+    CHECK(vkspv_ballot_fix_wanted(0x10de, NULL) && !vkspv_ballot_fix_wanted(0x1002, NULL) && !vkspv_ballot_fix_wanted(0x8086, NULL) && !vkspv_ballot_fix_wanted(0x10005, NULL),
+          "the rewrite on NVIDIA by default, not on AMD, Intel or Mesa's lavapipe");
+    CHECK(vkspv_ballot_fix_wanted(0x1002, "1") && vkspv_ballot_fix_wanted(0x1002, "") && !vkspv_ballot_fix_wanted(0x10de, "0"),
+          "NXRT_VK_BALLOT_FIX=1 forces it on any GPU, =0 turns it off on NVIDIA");
     // a translated shader given on the command line's environment (d2c50cca6e386abc from a build folder's shader cache)
     const char *tp = getenv("NXRT_TEST_SPV");
     if (tp && *tp) {

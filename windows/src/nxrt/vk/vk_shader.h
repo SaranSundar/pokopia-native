@@ -82,6 +82,9 @@ size_t vkspv_trim_cull(uint32_t **words, size_t nwords, uint32_t limit);
 // A warp-aggregated atomic counter's ballot(true) made the lane's own bit when the add's result is unused (#12: RTX 50 cards hang on that ballot after early
 // returns): the new word count (*words replaced) and *rewritten ballots, nwords when nothing changed
 size_t vkspv_ballot_per_lane(uint32_t **words, size_t nwords, int *rewritten);
+// Whether that rewrite applies: NVIDIA's GPUs (vendor 0x10de) only, whose hang it is (the lane's own bit assumes 32-lane subgroups, and lavapipe crashes in
+// the rewritten counters); env, NXRT_VK_BALLOT_FIX, decides when given: 0 off, anything else on
+int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env);
 
 #ifdef __cplusplus
 }
