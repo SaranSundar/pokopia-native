@@ -208,3 +208,13 @@ the game from the variable, from `display.json` and live from the menu (render t
 the gate, the game's first screen (the language choice) at ~240 s. With the rewrite off or gated the crash got rare but not gone: at 2560x1440 1 start
 in 5 still crashed (149 s, the same JIT code), at 1080 none in 3 (200-260 s): something else reads past a heap block too. **Not checked:** the field
 (lavapipe draws 2 fps), a real controller's Minus + Plus, any real GPU.
+
+### #30: the game crashed before its first frame on Fedora (2026-11-06)
+
+`-rdynamic` (and CMake's `--export-dynamic` for `ENABLE_EXPORTS`) exported every global of nxrt, among them the 163 `PFN_vk*` variables named
+exactly like Vulkan's entry points. A Vulkan loader built without `-Bsymbolic`/`-Bsymbolic-functions` reaches its own exported functions through
+the GOT, so the executable's data symbol of the same name won: `vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceExtensionProperties")` returned
+nxrt's variable, and nxrt called into its own .bss (`execute nxrt+0xf2f270`). Ubuntu builds with `-Bsymbolic-functions`, so WSL never showed it.
+Now the executables export only what game.so imports, `rt_*` and `adapter_*` (`plat/linux/nxrt.dynlist`, 1,783 symbols instead of 8,689;
+`ENABLE_EXPORTS` only on Windows), and `nxrt.exports` fails if anything else is exported. Reproduced in WSL with the LunarG SDK's loader (upstream
+flags: 270 GOT relocations against its own vk* names, Ubuntu's 0): the shipped nxrt crashed at the same address, the rebuilt one runs on both.
