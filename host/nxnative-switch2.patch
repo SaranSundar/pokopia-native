@@ -8437,9 +8437,18 @@ index df4ade9..064885a 100644
      if (!lo || !hi || CFGetTypeID(lo) != CFNumberGetTypeID() || CFGetTypeID(hi) != CFNumberGetTypeID()) return 0;
      CFNumberGetValue(lo, kCFNumberDoubleType, &l); CFNumberGetValue(hi, kCFNumberDoubleType, &h);
 diff --git a/dm/mac/pack_app.py b/dm/mac/pack_app.py
-index 1a64ae6..a0f340b 100755
+index 1a64ae6..952b202 100755
 --- a/dm/mac/pack_app.py
 +++ b/dm/mac/pack_app.py
+@@ -11,7 +11,7 @@
+ # runtime refuses without entitlements, and so the app cannot be notarized.
+ # Usage: pack_app.py <out.app> --host <dmhost> --patched <dir> --romfs <image or dir> --msl <dir> --tables <profile dir> --font <dir> --title-id <id> --name <name> [options]
+ #   Reuses <out.app> while <out.app>.key matches; otherwise writes <out.app>.partial and swaps it in at the end. Prints "step: ..." and "app: <path>[, reused (inputs unchanged)]".
+-import argparse, ctypes, hashlib, json, os, plistlib, re, shutil, stat, subprocess, sys, tempfile
++import argparse, ctypes, errno, hashlib, json, os, plistlib, re, shutil, stat, subprocess, sys, tempfile
+ from pathlib import Path
+ 
+ HERE = Path(__file__).resolve().parent
 @@ -108,6 +108,7 @@ def settings_rules(listed):   # DMSettings: what the launcher accepts as each se
          if s['kind'] == 'range': rules.append({'env': s['env'], 'min': float(s['min']), 'max': float(s['max'])})
          elif s['kind'] == 'choice': rules.append({'env': s['env'], 'values': [o[0] for o in s['options']]})
@@ -8458,6 +8467,23 @@ index 1a64ae6..a0f340b 100755
      if icon: p['CFBundleIconFile'] = 'AppIcon'
      if a.settings:
          listed = json.loads(Path(a.settings).read_text(encoding='utf-8'))['settings']
+@@ -197,7 +199,15 @@ def replace_app(tmp, out):
+         swap.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+         swap.restype = ctypes.c_int
+         if swap(os.fsencode(tmp), os.fsencode(out), 2):
+-            err = ctypes.get_errno(); raise OSError(err, os.strerror(err), str(out))
++            err = ctypes.get_errno()
++            if err not in (errno.ENOTSUP, errno.EOPNOTSUPP, errno.EINVAL): raise OSError(err, os.strerror(err), str(out))
++            # exFAT, FAT and some network volumes cannot swap: three renames instead, the old app ending at tmp as a swap leaves it
++            side = tmp.with_name(tmp.name + '.old')
++            shutil.rmtree(side, ignore_errors=True)
++            out.rename(side)
++            try: tmp.rename(out)
++            except BaseException: side.rename(out); raise
++            side.rename(tmp)
+     else:
+         tmp.rename(out)
+ 
 diff --git a/dm/third_party/ryujinx/src/Ryujinx.Graphics.Shader/Decoders/Decoder.cs b/dm/third_party/ryujinx/src/Ryujinx.Graphics.Shader/Decoders/Decoder.cs
 index 45250a4..8bc9d08 100644
 --- a/dm/third_party/ryujinx/src/Ryujinx.Graphics.Shader/Decoders/Decoder.cs

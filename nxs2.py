@@ -31,7 +31,7 @@ or newer with lz4, fontTools and Pillow, the .NET 10 runtime, git, a Vulkan driv
 """
 import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shutil, struct, subprocess, sys, time
 
-TOOL_VERSION = '1.2.3'   # this tool's release (co-op needs the same one on every device); the game's own version is separate
+TOOL_VERSION = '1.2.6'   # this tool's release (co-op needs the same one on every device); the game's own version is separate
 TITLE = '0400A3A01EE4C000'
 NAME = 'Pokemon Pokopia'
 UPSTREAM = 'https://github.com/seedds/nxnative'
@@ -443,10 +443,24 @@ def check_writable(folder, what):
         raise Fail(f'cannot write in {what} ({folder}: {e.strerror or e}). {hint}')
 
 
+def unblock_download():
+    """Windows marks every file Explorer unzips from a downloaded zip as coming from the internet, and the launcher's Start-Process then refuses the game's
+    runtime ("The operation was canceled by the user"). The download's own files lose the mark; what setup fetches or the build makes has none."""
+    if not WIN: return
+    n = 0
+    for root, dirs, files in os.walk(HERE):
+        dirs[:] = [d for d in dirs if d not in ('.git', 'nxnative', 'nxnativewindows-src', 'dist', '__pycache__')]
+        for f in files:
+            try: os.remove(os.path.join(root, f) + ':Zone.Identifier'); n += 1
+            except OSError: pass
+    if n: say(f'{n} downloaded files unblocked (Windows had marked them as from the internet)')
+
+
 def setup(args):
     """nxnative at the pinned commit with the Switch 2 patch and the rebuilt translator, and ampere-lower built."""
     if (NX / '.bundled').is_file() and not (NX / '.git').is_dir():   # the Linux AppImage carries nxnative set up already, without its git history
         return say(f'setup: nothing to do, this download carries nxnative set up ({(NX / ".bundled").read_text().strip()}) and ampere-lower at {AMPERE}')
+    unblock_download()
     bad = doctor(need_ios=not args.no_ios, need_windows=False)
     if bad: raise Fail('install the missing tools above, then run setup again')
     check_writable(HERE, 'the pokopia-native folder')
@@ -1107,11 +1121,15 @@ def st_win_play(b, t):
 rem Pokemon Pokopia {b.version} on Windows, built from your own dump by pokopia-native {TOOL_VERSION} (nxs2.py build --windows). Double-click to play.
 rem The save is in {cfg["save"]} (windows\\play.json names it; nxs2.py import-save brings one from Eden, the phone or a Mac).
 rem A window asks how to play first: alone, Link Play on this network, or hosting / visiting over the internet ("Don't ask again" in it;
-rem Shift held while starting shows it again). play.ps1's switches can follow: -Fullscreen, -Window 1600x900, -Silent, -PadCheck; -Save and
-rem -Work with other folders for a second player on this PC; -LinkPlay, -Join, -Internet, -Room and -Relay instead of the window (docs/WINDOWS.md).
+rem Pokopia Settings {b.version}.cmd or Shift held while starting shows it again). play.ps1's switches can follow: -Fullscreen, -Window 1600x900, -Silent,
+rem -PadCheck; -Save and -Work with other folders for a second player on this PC; -LinkPlay, -Join, -Internet, -Room and -Relay instead of the window (docs/WINDOWS.md).
 {play} %*
 ''' + end, encoding='ascii')
-    say(f'Windows game: {cmd}  (save: {win_save_dir(b)})')
+    (b.outputs / f'Pokopia Settings {b.version}.cmd').write_text(f'''@echo off
+rem The window before Pokemon Pokopia {b.version} starts (Link Play, Controls, Display), even after "Don't ask again" was ticked. Play in it starts the game.
+{play} -Settings %*
+''' + end, encoding='ascii')
+    say(f'Windows game: {cmd}  (the settings window: Pokopia Settings {b.version}.cmd beside it; save: {win_save_dir(b)})')
     return cmd
 
 
@@ -1457,6 +1475,7 @@ def build(args):
     if WIN and not (args.ipa or args.windows): raise Fail('on Windows the outputs are the Windows game (--windows) and the iPhone IPA (--ipa): give one or both')
     need_ios = bool(args.ipa) if WIN else False if LINUX else not args.no_ios
     game = bool(args.windows or args.linux)
+    unblock_download()
     bad = doctor(need_ios=need_ios, quiet=True, need_windows=game)
     if bad: doctor(need_ios=need_ios, need_windows=game); raise Fail('install the missing tools above (nxs2.py doctor), then build again')
     need_setup(ipa=bool(args.ipa))

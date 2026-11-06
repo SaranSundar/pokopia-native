@@ -1,7 +1,7 @@
 # play.ps1: plays Pokemon Pokopia 2.0.1 with nxrt (the Vulkan renderer, SDL3 input and sound). See docs/m6-input-gameplay.md for the controls.
 #   play.ps1 -ExeFS <ExeFS folder> -Dll <game.dll> -RomFS <RomFS.img or folder> -Save <save folder> [-Work <folder>] [-Silent] [-Fullscreen] [-Window 1600x900] [-Exe <nxrt.exe>]
 #            [-LinkPlay] [-Join <IPv4[:port]>|ask] [-Internet [-Room <code>|ask] [-Relay <IPv4[:port]>]] [-CoopHost <port> | -CoopJoin <address:port> [-CoopTcp]] [-Interact]
-#            [-PadCheck] [-DryRun]
+#            [-Settings] [-PadCheck] [-DryRun]
 #   play.ps1 -Config <play.json> [any switch above]: an installer build's launcher (docs/M7-REPORT.md): the paths come from play.json, relative ones from its folder,
 #            %VARIABLES% expanded; a switch given here wins over the file. A save folder named only by the file is created empty the first time.
 # The same script plays 1.0.5 and 2.0.1: -ExeFS, -Dll and -RomFS name one version's files (docs/m6-phase-b.md §1). -PadCheck logs every controller's buttons,
@@ -20,7 +20,8 @@
 # -Interact turns on "Interact everywhere" (experimental, docs/coop-interact.md): in every town, not only Palette Town, Link Play visitors can use moves and
 # items and build. Every player in a session needs it on (a session refuses a player whose setting differs).
 # The Link Play window (an installer build's launcher, or -Ask, when no Link Play switch is given): play alone, on this network, host or visit over the
-# internet, remembered in %APPDATA%\Pokopia Native\linkplay.json. "Don't ask again" starts the remembered way; Shift held while starting brings it back.
+# internet, remembered in %APPDATA%\Pokopia Native\linkplay.json. "Don't ask again" starts the remembered way; Shift held while starting brings it back,
+# and so does -Settings (the installer's "Pokopia Settings" launcher).
 # A host over the internet gets its room code in a window with a Copy button.
 # The window's Controls tab sets this PC's keyboard keys (%APPDATA%\Pokopia Native\controls.json, handed to the game as DM_KEYMAP; the game logs the map):
 # click an action, press its key. Keys count by their place on the keyboard; "Reset to defaults" brings back the usual layout. Controllers keep their buttons.
@@ -47,6 +48,7 @@ param(
     [switch]$Silent,
     [switch]$Fullscreen,
     [switch]$Ask,
+    [switch]$Settings,
     [switch]$LinkPlay,
     [string]$Join = "",
     [switch]$Internet,
@@ -93,7 +95,7 @@ if (-not $here -and $MyInvocation.MyCommand.Path) { $here = Split-Path -Parent $
 if (-not $Exe) {
     $look = @(); if ($here) { $look += Join-Path $here "..\build\Release\bin\nxrt.exe" }
     $look += (Join-Path (Get-Location).Path "build\Release\bin\nxrt.exe"), (Join-Path (Get-Location).Path "..\build\Release\bin\nxrt.exe")
-    $Exe = $look | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $Exe = $look | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $Exe) { Write-Error "nxrt.exe not found ($($look -join ', ')): give -Exe"; exit 2 }
 }
 if (-not $Work) {
@@ -104,7 +106,7 @@ if (-not [System.IO.Path]::IsPathRooted($Work)) { $Work = Join-Path (Get-Locatio
 if ($newSave -and -not (Test-Path -LiteralPath $Save) -and -not $DryRun) { New-Item -ItemType Directory -Force $Save | Out-Null; Write-Host "a new save folder: $Save" }
 $must = @($ExeFS, $Dll, $RomFS, $Exe); if (-not ($newSave -and $DryRun)) { $must += $Save }   # a dry run does not make the new save folder
 foreach ($p in $must) { if (-not (Test-Path -LiteralPath $p)) { Write-Error "not found: $p"; exit 2 } }
-foreach ($m in @("main", "sdk")) { if (-not (Test-Path (Join-Path $ExeFS $m))) { Write-Error "$ExeFS has no '$m': give the game's ExeFS folder"; exit 2 } }
+foreach ($m in @("main", "sdk")) { if (-not (Test-Path -LiteralPath (Join-Path $ExeFS $m))) { Write-Error "$ExeFS has no '$m': give the game's ExeFS folder"; exit 2 } }
 $noSave = -not (Get-ChildItem -LiteralPath $Save -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^[BGS]00$' })
 if ($noSave) {
     Write-Warning "$Save holds no B00 / G00 / S00 folders: the game will start a new save there"
@@ -304,7 +306,7 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $tabs.Size = New-Object System.Drawing.Size($w, ($h + $tabs.ItemSize.Height + 20))
     $outer.Controls.Add($tabs)
     $again = New-Object System.Windows.Forms.CheckBox; $again.AutoSize = $true; $again.Margin = New-Object System.Windows.Forms.Padding(0, 12, 0, 0)
-    $again.Text = "Don't ask again (hold Shift while starting to see this window)"; $again.Checked = -not $pref.ask
+    $again.Text = "Don't ask again (Pokopia Settings, or Shift held while starting, shows this window)"; $again.Checked = -not $pref.ask
     $outer.Controls.Add($again)
     $row, $btn = New-Buttons $f @('Play', 'Cancel'); $row.Width = $w; $outer.Controls.Add($row)
     $sync = { $grid.Enabled = $radio['visit'].Checked; $keep.Enabled = $radio['host'].Checked; $ie.Enabled = -not $radio['alone'].Checked }.GetNewClosure()
@@ -363,7 +365,7 @@ if (($Config -or $Ask) -and -not ($LinkPlay -or $Join -or $Internet -or $Room -o
     if ($forms) {
         [System.Windows.Forms.Application]::EnableVisualStyles()
         $shift = ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) -ne 0
-        if ($pref.ask -or $shift) {
+        if ($pref.ask -or $shift -or $Settings) {
             if (-not ('PokopiaKeys' -as [type])) {   # the Controls tab: a key's scan code (its place) and which Shift or Ctrl it was
                 Add-Type -TypeDefinition ('using System.Runtime.InteropServices; public static class PokopiaKeys { [DllImport("user32.dll")] static extern uint MapVirtualKey(uint c, uint t); ' +
                     '[DllImport("user32.dll")] static extern short GetKeyState(int k); public static uint Scan(int vk) { return MapVirtualKey((uint)vk, 4); } ' +
@@ -494,7 +496,11 @@ Write-Host "Pokopia: keyboard WASD move, mouse look (click the picture; Esc rele
 Write-Host "Controllers work as Switch controllers (Xbox / PlayStation / Switch Pro). Save: $Save. Logs: $logs"
 # Start-Process quotes nothing: an argument with a space (a save under "Pokopia Native") is passed in quotes, an inner quote escaped
 $quoted = $args_ | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }
-$p = Start-Process -FilePath (Resolve-Path -LiteralPath $Exe).Path -ArgumentList $quoted -WorkingDirectory $Work -PassThru
+$exePath = (Resolve-Path -LiteralPath $Exe).Path
+# Files unzipped from a download keep Windows' "came from the internet" mark, and Start-Process then refuses nxrt.exe with "The operation was
+# canceled by the user": the runtime's folder loses the mark first
+Get-ChildItem -LiteralPath (Split-Path -Parent $exePath) -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+$p = Start-Process -FilePath $exePath -ArgumentList $quoted -WorkingDirectory $Work -PassThru
 try { $p.PriorityClass = 'BelowNormal' } catch {}
 $p.WaitForExit()
 exit $p.ExitCode

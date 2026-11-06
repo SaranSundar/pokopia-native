@@ -7,7 +7,7 @@ Mac: double-click "Pokopia Native Builder.app" (or: python3.12 nxs2_gui.py). Win
 Linux: the Pokopia Native Builder AppImage (the Linux game; docs/LINUX.md), or python3 nxs2_gui.py from the "for Linux" download.
 Needs Python 3.12+ with Tk (macOS Homebrew: brew install python-tk@3.12; python.org installers have it).
 """
-import json, os, pathlib, queue, re, subprocess, sys, threading, time
+import json, os, pathlib, queue, re, subprocess, sys, threading, time, webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -20,6 +20,7 @@ WIN = sys.platform == 'win32'
 LINUX = sys.platform.startswith('linux')
 SETTINGS = pathlib.Path.home() / ('.nxs2_gui.json')
 LOG = HERE / 'builder-log.txt'   # Windows: the launcher's start-up checks and the window's own errors, for a report
+DISCORD = 'https://discord.gg/Aj9GqxZj8V'   # the community server: install help, bug reports, co-op partners
 
 
 def log_line(text):
@@ -76,6 +77,8 @@ class App(tk.Tk):
         f = ttk.Frame(self); f.pack(fill='both', expand=True, padx=10, pady=10)
 
         ttk.Label(f, text='1. Your game dump', font=('', 12, 'bold')).grid(row=0, column=0, sticky='w', **pad)
+        help_link = ttk.Label(f, text='Need help? Ask on Discord', foreground='#2f6fde', cursor='hand2', font=('', 10, 'underline'))
+        help_link.grid(row=0, column=2, sticky='e', **pad); help_link.bind('<Button-1>', lambda e: webbrowser.open(DISCORD))
         self.dump = tk.StringVar(value=s.get('dump', ''))
         ttk.Entry(f, textvariable=self.dump, width=70).grid(row=1, column=0, columnspan=2, sticky='ew', **pad)
         db = ttk.Frame(f); db.grid(row=1, column=2, sticky='w', **pad)
@@ -242,7 +245,8 @@ class App(tk.Tk):
             self.status.set(f'{self.running} stopped after {el}. Press the button again to continue where it left off.')
         else:
             self.status.set(f'{self.running} failed after {el}: {self.result.get("fail", f"exit {rc}")}')
-            messagebox.showerror(f'{self.running} failed', self.result.get('fail', f'exit code {rc}') + '\n\nThe full output of every stage is in <build folder>/logs/.')
+            messagebox.showerror(f'{self.running} failed', self.result.get('fail', f'exit code {rc}') + '\n\nThe full output of every stage is in <build folder>/logs/.'
+                                 f'\nStuck? Ask in the Discord ({DISCORD}) or check "Common problems" in the README.')
         self.t0 = None
 
     def do_stop(self):

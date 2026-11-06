@@ -18,6 +18,7 @@
 #include "clear_f_frag.h"
 #include "clear_u_frag.h"
 #include "clear_i_frag.h"
+#include "quad_args_comp.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -835,6 +836,48 @@ static int read_u32(uint64_t a, uint32_t *v) {   // guest memory, guarded
     return 1;
 }
 #endif
+// Indirect quads (#17, #20, F-22): the GPU writes their arguments earlier in the same submission, so at recording guest memory held 0 or a stale count and the
+// effect was not drawn (or kept the GPU busy). A one-thread dispatch (shaders/quad_args.comp) turns them into an indexed indirect draw over R0.quads on the GPU,
+// outside the pass: the draw reopens it, loading what the targets hold. 0 when it cannot be made (the draw is skipped)
+static VkDescriptorSetLayout g_qadl; static VkPipelineLayout g_qapl; static VkPipeline g_qap;
+static int quad_args(uint64_t ind, VkBuffer *ab, VkDeviceSize *ao) {
+    if (!g_qap) {
+        VkDescriptorSetLayoutBinding lb[2] = {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}, {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}};
+        VkDescriptorSetLayoutCreateInfo dci = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, NULL, 0, 2, lb};
+        VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 4};
+        if (!g_qadl && vkCreateDescriptorSetLayout(g_vk.dev, &dci, NULL, &g_qadl) != VK_SUCCESS) return 0;
+        VkPipelineLayoutCreateInfo lci = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, NULL, 0, 1, &g_qadl, 1, &pr};
+        if (!g_qapl && vkCreatePipelineLayout(g_vk.dev, &lci, NULL, &g_qapl) != VK_SUCCESS) return 0;
+        VkShaderModuleCreateInfo mci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, NULL, 0, sizeof quad_args_comp_spv, quad_args_comp_spv};
+        VkShaderModule m = VK_NULL_HANDLE; if (vkCreateShaderModule(g_vk.dev, &mci, NULL, &m) != VK_SUCCESS) return 0;
+        VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, NULL, 0,
+                                          {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_COMPUTE_BIT, m, "main", NULL}, g_qapl, VK_NULL_HANDLE, 0};
+        VkResult r = vkCreateComputePipelines(g_vk.dev, g_vk.pcache, 1, &ci, NULL, &g_qap);
+        vkDestroyShaderModule(g_vk.dev, m, NULL);
+        if (r != VK_SUCCESS) { g_qap = VK_NULL_HANDLE; RED_ONCE(56, "the indirect quads' argument shader could not be made: those draws are skipped"); return 0; }
+    }
+    VkBuffer sb; VkDeviceSize so;
+    if (!vkm_use(ind, 16, &sb, &so)) { RED_ONCE(59, "indirect draw arguments at %#llx are in no memory pool", (unsigned long long)ind); return 0; }
+    VkDeviceSize al = g_vk.props.limits.minStorageBufferOffsetAlignment, base = so / al * al;
+    if ((so - base) % 4) { RED_ONCE(58, "indirect quads whose arguments are not 4-byte aligned: not drawn"); return 0; }
+    VkDescriptorSet ds = dset_alloc(g_qadl);
+    if (!ds || !arena(20, al > 16 ? al : 16, ab, ao)) return 0;
+    VkDescriptorBufferInfo bi[2] = {{sb, base, so - base + 16}, {*ab, *ao, 20}};
+    VkWriteDescriptorSet w[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, ds, 0, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bi[0], NULL},
+                                 {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, ds, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bi[1], NULL}};
+    vkUpdateDescriptorSets(g_vk.dev, 2, w, 0, NULL);
+    pass_end();
+    VkCommandBuffer cb = vks_cb();
+    barrier_all(cb);   // the GPU's own write of the arguments, earlier in this submission
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, g_qap); g_last_pipe = VK_NULL_HANDLE;
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, g_qapl, 0, 1, &ds, 0, NULL);
+    uint32_t at = (uint32_t)((so - base) / 4); vkCmdPushConstants(cb, g_qapl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &at);
+    vkCmdDispatch(cb, 1, 1, 1);
+    vk_mem_barrier(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+    g_st.barriers++;
+    RED_ONCE(57, "indirect quads: their arguments are turned into an indexed draw on the GPU (at most 65536 quads and instances)");
+    return 1;
+}
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (S->render_skip) { g_st.draws_skipped++; return; }
     int prim = dw ? dw->prim : di->prim, expand;
@@ -849,6 +892,8 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!sh[0] || (S->bst[1] && !sh[1] && !S->rast_discard)) { g_st.skip_no_shader++; g_st.draws_skipped++; return; }
     sh[0] = vin_shader(sh[0]);
     if (S->rast_discard) sh[1] = NULL;
+    VkBuffer qab = VK_NULL_HANDLE; VkDeviceSize qao = 0;   // indirect quads: the indexed draw's arguments, made on the GPU before the pass opens
+    if (dw && ind && expand == VKP_EXPAND_QUADS && !quad_args(ind, &qab, &qao)) { g_st.draws_skipped++; return; }
     // the render pass, its scissor and viewport (nvn_mtl.m draw_: viewport flipped for the lower-left origin there; Vulkan's y axis runs the other way)
     if (!P.open && !pass_begin()) { g_st.skip_no_target++; g_st.draws_skipped++; return; }
     uint32_t tw = P.any ? P.w : (uint32_t)(S->vp[0][0] + S->vp[0][2]), th = P.any ? P.h : (uint32_t)(S->vp[0][1] + S->vp[0][3]);
@@ -998,12 +1043,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     uint32_t inst = (uint32_t)((dw ? dw->instances : di->instances) > 0 ? (dw ? dw->instances : di->instances) : 1);
     vk_checkpoint(cb, 'd', sh[1] ? sh[1]->key : sh[0]->key, inst, 0, 0, ind != 0);
     if (dw) {
-        if (ind && expand == VKP_EXPAND_QUADS) {   // no indirect form of the expansion: the arguments as guest memory holds them now (as the indexed count below; M6, gameplay)
-            uint32_t a[4] = {0, 1, 0, 0}; for (int k = 0; k < 4; k++) if (!read_u32(ind + 4 * (uint64_t)k, &a[k])) { RED_ONCE(58, "indirect quads whose arguments cannot be read: not drawn"); return; }
-            RED_ONCE(57, "indirect quads: drawn with the arguments guest memory holds when they are recorded (%u vertices, %u instances)", a[0], a[1]);
-            if (a[1] > 65536) { RED_ONCE(56, "indirect quads with %u instances in guest memory (a count the GPU had not written yet?): not drawn", a[1]); return; }   // #17: a stale count must not keep the GPU busy past Windows' timeout
-            if (a[0] >= 4 && a[1]) { vkCmdBindIndexBuffer(cb, R0.quads, 0, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexed(cb, (a[0] / 4 < 65536 ? a[0] / 4 : 65536) * 6, a[1], 0, (int32_t)a[2], a[3]); }
-        }
+        if (ind && expand == VKP_EXPAND_QUADS) { vkCmdBindIndexBuffer(cb, R0.quads, 0, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexedIndirect(cb, qab, qao, 1, 20); }   // quad_args
         else if (ind) { VkBuffer b; VkDeviceSize o;
             if (!vkm_use(ind, 16, &b, &o)) { RED_ONCE(59, "indirect draw arguments at %#llx are in no memory pool", (unsigned long long)ind); return; }
             vkCmdDrawIndirect(cb, b, o, 1, 16); }
@@ -1564,5 +1604,8 @@ void vkr_shutdown(void) {
     vk_hm_free(&g_cpipe);
     for (int i = 0; i < 4; i++) if (g_cmod[i]) { vkDestroyShaderModule(g_vk.dev, g_cmod[i], NULL); g_cmod[i] = VK_NULL_HANDLE; }
     if (g_cpl) { vkDestroyPipelineLayout(g_vk.dev, g_cpl, NULL); g_cpl = VK_NULL_HANDLE; }
+    if (g_qap) { vkDestroyPipeline(g_vk.dev, g_qap, NULL); g_qap = VK_NULL_HANDLE; }
+    if (g_qapl) { vkDestroyPipelineLayout(g_vk.dev, g_qapl, NULL); g_qapl = VK_NULL_HANDLE; }
+    if (g_qadl) { vkDestroyDescriptorSetLayout(g_vk.dev, g_qadl, NULL); g_qadl = VK_NULL_HANDLE; }
     vkpl_shutdown(); vksh_shutdown();
 }

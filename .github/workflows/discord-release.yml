@@ -1,0 +1,263 @@
+# Posts each new Pokopia Native release to the Discord #releases channel as a full card:
+# title, a short summary of what's new, download links, update steps and where to get help.
+#
+# Setup (once):
+#   1. Repo Settings -> Secrets and variables -> Actions -> New repository secret
+#        Name:  DISCORD_RELEASES_WEBHOOK
+#        Value: your Discord webhook address (Server Settings -> Integrations -> Webhooks ->
+#               GitHub Releases -> Copy Webhook URL). Do NOT add /github this time.
+#   2. Optional: a secret named ANTHROPIC_API_KEY makes the summary AI-written from your notes.
+#      Without it, the card shows the top part of your notes for this version.
+#   3. Remove the old repo webhook that points at discord.com (Settings -> Webhooks),
+#      or every release gets posted twice.
+#
+# To post a release that already exists (or test): Actions tab -> "Post release to Discord" ->
+# Run workflow -> type the tag (e.g. v1.2.5), or leave it empty for the latest release.
+
+name: Post release to Discord
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of an existing release to post (e.g. v1.2.5). Empty = latest release."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post to Discord #releases
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PING_ROLE_ID: ${{ vars.DISCORD_PING_ROLE_ID }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, sys, urllib.error, urllib.parse, urllib.request
+
+          # ---- things you may want to change ---------------------------------------------
+          BOT_NAME = "Pokopia Native"
+          COLOR_RELEASE = 0xE67E22
+          COLOR_PRERELEASE = 0xF1C40F
+          ASK_KITT_CHANNEL = "1568068185448652811"       # #ask-kitt
+          INSTALL_HELP_CHANNEL = "1567856243668951102"   # #install-help
+          BUG_REPORTS_CHANNEL = "1567856245157793863"    # #bug-reports
+          UPDATE_STEPS = ("Unzip the new version into a new folder, open the builder, press **Setup**, "
+                          "pick the same dump and build folder, then press **Build**. Only what changed "
+                          "is rebuilt, and your save carries over.")
+          AI_MODEL = "claude-haiku-5-5"
+          SUMMARY_LIMIT = 1500
+          # ---------------------------------------------------------------------------------
+
+          def fail(msg):
+              print(f"::error::{msg}")
+              sys.exit(1)
+
+          def request(method, url, body=None, headers=None):
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+              if body is not None:
+                  req.add_header("Content-Type", "application/json")
+              req.add_header("User-Agent", "pokopia-native-release-poster")
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      raw = r.read()
+                      return r.status, (json.loads(raw) if raw else None)
+              except urllib.error.HTTPError as e:
+                  raw = e.read().decode("utf-8", "replace")
+                  return e.code, raw
+              except (urllib.error.URLError, TimeoutError) as e:
+                  return 0, str(getattr(e, "reason", e))
+
+          # ---- which release ----------------------------------------------------------------
+          repo = os.environ["REPO"]
+          if os.environ.get("GITHUB_EVENT_NAME") == "release":
+              with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as f:
+                  rel = json.load(f)["release"]
+          else:
+              tag = (os.environ.get("INPUT_TAG") or "").strip()
+              path = f"releases/tags/{urllib.parse.quote(tag)}" if tag else "releases/latest"
+              api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+              status, rel = request("GET", f"{api}/repos/{repo}/{path}",
+                                    headers={"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                                             "Accept": "application/vnd.github+json"})
+              if status != 200:
+                  fail(f"Couldn't find the release {tag or '(latest)'}: HTTP {status}")
+          if rel.get("draft"):
+              print("Draft release, nothing posted.")
+              sys.exit(0)
+
+          webhook = (os.environ.get("DISCORD_WEBHOOK") or "").strip()
+          if not re.match(r"https?://", webhook):
+              fail("The DISCORD_RELEASES_WEBHOOK secret is missing. Add it under Settings -> Secrets and variables -> Actions.")
+          webhook = re.sub(r"/(github|slack)/?$", "", webhook.split("?")[0])
+
+          tag = rel["tag_name"]
+          url = rel["html_url"]
+          title = (rel.get("name") or tag).strip()
+          if tag not in title:
+              title = f"{tag}: {title}"
+          notes = rel.get("body") or ""
+
+          # ---- release notes -> Discord-friendly text -----------------------------------------
+          def clean(md):
+              md = md.replace("\r\n", "\n")
+              md = re.sub(r"<!--.*?-->", "", md, flags=re.S)
+              md = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", md)                       # images
+              md = re.sub(r"<img[^>]*>", "", md, flags=re.I)
+              md = re.sub(r"</?(details|summary|p|div|sup|sub|picture|source)[^>]*>", "", md, flags=re.I)
+              md = re.sub(r"<br\s*/?>", "\n", md, flags=re.I)
+              md = re.sub(r"(?<![(<\w])(https://github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/(\d+))",
+                          r"[#\2](\1)", md)                                       # bare PR/issue links
+              out = []
+              for line in md.split("\n"):
+                  h = re.match(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$", line)
+                  if h:
+                      out.append(f"**{h.group(1).strip('* ')}**")
+                  else:
+                      out.append(re.sub(r"^(\s*)[*+]\s+", r"\1- ", line))
+              return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+          def version_of(text):
+              if "game" in text.lower():          # "game versions 1.0.5 and 2.0.1" isn't a release section
+                  return None
+              m = re.search(r"\bv?(\d+)\.(\d+)(?:\.(\d+|x))?\b", text, flags=re.I)
+              return tuple(int(x) if x and x.isdigit() else 0 for x in m.groups()) if m else None
+
+          def this_version_only(md):
+              """Notes often repeat older versions' changelogs; stop at the first older-version heading."""
+              current = version_of(tag)
+              lines, kept = md.split("\n"), []
+              for i, line in enumerate(lines):
+                  is_heading = line.startswith("**") and line.endswith("**") and len(line) < 120
+                  if is_heading and kept:
+                      v = version_of(line)
+                      if (v and current and v < current) or re.search(r"(?i)\b(older|previous|earlier)\b|changelog|history", line):
+                          break
+                  kept.append(line)
+              text = "\n".join(kept).strip()
+              first, _, rest = text.partition("\n")
+              if first.startswith("**") and (tag in first or first.strip("* ") in title):   # repeats the title
+                  text = rest.strip()
+              return text
+
+          def shorten(text, limit):
+              if len(text) <= limit:
+                  return text
+              cut, size = [], 0
+              for line in text.split("\n"):
+                  if size + len(line) + 1 > limit - 2:
+                      break
+                  cut.append(line)
+                  size += len(line) + 1
+              return ("\n".join(cut).rstrip() or text[: limit - 2]) + "\n…"
+
+          def ai_summary(md):
+              key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+              if not key or not md:
+                  return None
+              prompt = (
+                  f"Below are the GitHub release notes for Pokopia Native {tag}, a fan project that runs the game natively "
+                  "on PC, Mac and iPhone. Write the summary for a Discord release announcement for players: 3 to 6 bullet "
+                  "points, each starting with '- ' and one short sentence. Cover only what is new, changed or fixed in "
+                  f"{tag}; the notes may also repeat older versions' changelogs, ignore those. You may start a bullet with "
+                  "a **bold** feature name. Plain language, no hype, no emojis, no headings, no intro or closing line, and "
+                  "nothing that isn't in the notes. Under 900 characters.\n\n<notes>\n" + md[:20000] + "\n</notes>")
+              status, res = request("POST", "https://api.anthropic.com/v1/messages",
+                                    {"model": AI_MODEL, "max_tokens": 700,
+                                     "messages": [{"role": "user", "content": prompt}]},
+                                    {"x-api-key": key, "anthropic-version": "2023-06-01"})
+              if status != 200:
+                  print(f"::warning::AI summary failed (HTTP {status}); using the notes instead.")
+                  return None
+              text = "".join(b.get("text", "") for b in res.get("content", [])).strip()
+              return text if text.startswith("-") and len(text) <= SUMMARY_LIMIT else None
+
+          cleaned = clean(notes)
+          summary = ai_summary(cleaned) or shorten(this_version_only(cleaned), SUMMARY_LIMIT)
+          description = (summary + "\n\n" if summary else "") + f"[Read the full release notes]({url})"
+
+          # ---- downloads ------------------------------------------------------------------
+          def label(name):
+              n = name.lower()
+              for keys, text in ((("windows", "win64", ".exe", ".msi"), "🪟 Windows"),
+                                 (("mac", "macos", "darwin", ".dmg"), "🍎 Mac"),
+                                 (("iphone", "ios", ".ipa"), "📱 iPhone"),
+                                 (("linux", "steamdeck", "steam-deck", ".appimage"), "🐧 Linux / Steam Deck"),
+                                 (("android", ".apk"), "🤖 Android")):
+                  if any(k in n for k in keys):
+                      return text
+              return name
+
+          def size(n):
+              return f"{n / 1048576:.0f} MB" if n and n >= 1048576 else (f"{n / 1024:.0f} KB" if n else "")
+
+          lines = []
+          for a in rel.get("assets") or []:
+              s = size(a.get("size"))
+              lines.append(f"[{label(a['name'])}]({a['browser_download_url']})" + (f" · {s}" if s else ""))
+          downloads = "\n".join(lines) if lines else f"On the [release page]({url})"
+          while len(downloads) > 1024 and lines:
+              lines.pop()
+              downloads = "\n".join(lines) + f"\n…more on the [release page]({url})"
+
+          help_text = (f"Ask K.I.T.T. in <#{ASK_KITT_CHANNEL}>. If it can't help, post in <#{INSTALL_HELP_CHANNEL}>. "
+                       f"Report bugs in <#{BUG_REPORTS_CHANNEL}>.")
+
+          author = rel.get("author") or {}
+          embed = {
+              "author": {"name": ("Pre-release" if rel.get("prerelease") else "New release") + " · " + repo,
+                         "url": f"https://github.com/{repo}", "icon_url": author.get("avatar_url")},
+              "title": title[:256],
+              "url": url,
+              "description": description[:4096],
+              "color": COLOR_PRERELEASE if rel.get("prerelease") else COLOR_RELEASE,
+              "fields": [
+                  {"name": "⬇️ Download", "value": downloads, "inline": False},
+                  {"name": "🔄 Updating from an older version?", "value": UPDATE_STEPS, "inline": False},
+                  {"name": "🆘 Need help?", "inline": False, "value": help_text},
+              ],
+              "footer": {"text": f"{repo} · {tag}"},
+              "timestamp": rel.get("published_at") or rel.get("created_at"),
+          }
+          if not author.get("avatar_url"):
+              embed["author"].pop("icon_url")
+
+          ping = (os.environ.get("PING_ROLE_ID") or "").strip()
+          payload = {
+              "username": BOT_NAME,
+              "embeds": [embed],
+              "allowed_mentions": {"parse": [], "roles": [ping] if ping.isdigit() else []},
+              "components": [{"type": 1, "components": [
+                  {"type": 2, "style": 5, "label": f"Download {tag}", "url": url},
+                  {"type": 2, "style": 5, "label": "How to install", "url": f"https://github.com/{repo}#readme"},
+              ]}],
+          }
+          if author.get("avatar_url"):
+              payload["avatar_url"] = author["avatar_url"]
+          if ping.isdigit():
+              payload["content"] = f"<@&{ping}>"
+
+          # ---- send (buttons need with_components; if Discord refuses them, send without) ----
+          status, res = request("POST", webhook + "?wait=true&with_components=true", payload)
+          if status >= 400:
+              print(f"::warning::Discord refused the buttons (HTTP {status}: {str(res)[:300]}); sending without them.")
+              payload.pop("components")
+              status, res = request("POST", webhook + "?wait=true", payload)
+          if status >= 400:
+              fail(f"Discord refused the post: HTTP {status}: {str(res)[:500]}")
+          print(f"Posted {tag} to Discord.")
+          with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8") as f:
+              f.write(f"Posted **{title}** to Discord #releases.\n")
+          PY

@@ -165,3 +165,24 @@ pokopia-recomp, nxrecomp, yuzu, Eden, Eden-NS2 (the `Eden-NS2-main*` and `fixed-
 | L5 | the beta zip, `docs/LINUX.md` and `report.sh` are made and tested in WSL as a tester runs them: unzip, venv, `doctor`, `setup --no-ios`, `build --linux` from the dump (33 min at one worker with the lift's objects cached), the launcher in a WSLg window (the loading screen and title at 7–12 presents/s at 960×540, shaders translated on demand), `import-save`, `report.sh` (no names, saves, game files or shaders). Found and fixed on the way: nxrt's run path, the translator DLL's build path, setup's translator folder, lavapipe's crash on reads past a buffer (robust access on CPU drivers). Not reached on lavapipe: the field and the naming box (the box's code is tested with a stand-in zenity) |
 | L6 | waiting for Steam Deck testers |
 | L7 | not started |
+
+### The AppImage (2026-11-05, beta 1.2.3)
+
+Two beta testers asked for an AppImage, so the builder now also comes as one file: `Pokopia-Native-Builder-<version>-x86_64.AppImage`
+(the installer's `linux/appimage/`: `make_appimage.sh`, `AppRun`, the desktop entry, `make_icon.py`, `scan_payload.py` with `allow.tsv`). It holds
+python-build-standalone's CPython 3.12.16 with Tk 9.0, lz4, fonttools, pillow and zstandard; the .NET 10.0.14 runtime; the "for Linux" download;
+and nxnative set up by the download's own setup, without its git history (`nxnative/.bundled`; setup then has nothing to do). Packed with
+appimagetool and the static type-2 runtime (no libfuse2). The first start copies it to `~/.local/share/pokopia-native/builder/<version>`, because
+games built with it run its Python and .NET from there: play.json names both, and play.sh exports `DOTNET_ROOT` and takes the launcher's
+`POKOPIA_PY`. The builder window (`nxs2_gui.py`) now works on Linux: the Linux game as the output, Play through the build's launcher, Import save.
+
+Tested in WSL (Ubuntu 22.04, WSLg, lavapipe): the AppImage starts through FUSE and with `--appimage-extract-and-run`; `doctor` all ok through its
+own Python and .NET; `setup` has nothing to do; a newer build of the same version replaces the unpacked copy; `report <build folder>` writes the
+archive. The window, driven by a script as a player would use it: dump and build folder filled in, Build (7:58, mostly cached), Play (the game
+ran 75 s in a WSLg window, play.json pointing at the AppImage's Python and .NET). Privacy: the contents are scanned before packing (no private
+data, no game files, no video or debug symbols); the zip passes `--strict`.
+
+**Untested, needs a real Steam Deck (or another Linux desktop):** double-clicking it in Dolphin (Desktop Mode) and FUSE on SteamOS; the window
+under a real X11 or XWayland desktop (WSLg gives no pixels back, so the window's own picture switch `NXS2_GUI_SHOT` was checked only for its error);
+the copy's 1 GB on the Deck's disk; the zenity unpacking progress and the name box (WSL has no zenity); Game Mode with the launcher added to Steam;
+RADV. **Known:** the bundled Tk draws with the X server's core fonts only (the bitmap "fixed" face, no bold): the window works but looks plain.

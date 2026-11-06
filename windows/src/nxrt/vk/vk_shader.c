@@ -107,6 +107,109 @@ size_t vkspv_trim_cull(uint32_t **pw, size_t n, uint32_t limit) {
     return ok ? out : (si && len[0] + len[1] > limit ? 0 : n);
 }
 
+typedef struct { uint32_t *w; size_t n, cap; } wbuf;
+static void wput(wbuf *b, const uint32_t *x, size_t k) { if (b->n + k > b->cap) { b->cap = (b->n + k) * 2; b->w = realloc(b->w, b->cap * 4); } memcpy(b->w + b->n, x, k * 4); b->n += k; }
+
+// NVN's compiler aggregates an atomic add over a warp: ballot(true), the ballot's highest lane leads and adds its bit count for all of them. After some lanes have
+// returned, that ballot never completes on NVIDIA's RTX 50 cards (#12, #21, #22: shader d2c50cca6e386abc, driver 617). Where the add's result is never read, a
+// ballot of only the lane's own bit gives the same sum: every lane leads itself and adds 1. Only that shape is rewritten: ballot(true) whose value reaches a
+// FindUMsb / FindSMsb and a bit count, the bit count an OpAtomicIAdd whose result goes nowhere (or only into a variable nothing reads). The new word count
+// (*pw replaced) and *rewritten ballots; n when nothing changed
+size_t vkspv_ballot_per_lane(uint32_t **pw, size_t n, int *rewritten) {
+    enum { B_NAME = 5, B_EXT_INST = 12, B_TYPE_INT = 21, B_TYPE_VECTOR = 23, B_TYPE_POINTER = 32, B_CONSTANT_TRUE = 41, B_CONSTANT = 43, B_FUNCTION = 54,
+           B_VARIABLE = 59, B_LOAD = 61, B_STORE = 62, B_ACCESS_CHAIN = 65, B_IN_BOUNDS_ACCESS_CHAIN = 66, B_DECORATE = 71, B_COMPOSITE_CONSTRUCT = 80,
+           B_COMPOSITE_EXTRACT = 81, B_COPY_OBJECT = 83, B_BITCAST = 124, B_SHL = 196, B_AND = 199, B_BIT_COUNT = 205, B_ATOMIC_IADD = 234, B_BALLOT = 339,
+           B_DEC_BUILTIN = 11, B_BI_SUBGROUP_LANE = 41, B_FIND_SMSB = 74, B_FIND_UMSB = 75, MAXB = 32 };
+    uint32_t *w = *pw;
+    *rewritten = 0;
+    if (!spv_ok(w, n)) return n;
+    uint32_t bound = w[3], tu = 0, c0 = 0, c1 = 0, lane_var = 0, lane_ptr = 0, nb = 0, bres[MAXB], bat[MAXB];
+    size_t first_fn = 0;
+    uint32_t *def = calloc(bound, sizeof *def); uint8_t *is_true = calloc(bound, 1);
+    for (size_t i = 5; i < n; ) {
+        uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
+        if (!wc || i + wc > n) { free(def); free(is_true); return n; }
+        if ((op == B_TYPE_INT || op == B_TYPE_VECTOR || op == B_TYPE_POINTER) && wc >= 2 && w[i + 1] < bound) def[w[i + 1]] = (uint32_t)i;
+        if (op == B_VARIABLE && wc >= 4 && w[i + 2] < bound) def[w[i + 2]] = (uint32_t)i;
+        if (op == B_TYPE_INT && wc == 4 && w[i + 2] == 32 && !w[i + 3] && !tu) tu = w[i + 1];
+        if (op == B_CONSTANT_TRUE && wc == 3 && w[i + 2] < bound) is_true[w[i + 2]] = 1;
+        if (op == B_CONSTANT && wc == 4 && tu && w[i + 1] == tu) { if (w[i + 3] == 0 && !c0) c0 = w[i + 2]; if (w[i + 3] == 1 && !c1) c1 = w[i + 2]; }
+        if (op == B_DECORATE && wc == 4 && w[i + 2] == B_DEC_BUILTIN && w[i + 3] == B_BI_SUBGROUP_LANE) lane_var = w[i + 1];
+        if (op == B_FUNCTION && !first_fn) first_fn = i;
+        if (op == B_BALLOT && wc == 5 && w[i + 4] < bound && is_true[w[i + 4]] && nb < MAXB) { bres[nb] = w[i + 2]; bat[nb++] = (uint32_t)i; }
+        i += wc;
+    }
+    // the lane's index must be an Input uint (as NVN's leader test reads it), the ballot a vector of 4 of them
+    if (lane_var && lane_var < bound && def[lane_var]) { uint32_t pt = w[def[lane_var] + 1];
+        if (pt < bound && def[pt] && (w[def[pt]] & 0xffff) == B_TYPE_POINTER && w[def[pt] + 3] == tu) lane_ptr = pt; }
+    if (!nb || !tu || !lane_ptr || !first_fn) { free(def); free(is_true); return n; }
+    // what each ballot's value reaches (bit k for ballot k): D its bits, C a bit count of them, through variables, access chains and bit casts
+    uint32_t *D = calloc(bound, 4), *C = calloc(bound, 4), msb = 0, atom = 0, atom_used = 0;
+    for (uint32_t k = 0; k < nb; k++) D[bres[k]] |= 1u << k;
+    for (int pass = 0, changed = 1; changed && pass < 32; pass++) {
+        changed = 0; atom = 0;
+        #define FLOW(dst, d, c) do { uint32_t d_ = (d), c_ = (c); if ((D[dst] | d_) != D[dst] || (C[dst] | c_) != C[dst]) { D[dst] |= d_; C[dst] |= c_; changed = 1; } } while (0)
+        for (size_t i = 5; i < n; i += w[i] >> 16) {
+            uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
+            if (op == B_STORE && wc >= 3 && w[i + 1] < bound && w[i + 2] < bound) FLOW(w[i + 1], D[w[i + 2]], C[w[i + 2]]);
+            else if ((op == B_LOAD || op == B_ACCESS_CHAIN || op == B_IN_BOUNDS_ACCESS_CHAIN || op == B_COMPOSITE_EXTRACT || op == B_COPY_OBJECT || op == B_BITCAST)
+                     && wc >= 4 && w[i + 2] < bound && w[i + 3] < bound) FLOW(w[i + 2], D[w[i + 3]], C[w[i + 3]]);
+            else if (op == B_AND && wc == 5 && w[i + 2] < bound && w[i + 3] < bound && w[i + 4] < bound) FLOW(w[i + 2], D[w[i + 3]] | D[w[i + 4]], C[w[i + 3]] | C[w[i + 4]]);
+            else if (op == B_BIT_COUNT && wc == 4 && w[i + 2] < bound && w[i + 3] < bound) FLOW(w[i + 2], 0, D[w[i + 3]] | C[w[i + 3]]);
+            else if (op == B_EXT_INST && wc == 6 && (w[i + 4] == B_FIND_UMSB || w[i + 4] == B_FIND_SMSB) && w[i + 5] < bound) msb |= D[w[i + 5]];
+            else if (op == B_ATOMIC_IADD && wc == 7 && w[i + 6] < bound && C[w[i + 6]]) {
+                atom |= C[w[i + 6]];
+                // its result read anywhere (beyond a store into a variable nothing else names) keeps those ballots as they are
+                uint32_t r = w[i + 2], stored = 0;
+                for (size_t j = 5; j < n && !(atom_used & C[w[i + 6]]) ; j += w[j] >> 16) {
+                    if (j == i) continue;
+                    uint32_t jc = w[j] >> 16, jo = w[j] & 0xffff;
+                    for (uint32_t a = 1; a < jc; a++) if (w[j + a] == r) {
+                        if (jo == B_STORE && a == 2 && !stored) stored = w[j + 1]; else atom_used |= C[w[i + 6]];
+                        break;
+                    }
+                }
+                if (stored) for (size_t j = 5; j < n && !(atom_used & C[w[i + 6]]); j += w[j] >> 16) {
+                    uint32_t jc = w[j] >> 16, jo = w[j] & 0xffff;
+                    if (jo == B_NAME || (jo == B_VARIABLE && w[j + 2] == stored) || (jo == B_STORE && w[j + 1] == stored)) continue;
+                    for (uint32_t a = 1; a < jc; a++) if (w[j + a] == stored) { atom_used |= C[w[i + 6]]; break; }
+                }
+            }
+        }
+        #undef FLOW
+    }
+    uint32_t ok = msb & atom & ~atom_used, vt = 0;
+    for (uint32_t k = 0; k < nb; k++) if (ok >> k & 1) {   // the ballot's type: a vector of 4 uints
+        vt = w[bat[k] + 1];
+        if (!(vt < bound && def[vt] && (w[def[vt]] & 0xffff) == B_TYPE_VECTOR && w[def[vt] + 2] == tu && w[def[vt] + 3] == 4)) ok &= ~(1u << k);
+    }
+    free(D); free(C); free(is_true);
+    if (!ok) { free(def); return n; }
+    // the rewrite: the constants 0 and 1 when missing (before the first function), each ballot → this lane's bit in .x
+    wbuf o = {0};
+    wput(&o, w, 5);
+    for (size_t i = 5; i < n; ) {
+        uint32_t wc = w[i] >> 16;
+        if (i == first_fn) {
+            if (!c0) { c0 = bound++; uint32_t c[4] = {4u << 16 | B_CONSTANT, tu, c0, 0}; wput(&o, c, 4); }
+            if (!c1) { c1 = bound++; uint32_t c[4] = {4u << 16 | B_CONSTANT, tu, c1, 1}; wput(&o, c, 4); }
+        }
+        int k = -1;
+        for (uint32_t b = 0; b < nb; b++) if (bat[b] == i && (ok >> b & 1)) k = (int)b;
+        if (k < 0) { wput(&o, w + i, wc); i += wc; continue; }
+        uint32_t lid = bound++, bit = bound++;
+        uint32_t ld[4] = {4u << 16 | B_LOAD, tu, lid, lane_var}, sh[5] = {5u << 16 | B_SHL, tu, bit, c1, lid},
+                 cc[7] = {7u << 16 | B_COMPOSITE_CONSTRUCT, w[i + 1], w[i + 2], bit, c0, c0, c0};
+        wput(&o, ld, 4); wput(&o, sh, 5); wput(&o, cc, 7);
+        (*rewritten)++;
+        i += wc;
+    }
+    o.w[3] = bound;
+    free(def); free(w);
+    *pw = o.w;
+    return o.n;
+}
+
 int vkspv_image_of(const uint32_t *w, size_t n, uint32_t binding, vkspv_img *o) {
     memset(o, 0, sizeof *o); o->binding = binding;
     if (!spv_ok(w, n)) return -1;
@@ -162,8 +265,6 @@ static VkImageViewType view_type(uint8_t dim, uint8_t arrayed) {
 
 // ---------- Vertex input retyping (vksh_vin_variant) ----------
 enum { OP_TYPE_VECTOR = 23, OP_ACCESS_CHAIN = 65, OP_IN_BOUNDS_ACCESS_CHAIN = 66, OP_LOAD = 61, OP_BITCAST = 124, DEC_LOCATION = 30, SC_INPUT = 1 };
-typedef struct { uint32_t *w; size_t n, cap; } wbuf;
-static void wput(wbuf *b, const uint32_t *x, size_t k) { if (b->n + k > b->cap) { b->cap = (b->n + k) * 2; b->w = realloc(b->w, b->cap * 4); } memcpy(b->w + b->n, x, k * 4); b->n += k; }
 uint32_t *vkspv_retype_inputs(const uint32_t *w, size_t n, uint32_t mask, const uint8_t ct[32], size_t *out_n) {
     if (!spv_ok(w, n) || !mask) return NULL;
     uint32_t bound = w[3];
@@ -490,6 +591,12 @@ vks_shader *vksh_make(const char *key, const uint8_t *spv, size_t spv_size, cons
     if (s->stage != VKS_FS && s->stage != VKS_CS && g_vk.props.limits.maxCombinedClipAndCullDistances) {
         size_t tn = vkspv_trim_cull(&w, nw, g_vk.props.limits.maxCombinedClipAndCullDistances);
         if (tn) nw = tn; else { static int n; if (n++ < 4) VKRED("shader %s: more clip and cull distances than the device takes, and the cull ones are used", key); }
+    }
+    static int ballot_fix = -1;   // NXRT_VK_BALLOT_FIX=0 leaves the ballots as translated (to compare)
+    if (ballot_fix < 0) { const char *e = getenv("NXRT_VK_BALLOT_FIX"); ballot_fix = !(e && *e == '0'); }
+    if (ballot_fix) {
+        int nb = 0; size_t bn = vkspv_ballot_per_lane(&w, nw, &nb);
+        if (nb) { nw = bn; VKLOG("shader %s: %d subgroup ballot%s for a counter made per lane (RTX 50 hang, #12)", key, nb, nb > 1 ? "s" : ""); }
     }
     // bindings
     const vj *bs = vj_get(j, "bindings");

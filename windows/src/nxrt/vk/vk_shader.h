@@ -76,6 +76,9 @@ int vkspv_image_of(const uint32_t *words, size_t nwords, uint32_t binding, vkspv
 // gl_PerVertex's CullDistance member removed when the clip and cull arrays exceed limit and nothing reads or writes it: the new word count (*words replaced),
 // nwords when nothing needed changing, 0 when it could not be done
 size_t vkspv_trim_cull(uint32_t **words, size_t nwords, uint32_t limit);
+// A warp-aggregated atomic counter's ballot(true) made the lane's own bit when the add's result is unused (#12: RTX 50 cards hang on that ballot after early
+// returns): the new word count (*words replaced) and *rewritten ballots, nwords when nothing changed
+size_t vkspv_ballot_per_lane(uint32_t **words, size_t nwords, int *rewritten);
 
 #ifdef __cplusplus
 }

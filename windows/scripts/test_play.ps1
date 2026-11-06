@@ -64,7 +64,14 @@ Check-Display "a saved choice" "-Ask" "DM_OPMODE=0 NXRT_VK_WINDOW= NXRT_VK_FULLS
 Check-Display "-Window from outside wins" "-Ask -Window 1920x1080" "NXRT_VK_WINDOW=1920x1080 NXRT_VK_FULLSCREEN= "
 Check-Display "nothing without -Ask or -Config" "" "DM_OPMODE= NXRT_VK_WINDOW= NXRT_VK_FULLSCREEN= NXRT_VK_UPSCALE= NXRT_VK_SHARPNESS= DM_FPS= NXRT_VK_PRESENT="
 Remove-Item env:POKOPIA_SETTINGS_DIR
+# A dump folder whose name has [ ] in it (wildcards to PowerShell, D-4): its ExeFS is still found
+$bt = Join-Path $t "dump[Base_Game_and_Update]"; [System.IO.Directory]::CreateDirectory("$bt\ExeFS") | Out-Null
+foreach ($f in "main", "sdk") { [System.IO.File]::WriteAllText("$bt\ExeFS\$f", "stand-in") }
+$ErrorActionPreference = "Continue"   # a failure is an error on stderr: report it, do not stop here
+$out = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$play' -ExeFS '$bt\ExeFS' -Dll '$t\game.dll' -RomFS '$t\RomFS.img' -Save '$t\save' -DryRun" 2>&1
+$ErrorActionPreference = "Stop"
+if (-not ($out | Where-Object { $_ -like "exe: *" })) { Write-Host "FAIL: a folder with [ ]`n$($out -join "`n")"; $fail++ } else { Write-Host "ok: a folder with [ ] in its name" }
 Remove-Item env:NXRT_TEST_PLAY
-Remove-Item -Recurse -Force $t
+Remove-Item -LiteralPath $t -Recurse -Force
 if ($fail) { Write-Host "scripts.play_defaults: $fail failed"; exit 1 }
 Write-Host "scripts.play_defaults: ok"

@@ -68,8 +68,8 @@ Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in
 - **Your own keys:** the window before the game starts has a **Controls** tab: click an action, then press the key you
   want for it (a key another action had swaps over); **Reset to defaults** brings the layout above back. Keys count by
   their place on the keyboard, so the map works the same under any keyboard language. It is saved for this PC in
-  `%APPDATA%\Pokopia Native\controls.json`, and the game's log lists the keys it uses. (Hold **Shift** while starting the
-  game if you ticked "Don't ask again".) Esc, F11, Alt and the Windows keys can't be used. The Mac and the iPhone keep
+  `%APPDATA%\Pokopia Native\controls.json`, and the game's log lists the keys it uses. (If you ticked "Don't ask again",
+  double-click **Pokopia Settings <version>.cmd** beside the Play launcher.) Esc, F11, Alt and the Windows keys can't be used. The Mac and the iPhone keep
   their own layout.
 - **Controllers:** Xbox, PlayStation and Switch Pro controllers work as Switch controllers (face buttons by position),
   with rumble and motion. Close Steam or turn off Steam Input for the controller if it does not show up.
@@ -78,7 +78,7 @@ Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in
   keyboard is best for this one).
 - **The picture:** the same window's **Display** tab sets the console mode (docked draws at 1920x1080, handheld at
   1280x720 and is lighter), window or full screen and the window size, **Upscaling** (Sharp, the default, or Standard)
-  with its **Sharpness**, 60 or 30 fps, and vsync. Upscaling matters when the window is larger than the game's picture,
+  with its **Sharpness**, 60 or 30 fps (30 has no effect yet: the game runs at 60), and vsync. Upscaling matters when the window is larger than the game's picture,
   as in full screen on a 1440p or 4K screen: Sharp keeps it crisp where Standard is softer. Saved for this PC in
   `%APPDATA%\Pokopia Native\display.json`. The game itself does not draw above 1080p yet.
 - Switches for the launcher go after its name in a terminal: `-Fullscreen`, `-Window 1600x900`, `-Silent`, `-PadCheck`
@@ -129,8 +129,9 @@ Under them, **Interact everywhere (experimental)** lets Link Play players use mo
 Palette Town (the README's [Playing together](../README.md#playing-together-link-play) explains it). Every player needs it on,
 the iPhone and Mac in their launcher.
 
-It remembers your choice. **Don't ask again** starts the same way every time; hold **Shift** while starting the game to
-see the window again. The settings live in `%APPDATA%\Pokopia Native\linkplay.json`.
+It remembers your choice. **Don't ask again** starts the same way every time; **`Pokopia Settings <version>.cmd`**, beside
+the Play launcher in `<build folder>\out`, shows the window again (so does holding **Shift** while starting the game). The
+settings live in `%APPDATA%\Pokopia Native\linkplay.json`.
 
 From a terminal, switches after the launcher's name skip the window: `-LinkPlay`; `-Join <address>[:<port>]` visits one
 host by address; `-Internet` with `-Room <code>` (a host without one gets a new code); `-Relay <address>[:<port>]` goes
@@ -153,8 +154,8 @@ through a relay you trust; `-Interact` turns on Interact everywhere.
 - `nxs2.py status "<build folder>"` lists what the build folder has.
 - A black or flickering window right after the start, with the music playing: the first-start shaders above; give it a
   minute.
-- Open an issue with the stage or the log's last lines, your GPU and Windows version. Never attach the build folder,
-  `game.dll`, shader files or saves.
+- Ask in the [Discord](https://discord.gg/Aj9GqxZj8V), or open an issue with the stage or the log's last lines, your GPU
+  and Windows version. Never attach the build folder, `game.dll`, shader files or saves.
 
 ## The iPhone app
 
