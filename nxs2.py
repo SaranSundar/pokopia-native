@@ -28,7 +28,7 @@ Windows game the tools of the "for Windows PCs" download (windows/bin). `nxs2.py
 """
 import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shutil, struct, subprocess, sys, time
 
-TOOL_VERSION = '1.3.0'   # this tool's release (co-op needs the same one on every device); the game's own version is separate
+TOOL_VERSION = '1.3.1'   # this tool's release (co-op compares the game build and mods, not this); the game's own version is separate
 TITLE = '0400A3A01EE4C000'
 NAME = 'Pokemon Pokopia'
 UPSTREAM = 'https://github.com/seedds/nxnative'
@@ -102,6 +102,14 @@ def which(name, *extra):
         x = pathlib.Path(os.path.expanduser(x))
         if x.is_file() and os.access(x, os.X_OK): return str(x)
     return None
+
+
+def dotnet_on_path():
+    """Windows: .NET installed while the builder window was open isn't on that window's PATH (Windows gives the new PATH only to programs
+    started afterwards), so "Check again" never found it. Its installer's folder goes on PATH for this run and everything it starts"""
+    if not WIN or shutil.which('dotnet'): return
+    d = pathlib.Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'dotnet'
+    if (d / 'dotnet.exe').is_file(): os.environ['PATH'] = f'{d}{os.pathsep}{os.environ.get("PATH", "")}'
 
 
 def dotnet_root():
@@ -1429,6 +1437,7 @@ def icon(args):
 
 def main():
     global VERBOSE
+    dotnet_on_path()
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     ap.add_argument('-v', '--verbose', action='store_true', help='show every line the tools print (default: a heartbeat and the important lines; everything goes to <build>/logs)')
     sub = ap.add_subparsers(dest='cmd', required=True)

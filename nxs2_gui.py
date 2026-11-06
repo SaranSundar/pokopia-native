@@ -455,6 +455,7 @@ class App(tk.Tk):
     def do_play(self):   # the launcher in its own console window: this window stays free
         cmd = self.win_launcher()
         if not cmd: return messagebox.showwarning('Play', 'No Windows game yet: tick "Windows: play on this PC" and press Build first.')
+        import nxs2; nxs2.dotnet_on_path()   # .NET installed since this window opened: the game translates run-time shaders with it
         subprocess.Popen(['cmd', '/c', str(cmd)], creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=str(cmd.parent))
         self.status.set(f'Started {cmd.name}. Its console window shows the controls and where the log is.')
 
