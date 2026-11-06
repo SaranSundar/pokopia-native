@@ -320,8 +320,8 @@ def main():
         contents += [f'== {asset} ({len(entries)} files, {sum(len(d) for _, d, _ in entries)} bytes unpacked, {len(buf.getvalue())} bytes)'] + \
                     [f'{len(d):>11}  {top}{n}' for n, d, _ in entries] + ['']
         print(f'{out / asset}: {len(entries)} files, {len(buf.getvalue()) / 1048576:.1f} MB')
-    (out / 'SHA256SUMS.txt').write_text('\n'.join(sums) + '\n', encoding='utf-8', newline='\n')   # LF: sha256sum -c and shasum -c read it as is
-    (out / 'CONTENTS.txt').write_text('\n'.join(contents), encoding='utf-8', newline='\n')
+    (out / 'SHA256SUMS.txt').write_text('\n'.join(sums) + '\n', encoding='utf-8')
+    (out / 'CONTENTS.txt').write_text('\n'.join(contents), encoding='utf-8')
     print(f'{out / "SHA256SUMS.txt"}\n' + '\n'.join(sums) + (f'\nnote: packaged from a tree with uncommitted changes (source {head[:12]})' if dirty else ''))
     if found:   # written beside the zips (dist/ is never published); --strict makes it a failure
         (out / 'PUBLISHING-CHECK.txt').write_text('Packaged files that name a user folder or match --rules:\n' + '\n'.join(sorted(found)) + '\n', encoding='utf-8')
