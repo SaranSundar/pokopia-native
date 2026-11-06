@@ -32,6 +32,7 @@ typedef struct vks_shader {
     int nin; struct { uint8_t loc, ct, ncomp; } in[32];   // vertex inputs: location = NVN vertex attribute
     uint32_t out_mask; uint8_t out_ct[8];                   // fragment outputs written
     uint32_t local[3];                                      // compute work group size
+    uint8_t subgroups;                                      // the module uses subgroup operations (the reflection's uses_subgroups): made with 32 lanes where needed (vk_pipe.c)
     uint8_t drv_read[3];                                    // driver segments c0 / c2 read at run time
     int s2cs; uint32_t s2_ssbo_base, s2_tex_base, s2_ntex;  // Switch 2 packed compute bank (s2_compute_layout)
     int c1_missing;                                         // a c1 binding but no c1 bytes in the reflection (read as zeros)
@@ -85,6 +86,9 @@ size_t vkspv_ballot_per_lane(uint32_t **words, size_t nwords, int *rewritten);
 // Whether that rewrite applies: NVIDIA's GPUs (vendor 0x10de) only, whose hang it is (the lane's own bit assumes 32-lane subgroups, and lavapipe crashes in
 // the rewritten counters); env, NXRT_VK_BALLOT_FIX, decides when given: 0 off, anything else on
 int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env);
+// A loop over a texel table's items whose count is count_var's first word (634565ab77c61463, D-1): its integer comparisons get min(count, the items tex_var holds,
+// stride texels each). The new word count (*words replaced) and *limited comparisons, nwords when nothing changed
+size_t vkspv_limit_count(uint32_t **words, size_t nwords, const char *count_var, const char *tex_var, uint32_t stride, int *limited);
 
 #ifdef __cplusplus
 }

@@ -32,6 +32,7 @@ typedef struct {
     int checkpoints;   // VK_NV_device_diagnostic_checkpoints: 1 = before each dispatch, 2 = draws too (NXRT_VK_CHECKPOINTS=all), 0 = off (=0, or not NVIDIA)
     int corpus_ok;   // everything the translated corpus declares (docs/m5-record-shaders.md section 7): draw parameters, subgroup ballot / vote / shuffle, formatless storage images, gather, geometry
     uint32_t subgroup_stages, subgroup_ops, subgroup_size;
+    uint32_t sg32_stages, sg32_max_wg; int sg32_full;   // stages whose subgroup-using shaders are made with 32-lane subgroups (vk_dev.c), the most subgroups a work group may have, full ones
 } vk_caps;
 
 typedef struct {
@@ -71,7 +72,7 @@ int vk_mem_type(uint32_t bits, VkMemoryPropertyFlags want, VkMemoryPropertyFlags
 void vk_name(uint64_t handle, VkObjectType type, const char *name);   // debug-utils object name (validation builds)
 // A lost device (#12, #17): the first VK_ERROR_DEVICE_LOST logs what the GPU was doing (the checkpoints each stage reached) and the driver's fault report
 void vk_lost(const char *where, VkResult r);
-void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect);   // kind 'c' dispatch, 'd' draw
+void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect, const uint32_t *cw);   // kind 'c' dispatch, 'd' draw; cw: 8 constant words or NULL
 
 // One-shot command buffers on the universal queue (uploads at bring-up, readbacks, tests): begin, record, then submit and wait
 VkCommandBuffer vk_once_begin(void);

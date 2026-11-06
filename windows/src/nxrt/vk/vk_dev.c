@@ -243,10 +243,28 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
         VKLOG("memory heap %u: %.0f MB%s", i, g_vk.memp.memoryHeaps[i].size / 1048576.0, g_vk.memp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT ? " device local" : "");
     // What the translated corpus declares (docs/m5-record-shaders.md section 7, track A's 3,967 modules): DrawParameters, GroupNonUniformBallot / Vote / Shuffle,
     // StorageImageRead/WriteWithoutFormat, ImageGatherExtended, Geometry, texel buffers (core), descriptor indexing (required above)
-    VkPhysicalDeviceSubgroupProperties sg = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    VkPhysicalDeviceVulkan13Properties p13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};
+    VkPhysicalDeviceSubgroupProperties sg = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &p13};
     VkPhysicalDeviceProperties2 pp2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &sg};
     vkGetPhysicalDeviceProperties2(g_vk.pd, &pp2);
     h->subgroup_stages = sg.supportedStages; h->subgroup_ops = sg.supportedOperations; h->subgroup_size = sg.subgroupSize;
+    // NVN's shaders are written for 32-lane warps (ballots read .x, shuffles clamp to lane 31, votes span 32): where the device's subgroups are another size
+    // (AMD's 64, Intel's 8 to 32), the shaders that use subgroup operations are made with 32-lane ones wherever the driver lets a pipeline require it
+    // (subgroup size control, Vulkan 1.3, enabled above with the other features). Opt-in until an AMD or Intel GPU has run it: NXRT_VK_SUBGROUP32=1 asks
+    // for 32 (also where it is the size), unset or 0 leaves the driver's size
+    const char *s32 = getenv("NXRT_VK_SUBGROUP32");
+    int want = s32 && *s32 == '1';
+    if (want && g_vk.f13.subgroupSizeControl && p13.minSubgroupSize <= 32 && p13.maxSubgroupSize >= 32) {
+        h->sg32_stages = p13.requiredSubgroupSizeStages & (VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT);
+        h->sg32_max_wg = p13.maxComputeWorkgroupSubgroups; h->sg32_full = g_vk.f13.computeFullSubgroups != 0;
+    }
+    if (want || sg.subgroupSize != 32) {
+        if (h->sg32_stages) VKLOG("subgroups: shaders that use them are made with 32 lanes, as NVN's are (this GPU's own size %u; stages %#x%s)", sg.subgroupSize, h->sg32_stages,
+                                  h->sg32_stages & VK_SHADER_STAGE_FRAGMENT_BIT ? "" : ": fragment shaders keep the GPU's size");
+        else if (!want) VKLOG("subgroups of %u lanes, left as the driver makes them (NXRT_VK_SUBGROUP32=1 makes shaders use 32, as NVN's do)", sg.subgroupSize);
+        else VKRED("subgroups of %u lanes, and the driver cannot be asked for 32 (sizes %u to %u, control %d): shaders written for 32 may compute wrong results",
+                   sg.subgroupSize, p13.minSubgroupSize, p13.maxSubgroupSize, g_vk.f13.subgroupSizeControl);
+    }
     VkSubgroupFeatureFlags ops = VK_SUBGROUP_FEATURE_BALLOT_BIT | VK_SUBGROUP_FEATURE_VOTE_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT;
     VkShaderStageFlags st = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     h->corpus_ok = g_vk.f11.shaderDrawParameters && en.shaderStorageImageReadWithoutFormat && en.shaderStorageImageWriteWithoutFormat && en.shaderImageGatherExtended &&
@@ -407,14 +425,15 @@ int vk_tl_wait(uint64_t value, uint64_t timeout_ns) {
 
 // ---------- A lost device (#12, #17): a checkpoint before each dispatch (and draw) names what the GPU had started and finished when it stopped ----------
 enum { CK_N = 4096 };
-static struct { uint64_t seq; char kind, indirect, key[17]; uint32_t x, y, z; } g_ck[CK_N];
+static struct { uint64_t seq; char kind, indirect, key[17], has_cw; uint32_t x, y, z, cw[8]; } g_ck[CK_N];
 static _Atomic uint64_t g_ck_seq;
 
-void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect) {
+void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect, const uint32_t *cw) {
     if (!vkCmdSetCheckpointNV || g_vk.has.checkpoints < (kind == 'd' ? 2 : 1)) return;
     uint64_t s = atomic_fetch_add(&g_ck_seq, 1) + 1;
     g_ck[s % CK_N].seq = s; g_ck[s % CK_N].kind = kind; g_ck[s % CK_N].indirect = (char)indirect;
     g_ck[s % CK_N].x = x; g_ck[s % CK_N].y = y; g_ck[s % CK_N].z = z;
+    g_ck[s % CK_N].has_cw = cw != NULL; if (cw) memcpy(g_ck[s % CK_N].cw, cw, sizeof g_ck[0].cw);
     snprintf(g_ck[s % CK_N].key, sizeof g_ck[0].key, "%s", key ? key : "?");
     vkCmdSetCheckpointNV(cb, (const void *)(uintptr_t)s);
 }
@@ -422,15 +441,20 @@ void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, u
 static const char *ck_text(uint64_t s, char *out, size_t n) {
     if (!s || g_ck[s % CK_N].seq != s) { snprintf(out, n, "checkpoint #%llu (no longer kept)", (unsigned long long)s); return out; }
     if (g_ck[s % CK_N].kind == 'd') snprintf(out, n, "#%llu a draw with shader %s", (unsigned long long)s, g_ck[s % CK_N].key);
-    else snprintf(out, n, "#%llu a dispatch of shader %s, %ux%ux%u groups%s", (unsigned long long)s, g_ck[s % CK_N].key, g_ck[s % CK_N].x, g_ck[s % CK_N].y,
-                  g_ck[s % CK_N].z, g_ck[s % CK_N].indirect ? " (indirect: what guest memory held when it was recorded; the GPU reads its own copy)" : "");
+    else {
+        int k = snprintf(out, n, "#%llu a dispatch of shader %s, %ux%ux%u groups%s", (unsigned long long)s, g_ck[s % CK_N].key, g_ck[s % CK_N].x, g_ck[s % CK_N].y,
+                         g_ck[s % CK_N].z, g_ck[s % CK_N].indirect ? " (indirect: what guest memory held when it was recorded; the GPU reads its own copy)" : "");
+        const uint32_t *c = g_ck[s % CK_N].cw;   // its first constant buffer's first words as guest memory held them when it was recorded (D-1: a loop's count)
+        if (g_ck[s % CK_N].has_cw && k > 0 && (size_t)k < n)
+            snprintf(out + k, n - k, "; its first constants then: %08x %08x %08x %08x %08x %08x %08x %08x (the first as an integer: %d)", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], (int32_t)c[0]);
+    }
     return out;
 }
 
 void vk_lost(const char *where, VkResult r) {
     if (r != VK_ERROR_DEVICE_LOST || !g_vk.dev || atomic_exchange(&g_vk.lost, 1)) return;
     VKRED("the GPU stopped responding (device lost, first seen at %s); what it was doing:", where);
-    char t[256];
+    char t[512];
     if (g_vk.has.checkpoints && vkGetQueueCheckpointData2NV) {
         VkCheckpointData2NV cd[32]; uint32_t n = 32; uint64_t lo = 0, hi = 0;
         for (uint32_t i = 0; i < n; i++) cd[i] = (VkCheckpointData2NV){VK_STRUCTURE_TYPE_CHECKPOINT_DATA_2_NV};

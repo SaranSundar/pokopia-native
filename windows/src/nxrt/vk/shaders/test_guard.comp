@@ -1,0 +1,19 @@
+#version 450
+// vkspv_limit_count's test (t_vk_guard.c): shader 634565ab77c61463's shape. A count in a constant buffer's first word bounds a loop over a texel table, 5 texels
+// an item, laid out as the translator lays out NVN's texel buffers (rows of 16384 texels); each lane writes how many items it walked
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std140) uniform Cb { vec4 m[4]; } cp_c3;
+layout(set = 0, binding = 1) uniform sampler2D cp_t_tcb_10;
+layout(set = 0, binding = 2, std430) buffer Out { uint walked[]; };
+void main() {
+    uint n = 0u; float acc = 0.0;
+    if (0 < floatBitsToInt(cp_c3.m[0].x)) {
+        int i = 0;
+        do {
+            int l = i * 5;
+            acc += texelFetch(cp_t_tcb_10, ivec2(l & 16383, l >> 14), 0).x;
+            n++; i++;
+        } while (!(i >= floatBitsToInt(cp_c3.m[0].x)));
+    }
+    walked[gl_GlobalInvocationID.x] = n + (acc > 1e30 ? 1u : 0u);
+}

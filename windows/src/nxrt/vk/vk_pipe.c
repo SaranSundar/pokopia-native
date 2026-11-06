@@ -219,6 +219,18 @@ static VkPipeline put_first(vk_hmap *m, const void *k, VkPipeline p) {
     ReleaseSRWLockExclusive(&g_pl);
     return p;
 }
+// A shader that uses subgroup operations made with 32-lane subgroups, as NVN's run, where the device asks for it (vk_dev.c, g_vk.has.sg32_stages); a compute
+// work group that is whole 32-lane rows gets full subgroups too
+static void sg32(VkPipelineShaderStageCreateInfo *st, const vks_shader *sh, VkPipelineShaderStageRequiredSubgroupSizeCreateInfo *rq) {
+    if (!sh->subgroups || !(g_vk.has.sg32_stages & st->stage)) return;
+    if (st->stage == VK_SHADER_STAGE_COMPUTE_BIT) {
+        if (sh->local[0] * sh->local[1] * sh->local[2] > g_vk.has.sg32_max_wg * 32) return;
+        if (g_vk.has.sg32_full && sh->local[0] % 32 == 0) st->flags |= VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT;
+    }
+    *rq = (VkPipelineShaderStageRequiredSubgroupSizeCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, NULL, 32};
+    st->pNext = rq;
+}
+
 static __thread struct { vkp_gkey k; VkPipeline p; VkPipelineLayout l; int ok; } t_last;   // M6 phase B: consecutive draws often share their pipeline
 VkPipeline vkp_graphics(const vkp_gkey *k, VkPipelineLayout *layout) {
     if (t_last.ok && !memcmp(&t_last.k, k, sizeof *k)) { *layout = t_last.l; return t_last.p; }
@@ -227,8 +239,11 @@ VkPipeline vkp_graphics(const vkp_gkey *k, VkPipelineLayout *layout) {
     if (hit == PIPE_FAILED) return VK_NULL_HANDLE;
     if (hit) { t_last.k = *k; t_last.p = (VkPipeline)hit; t_last.l = *layout; t_last.ok = 1; return (VkPipeline)hit; }
     uint64_t t0 = now_ns();
-    VkPipelineShaderStageCreateInfo st[5]; uint32_t ns = 0;
-    for (int i = 0; i < 5; i++) if (k->sh[i]) st[ns++] = (VkPipelineShaderStageCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, vksh_vk_stage(k->sh[i]->stage), k->sh[i]->mod, "main", NULL};
+    VkPipelineShaderStageCreateInfo st[5]; VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rq[5]; uint32_t ns = 0;
+    for (int i = 0; i < 5; i++) if (k->sh[i]) {
+        st[ns] = (VkPipelineShaderStageCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, vksh_vk_stage(k->sh[i]->stage), k->sh[i]->mod, "main", NULL};
+        sg32(&st[ns], k->sh[i], &rq[ns]); ns++;
+    }
     VkVertexInputAttributeDescription va[16]; VkVertexInputBindingDescription vb[17]; VkVertexInputBindingDivisorDescriptionKHR vd[17]; uint32_t nvd = 0;
     for (int i = 0; i < k->nattr; i++) va[i] = (VkVertexInputAttributeDescription){k->attr[i].loc, k->attr[i].bind, (VkFormat)k->attr[i].fmt, k->attr[i].off};
     for (int i = 0; i < k->nbind; i++) {
@@ -297,6 +312,7 @@ VkPipeline vkp_compute(const vks_shader *cs, VkPipelineLayout *layout) {
     uint64_t t0 = now_ns();
     VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, NULL, 0,
                                       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_COMPUTE_BIT, cs->mod, "main", NULL}, *layout, VK_NULL_HANDLE, -1};
+    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rq; sg32(&ci.stage, cs, &rq);
     VkPipeline p = VK_NULL_HANDLE;
     VkResult r = *layout ? vkCreateComputePipelines(g_vk.dev, g_vk.pcache, 1, &ci, NULL, &p) : VK_ERROR_INITIALIZATION_FAILED;
     note_time(t0);

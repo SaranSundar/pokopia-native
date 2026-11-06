@@ -1152,7 +1152,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (S->vis_on && P.query < 0) { int q = q_alloc(); if (q >= 0) { vkCmdBeginQuery(cb, R0.qp, (uint32_t)q, 0); P.query = q; g_st.queries++; } }
     // the draw
     uint32_t inst = (uint32_t)((dw ? dw->instances : di->instances) > 0 ? (dw ? dw->instances : di->instances) : 1);
-    vk_checkpoint(cb, 'd', sh[1] ? sh[1]->key : sh[0]->key, inst, 0, 0, ind != 0);
+    vk_checkpoint(cb, 'd', sh[1] ? sh[1]->key : sh[0]->key, inst, 0, 0, ind != 0, NULL);
     if (dw) {
         if (ind && expand == VKP_EXPAND_QUADS) { vkCmdBindIndexBuffer(cb, R0.quads, 0, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexedIndirect(cb, qab, qao, 1, 20); }   // quad_args
         else if (ind) { VkBuffer b; VkDeviceSize o;
@@ -1214,7 +1214,10 @@ static void dispatch(const p_dispatch *dp) {
             else if (bb->kind == VKB_DRV) PD("  b%u drv c%d read %d (s2 %d ssbo %u tex %u n %u)", bb->binding, bb->bank, cs->drv_read[bb->bank], cs->s2cs, cs->s2_ssbo_base, cs->s2_tex_base, cs->s2_ntex);
         }
     }
-    vk_checkpoint(cb, 'c', cs->key, g_dispatch_dim[0], g_dispatch_dim[1], g_dispatch_dim[2], dp->ind != 0);
+    uint32_t ckw[8], *ckp = NULL;   // a lost device's report shows the dispatch's first constants as recorded (D-1: a loop's count)
+    if (g_vk.has.checkpoints) for (int i = 0; i < cs->nb && !ckp; i++) { const p_bind_buf *u = cs->b[i].kind == VKB_CBUF && cs->b[i].reg >= 0 && cs->b[i].reg < 16 ? &S->ubo[5][cs->b[i].reg] : NULL;
+        if (u && u->addr && u->size >= sizeof ckw) { memcpy(ckw, (const void *)(uintptr_t)u->addr, sizeof ckw); ckp = ckw; } }
+    vk_checkpoint(cb, 'c', cs->key, g_dispatch_dim[0], g_dispatch_dim[1], g_dispatch_dim[2], dp->ind != 0, ckp);
     if (dp->ind) { VkBuffer b; VkDeviceSize o; if (!vkm_use(dp->ind, 12, &b, &o)) { RED_ONCE(70, "indirect dispatch arguments are in no memory pool"); return; } vkCmdDispatchIndirect(cb, b, o); }
     else if (dp->x > 0 && dp->y > 0 && dp->z > 0) vkCmdDispatch(cb, (uint32_t)dp->x, (uint32_t)dp->y, (uint32_t)dp->z);
     g_st.dispatches++;

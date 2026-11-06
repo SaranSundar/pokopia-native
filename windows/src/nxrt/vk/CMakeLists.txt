@@ -17,7 +17,7 @@ message(STATUS "nxrt: Vulkan backend with SDL3 ${SDL3_VERSION} (${NXRT_SDL3_DIR}
 
 # The backend's own shaders, compiled to SPIR-V headers
 set(_spv)
-foreach(sh present.vert present.frag menu.vert menu.frag test_fill.comp test_pervertex.vert test_pervertex_cull.vert test_bind.frag clear.vert clear_f.frag clear_u.frag clear_i.frag test_dual.frag test_tri.vert test_ballot.comp test_ballot_used.comp test_ballot_slot.comp test_ballot_slot4.comp test_ballot_rank.comp quad_args.comp)
+foreach(sh present.vert present.frag menu.vert menu.frag test_fill.comp test_pervertex.vert test_pervertex_cull.vert test_bind.frag clear.vert clear_f.frag clear_u.frag clear_i.frag test_dual.frag test_tri.vert test_ballot.comp test_ballot_used.comp test_ballot_slot.comp test_ballot_slot4.comp test_ballot_rank.comp test_guard.comp quad_args.comp)
   string(REPLACE "." "_" var ${sh})
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${var}.h
     COMMAND ${NXRT_GLSLANG} -V --target-env vulkan1.3 --vn ${var}_spv -o ${CMAKE_CURRENT_BINARY_DIR}/${var}.h ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${sh}
@@ -55,7 +55,7 @@ file(COPY "${NXRT_SDL3_DIR}/lib/x64/SDL3.dll" DESTINATION "${CMAKE_RUNTIME_OUTPU
 
 # Tests (docs/m5-vulkan.md §6): skipped (77) without a Vulkan GPU or without the data they need
 set(NXRT_VK_TEST_INC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} "${NXRT_VULKAN_SDK}/Include" "${NXRT_SDL3_DIR}/include" ${CMAKE_CURRENT_SOURCE_DIR}/../gfx ${CMAKE_SOURCE_DIR}/src/s2tex)
-foreach(t device dirty tex astc pcache replay windows ballot quads scale)
+foreach(t device dirty tex astc pcache replay windows ballot guard quads scale)
   nxrt_executable(nxrt-tests-vk-${t} tests/t_vk_${t}.c)
   target_include_directories(nxrt-tests-vk-${t} PRIVATE ${NXRT_VK_TEST_INC})
   target_compile_options(nxrt-tests-vk-${t} PRIVATE -fms-extensions -Wno-sign-compare -Wno-missing-field-initializers -Wno-missing-braces)
@@ -70,6 +70,7 @@ target_sources(nxrt-tests-vk-pcache PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_fil
 target_sources(nxrt-tests-vk-ballot PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_used_comp.h
   ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_slot_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_slot4_comp.h
   ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_rank_comp.h)
+target_sources(nxrt-tests-vk-guard PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_guard_comp.h)
 target_sources(nxrt-tests-vk-quads PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/quad_args_comp.h)
 target_sources(nxrt-tests-vk-scale PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_bind_frag.h)
 target_sources(nxrt-tests-vk-replay PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_cull_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_bind_frag.h

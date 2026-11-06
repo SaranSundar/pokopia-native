@@ -70,3 +70,32 @@ whole is longer than the one above and was left for later.
 ## Not verified
 
 We have no RTX 50 or RTX 3050 here: that the rewrite stops D-1's hang is inferred from #12's bisect and the shared shape, not reproduced.
+
+## After 1.3.0: D-1's next hang, and 64-lane GPUs
+
+**D-1 on 1.3.0** (RTX 3050 Laptop, driver 621.14) hung at 160 s in a 16x16-group dispatch of `634565ab77c61463`. That is not a ballot shape (it uses no
+subgroup operations): each of its 262,144 threads walks a table of items, 5 texels each, keeping the nearest, for `count` iterations, `count` being
+the first word of its constant buffer read as an integer, with nothing else bounding the loop.
+- In play (our pass dumps, field and a conversation) it runs every frame, its table holds 40 texels (8 items), and its constants are 256 bytes at a
+  new aligned address each frame, read from the GPU's copy. A hang needs that word to be wrong when the GPU runs it (1.0f read as an integer is about
+  a billion iterations). Why it was wrong on his PC is not known; his upload staging overflows 7x as often as ours (a slower GPU further behind).
+- **The guard** (`vkspv_limit_count`, applied by key; `NXRT_VK_LOOP_GUARD=0` turns it off): the loop's comparisons use `min(count, the items the
+  table holds)`, from the table's own size (the translator lays NVN's texel buffers out in rows of 16,384 texels: `((rows - 1) * 16384 + width + 4) /
+  5`). Every sane frame walks the same items; a garbage count walks 8 instead of a billion.
+- **The report:** on NVIDIA, a lost device now prints the first eight words of each dispatch's first constant buffer as guest memory held them when it
+  was recorded, beside the checkpoint that names the dispatch.
+
+**64-lane GPUs.** NVN's shaders are written for 32-lane warps: ballots read `.x`, the shuffle helpers clamp to lane 31, votes span 32. AMD's GPUs run
+64-lane subgroups by default (santriman's Radeon 890M on 1.2.6: "size 64"), Intel's 8 to 32. Of the cache's shaders 49 use subgroup operations (15
+compute, 34 fragment); on 64 lanes a warp-32 counter sees only lanes 0-31 in its ballot and gives lanes 32-63 slots past the space it reserved, and
+`9506b27c35b91e67` (a masked-sum counter) runs every frame in the field and in conversations.
+- **Subgroup size control** (Vulkan 1.3), **opt-in in 1.3.1**: with `NXRT_VK_SUBGROUP32=1`, where the driver lets a pipeline require 32
+  (`requiredSubgroupSizeStages`), every shader that uses subgroup operations is made with 32-lane subgroups, and compute work groups that are whole
+  32-lane rows get full subgroups. One log line says so (or, in red, that the driver cannot). Unset or `0`, the default until an AMD or Intel GPU has
+  run it, leaves the driver's size, as in 1.3.0; the log line then names the switch. NVIDIA (always 32) is unchanged either way.
+- The ballot rewrite stays NVIDIA's only.
+
+**Checked here** (RTX 4070 Ti): `t_vk_guard` 10 of 10 (a sane count unchanged, a count of a billion walks the table's items at once, one and two
+rows, the edited module valid; on the real `634565ab` two comparisons limited, spirv-val passes, decompiled only those two lines differ);
+`t_vk_ballot` 16 of 16; the 2.0.1 route with validation on, `NXRT_VK_SUBGROUP32=1` and the guard: 0 errors, pictures right. **Not checked:** an AMD or
+Intel GPU (only santriman on 1.3.1, or a Steam Deck tester), a real lost device's new report line.
