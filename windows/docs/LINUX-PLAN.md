@@ -205,5 +205,6 @@ input through SDL events, and `nxrt.vk_scale` among them); the AppImage's doctor
 (Graphics tab, the Resolution list "Default: your monitor (3840x2160)" on WSLg's 4K monitor, 1920x1080, 2560x1440, 3840x2160; the FPS counter);
 real keys through X11's XTEST (a click first, for the keyboard): F1 opens it, Esc closes it, F1 opens and closes it again; the Resolution reaches
 the game from the variable, from `display.json` and live from the menu (render targets re-made at once, saved, read again at the next start); with
-the gate, the game's first screen (the language choice) at ~240 s, no crash in 200-260 s runs at 1080 and 1440. **Not checked:** the field
+the gate, the game's first screen (the language choice) at ~240 s. With the rewrite off or gated the crash got rare but not gone: at 2560x1440 1 start
+in 5 still crashed (149 s, the same JIT code), at 1080 none in 3 (200-260 s): something else reads past a heap block too. **Not checked:** the field
 (lavapipe draws 2 fps), a real controller's Minus + Plus, any real GPU.
