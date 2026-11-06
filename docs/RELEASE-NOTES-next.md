@@ -12,7 +12,8 @@ to characters like Professor Tangrowth: a visitor got the "Talk" prompt, and not
 visitors talk to them and hear the same story as the host, including the host's current requests.
 
 - **What counts for the host:** everything visitors do in the world, as with Interact everywhere (which Story co-op turns on
-  with it): building, watering, placing and picking up, the host's challenges and habitats.
+  with it): building, watering, placing and picking up, and the host's challenges (habitats too, we expect, but that
+  isn't tested end to end yet).
 - **What doesn't:** story requests still count only for the host. A visitor can hear a request, but finishing the
   conversation doesn't complete it; the host has to. A visitor's shop purchases still go to their own town, so for a
   building request the host buys the kit and drops it for the visitor.

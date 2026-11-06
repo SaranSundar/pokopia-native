@@ -379,10 +379,10 @@ Spectator Mode off, so visitors can water, pick up and place things, and build a
 
 In a story town the game lets only the host talk to the town's story characters, such as Professor Tangrowth: a visitor gets
 the "Talk" prompt, but nothing happens. **Story co-op** lifts that, on top of Interact everywhere: visitors talk to the
-story characters and hear the same story as the host (the host's current requests, in the host's words).
+story characters and hear the same story as the host, including the host's current requests.
 
 - What counts for the host: what visitors do in the world, as with Interact everywhere: building, watering, placing and
-  picking up, the host's challenges, and habitats.
+  picking up, and the host's challenges (habitats too, we expect, but that isn't tested end to end yet).
 - What doesn't: **story requests count only for the host.** A visitor can hear a request, but their conversation doesn't
   complete it; the host has to do that part. A visitor can't buy a building kit for the host's town either (the shop sends
   it home), but the host can drop one for them.
