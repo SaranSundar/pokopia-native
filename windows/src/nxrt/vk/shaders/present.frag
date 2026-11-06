@@ -21,6 +21,12 @@ vec3 sharpened(ivec2 q, ivec2 lo, ivec2 hi, float peak) {
 
 void main() {
     if (pc.misc.x < 0.5) { o = vec4(texture(src, uv).rgb, 1.0); return; }
+    if (pc.misc.x > 2.5) {   // mode 3: a picture drawn larger than the window (resolution x1.5 / x2 / x3), averaged over each window pixel by 4 x 4 bilinear taps
+        vec2 dx = dFdx(uv), dy = dFdy(uv); vec3 a = vec3(0.0);
+        for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) a += texture(src, uv + dx * ((float(i) - 1.5) / 4.0) + dy * ((float(j) - 1.5) / 4.0)).rgb;
+        o = vec4(a / 16.0, 1.0);
+        return;
+    }
     if (pc.misc.x > 1.5) {
         vec2 ts = vec2(textureSize(src, 0));
         ivec2 lo = ivec2(floor(min(pc.rect.xy, pc.rect.zw) * ts)), hi = ivec2(ceil(max(pc.rect.xy, pc.rect.zw) * ts)) - 1;   // the crop, either way up

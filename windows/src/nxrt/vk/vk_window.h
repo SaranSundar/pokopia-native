@@ -16,6 +16,8 @@ void vkw_pixel_size(int *w, int *h);                     // the drawable size in
 uint32_t vkw_resize_serial(void);                        // changes whenever the drawable size changes
 int vkw_minimized(void);                                 // minimized or occluded: presents are dropped, not waited for
 int vkw_display_hz(void);                                // refresh rate of the window's display (0 = unknown)
+void vkw_desktop_size(int *w, int *h);                   // the window's monitor at its own resolution, in pixels (0 = unknown)
+int vkw_is_fullscreen(void);
 void vkw_request_size(int w, int h);                     // asks the window thread for a new client size (tests, resolution checks)
 void vkw_request_fullscreen(int on);                     // borderless fullscreen on the window's display (Alt+Enter and F11 toggle it too)
 void vkw_set_close_handler(void (*fn)(void));            // called on the window thread when the user closes the window (default: ExitProcess(0))

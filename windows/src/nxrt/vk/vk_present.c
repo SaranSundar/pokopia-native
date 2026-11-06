@@ -1,6 +1,7 @@
 // The swapchain and the present thread (vk_present.h; docs/m5-vulkan.md §2.3). Behaviour follows nxnative's present queue (nvn_mtl.m present_enqueue,
 // mtl_present_wait: a ticket per present, the game's acquire waits for its texture's last ticket); the Vulkan side is written from the specification.
 #include "vk_present.h"
+#include "vk_menu.h"
 #include "vk_submit.h"
 #include "vk_window.h"
 #include "present_vert.h"
@@ -16,7 +17,7 @@ typedef struct { uint64_t serial, wait_value; double period; int crop[4], has_cr
 typedef struct { VkCommandPool pool; VkCommandBuffer cb; VkSemaphore acq; VkFence fence; VkDescriptorSet ds; int used; } frame_t;
 
 static struct {
-    VkSurfaceKHR surf; VkSwapchainKHR sc; VkFormat fmt; VkExtent2D ext; VkPresentModeKHR mode; int want_mode;
+    VkSurfaceKHR surf; VkSwapchainKHR sc; VkFormat fmt; VkExtent2D ext; VkPresentModeKHR mode; int want_mode, mode_for;   // mode_for: want_mode + 1 once mode is chosen for it
     uint32_t nimg; VkImage img[MAXIMG]; VkImageView view[MAXIMG]; VkSemaphore rdone[MAXIMG]; uint32_t resize_seen; int stale;
     frame_t fr[NFR]; int fi;
     VkPipeline pipe; VkFormat pipe_fmt; VkPipelineLayout pl; VkDescriptorSetLayout dsl; VkDescriptorPool dp; VkSampler samp;
@@ -94,6 +95,9 @@ static int make_swapchain(void) {
         for (unsigned k = 0; k < 3 && !g_p.fmt; k++) for (uint32_t i = 0; i < n; i++) if (f[i].format == pref[k] && f[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { g_p.fmt = pref[k]; break; }
         if (!g_p.fmt && n) g_p.fmt = f[0].format;
         free(f);
+    }
+    if (g_p.mode_for != g_p.want_mode + 1) {   // at the start, and when the in-game menu switches vsync
+        g_p.mode_for = g_p.want_mode + 1;
         uint32_t nm = 0; vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.pd, g_p.surf, &nm, NULL);
         VkPresentModeKHR *m = calloc(nm + 1, sizeof *m); vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.pd, g_p.surf, &nm, m);
         VkPresentModeKHR want = g_p.want_mode == VKP_MAILBOX ? VK_PRESENT_MODE_MAILBOX_KHR : g_p.want_mode == VKP_IMMEDIATE ? VK_PRESENT_MODE_IMMEDIATE_KHR : VK_PRESENT_MODE_FIFO_KHR;
@@ -202,6 +206,7 @@ static int present_one(const pq_item *it) {
     vkResetCommandPool(g_vk.dev, f->pool, 0);
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, NULL};
     vkBeginCommandBuffer(f->cb, &bi);
+    vkmn_prepare(f->cb, g_p.ext, (int)(f - g_p.fr));   // the in-game menu, when it is open
     vk_image_barrier(f->cb, g_p.img[idx], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
     VkRenderingAttachmentInfo ca = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, NULL, g_p.view[idx], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, VK_NULL_HANDLE,
@@ -211,10 +216,13 @@ static int present_one(const pq_item *it) {
     vkCmdBindPipeline(f->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_p.pipe);
     vkCmdSetViewport(f->cb, 0, 1, &vp); vkCmdSetScissor(f->cb, 0, 1, &sc);
     vkCmdBindDescriptorSets(f->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_p.pl, 0, 1, &f->ds, 0, NULL);
-    float mode = !have ? 1.0f : g_p.sharp && s > 1.01f ? 2.0f : 0.0f;
+    // F-5: a picture drawn larger is compared with the window by its own pixels; one larger than the window is averaged over each window pixel (mode 3)
+    float k = have && src.w && src.pw > src.w ? (float)src.pw / (float)src.w : 1.0f;
+    float mode = !have ? 1.0f : g_p.sharp && s / k > 1.01f ? 2.0f : k > 1.0f && s / k < 0.99f ? 3.0f : 0.0f;
     float pc[12] = {u0, v0, u1, v1, mode, (float)(atomic_load(&g_p.count) + 1), pw, ph, g_p.sharpness, 0, 0, 0};
     vkCmdPushConstants(f->cb, g_p.pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, pc);
     vkCmdDraw(f->cb, 3, 1, 0, 0);
+    vkmn_draw(f->cb, g_p.ext, g_p.fmt, (int)(f - g_p.fr));   // the in-game menu over the picture, when it is open
     vkCmdEndRendering(f->cb);
     int cap = atomic_load(&g_p.cap_want) && g_p.cap_ok && g_p.cap_buf;
     if (cap) {
@@ -358,6 +366,7 @@ void vkp_shutdown(void) {
     AcquireSRWLockExclusive(&g_p.lk); WakeAllConditionVariable(&g_p.cv); ReleaseSRWLockExclusive(&g_p.lk);
     WaitForSingleObject(g_p.thread, 5000); CloseHandle(g_p.thread); g_p.thread = NULL; atomic_store(&g_vk.presenting, 0);
     AcquireSRWLockExclusive(&g_vk.qlock); vkQueueWaitIdle(g_vk.q); ReleaseSRWLockExclusive(&g_vk.qlock);
+    vkmn_shutdown();
     for (int i = 0; i < NFR; i++) { frame_t *f = &g_p.fr[i]; vkDestroyCommandPool(g_vk.dev, f->pool, NULL); vkDestroySemaphore(g_vk.dev, f->acq, NULL); vkDestroyFence(g_vk.dev, f->fence, NULL); }
     destroy_swapchain_views();
     if (g_p.sc) vkDestroySwapchainKHR(g_vk.dev, g_p.sc, NULL);
@@ -371,6 +380,9 @@ void vkp_shutdown(void) {
 }
 
 void vkp_set_resolver(vkp_resolve_fn fn) { g_p.resolve = fn; }
+// The in-game menu's live settings: the upscaler and its sharpness (the next present), vsync (the swapchain is made again with the new mode)
+void vkp_set_upscale(int sharp, float sharpness) { g_p.sharp = sharp; g_p.sharpness = sharpness < 0 ? 0 : sharpness > 1 ? 1 : sharpness; }
+void vkp_set_mode(int mode) { if (mode != g_p.want_mode) { g_p.want_mode = mode; g_p.stale = 1; VKLOG("present: vsync %s from the in-game menu", mode == VKP_FIFO ? "on" : "off"); } }
 
 uint64_t vkp_enqueue(uint64_t serial, double period, uint64_t wait_value, const int crop[4], int flip) {
     if (!g_p.thread) return 0;

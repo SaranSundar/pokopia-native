@@ -70,7 +70,7 @@ index d16b9cb..b14a328 100644
          out.append(s)
      return {'schema': SCHEMA, 'game': g.id, 'settings': out}
 diff --git a/dm/games/settings.tsv b/dm/games/settings.tsv
-index 00e1ddd..07b2c1e 100644
+index 00e1ddd..3cc35a1 100644
 --- a/dm/games/settings.tsv
 +++ b/dm/games/settings.tsv
 @@ -5,6 +5,7 @@
@@ -81,7 +81,7 @@ index 00e1ddd..07b2c1e 100644
  #   default   a value (a toggle's: 1 on, 0 off); DM_GAME_<NAME>: the host's own default from the game profile (game_profile.h, game.py); build:<VAR>: the IPA build's setting (build_ipa.sh)
  #             <ios>|<mac> selects the platform's default before resolving a profile macro or build variable
  #   shown     always; DM_GAME_<NAME>!=<value> or ==<value>; fixups:<KEY>: main's rewriter table has that key (a stub in the game's build, patch_nso.py); languages>1; gfxapi:<API>: the packer's GFXAPI;
-@@ -22,7 +23,15 @@ DM_PRESENT_UPSCALE	choice	off=Standard,metalfx=MetalFX	off	always	Game	Upscaling
+@@ -22,7 +23,16 @@ DM_PRESENT_UPSCALE	choice	off=Standard,metalfx=MetalFX	off	always	Game	Upscaling
  DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	Game language		level=basic
  DM_FULLSCREEN	choice	0=Window,1=Fullscreen	0	platform:mac	Game	Display mode		level=basic
  DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	platform:ios	Game	Frame-rate counter
@@ -91,6 +91,7 @@ index 00e1ddd..07b2c1e 100644
 +DM_COOP_ROOM	text	19		always	Game	Room code	The host's code, XXXX-XXXX-XXXX-XXXX. A host without one gets a new code each time.	needs=DM_COOP_INTERNET=1
 +DM_COOP_RELAY	text	21		always	Game	Relay address	A relay you trust, as IPv4[:port]. Empty: visitors connect to the host's address.	needs=DM_COOP_INTERNET=1
 +DM_COOP_INTERACT	toggle	-	0	always	Game	Interact everywhere	Experimental: in every town, not only Palette Town, visitors can use moves and items and build. Every player needs it on.	needs=DM_COOP=auto
++DM_COOP_STORY	toggle	-	0	always	Game	Story co-op	Experimental, with Interact everywhere: visitors can talk to the town's story characters. Story requests still count only for the host. Every player needs it on.	needs=DM_COOP=auto
  DM_TOUCH_HAPTICS	toggle	-	1	platform:ios	Controls	Touch feedback
 +DM_LOOK_SCALE	range	0.25:3.0:0.05	1.0	DM_GAME_LOOK_RATE!=0.0f	Controls	Look sensitivity		level=basic
 +DM_LOOK_INVERT_Y	toggle	-	0	DM_GAME_LOOK_RATE!=0.0f	Controls	Invert look up and down
@@ -3884,10 +3885,10 @@ index 54afe1a..21162d4 100644
  .PHONY: clean
 diff --git a/dm/host/coop.h b/dm/host/coop.h
 new file mode 100644
-index 0000000..31cae61
+index 0000000..9204cd4
 --- /dev/null
 +++ b/dm/host/coop.h
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,207 @@
 +// coop: Pokopia's Link Play "Local Connection" between our native builds (research/06 §5, docs/coop-step1.md, docs/coop-step1c.md). MIT, our own code.
 +// One portable C11 module every port's HLE layer calls: `ldn` (the nn::ldn state machine and the 0x480 NetworkInfo), `vnet` (the game's UDP
 +// sockets on a virtual 169.254.S.0/24), `mpnet` (the real transport: a star of TCP control links around the host plus UDP for game datagrams)
@@ -4072,8 +4073,10 @@ index 0000000..31cae61
 +
 +// ---------- "Interact everywhere" (coop_interact.c, docs/coop-interact.md): Link Play in story areas without Spectator Mode's restrictions.
 +// DM_COOP_INTERACT=1 turns it on. A port calls coop_interact_site(id, x0..x30) right before the instruction at a site runs; a register the
-+// callback writes takes effect. Every player in a session must have the same setting: a port adds COOP_INTERACT_MOD to its mods fingerprint ----------
-+enum { COOP_SITE_MASK = 1 };
++// callback writes takes effect. Every player in a session must have the same setting: a port adds COOP_INTERACT_MOD to its mods fingerprint.
++// "Story co-op (experimental)" (docs/story-coop.md), DM_COOP_STORY=1, implies Interact everywhere and adds the story sites; a port that attaches them
++// adds COOP_STORY_MOD after COOP_INTERACT_MOD ----------
++enum { COOP_SITE_MASK = 1, COOP_SITE_TALK = 2 };
 +typedef struct coop_site {
 +    const char *build;   // main's build ID, its first 32 hex digits (the rewriter's key)
 +    uint32_t fn, off;    // the function holding the site and the site, main offsets
@@ -4082,8 +4085,11 @@ index 0000000..31cae61
 +    const char *what;
 +} coop_site;
 +#define COOP_INTERACT_MOD "Interact everywhere"
-+int coop_interact_on(void);
++#define COOP_STORY_MOD "Story co-op (experimental)"
++int coop_interact_on(void);   // DM_COOP_INTERACT=1, or Story co-op on
++int coop_story_on(void);
 +int coop_interact_sites(const char *main_build, const coop_site **out);   // the sites of this main build (a run of them) and their count; 0: unsupported
++int coop_story_sites(const char *main_build, const coop_site **out);      // the same for Story co-op's sites
 +void coop_interact_site(int id, uint64_t *x);
 +uint64_t coop_mods_add(uint64_t h, const char *name);   // a mods fingerprint (0: none so far) with one more named mod
 +
@@ -5311,11 +5317,12 @@ index 0000000..62401bf
 +#endif
 diff --git a/dm/host/hle_coop_interact.c b/dm/host/hle_coop_interact.c
 new file mode 100644
-index 0000000..e40851a
+index 0000000..23682e6
 --- /dev/null
 +++ b/dm/host/hle_coop_interact.c
-@@ -0,0 +1,42 @@
-+// coop_interact: "Interact everywhere" (docs/coop-interact.md), an experimental opt-in for Link Play outside Palette Town. MIT, our own code.
+@@ -0,0 +1,58 @@
++// coop_interact: "Interact everywhere" (docs/coop-interact.md), an experimental opt-in for Link Play outside Palette Town, and "Story co-op"
++// (docs/story-coop.md), the experimental step after it. MIT, our own code.
 +// The game keeps a session's permissions in a 36-bit mask (GameMgr+0x8c; its top bits are the online / host / visitor bits at +0x90) and rebuilds it
 +// whenever a session starts or the town changes. In a story area (stage type 1: Withered Wasteland and the other story towns) an online player always
 +// gets the Spectator pattern, whatever the host chose; Palette Town with Spectator Mode Off gets the normal online pattern. One site per supported main
@@ -5333,22 +5340,37 @@ index 0000000..e40851a
 +    {"76a489f3bd3642fa5e18bd83d32c98ba", 0xb0f60, 0xb1030, 0xf2c0002du, COOP_SITE_MASK, "permission mask: story areas get Palette Town's Spectator-Off pattern"},
 +};
 +
-+int coop_interact_sites(const char *main_build, const coop_site **out) {
++// Story co-op, 2.0.1 main. The A button asks a chain of handlers (main+0x4c3ec8) what it does; the talk handler (main+0x4c024c) gives an online
++// player who is not the host a visitor's reply (kinds 0xa/0xb, no conversation) unless the NPC is one of three every visitor may talk to. At the site
++// (orr w8, w25, w0) w0 is IsHost's answer, so a visitor takes the host's path: the NPC's own conversation
++static const coop_site g_story[] = {
++    {"76a489f3bd3642fa5e18bd83d32c98ba", 0x4c024c, 0x4c06d8, 0x2a000328u, COOP_SITE_TALK, "talk: a visitor gets the NPC's conversation, as the host"},
++};
++
++static int sites_of(const coop_site *t, size_t nt, const char *main_build, const coop_site **out) {
 +    int n = 0;
 +    *out = NULL;
 +    if (!main_build) return 0;
-+    for (size_t i = 0; i < sizeof g_sites / sizeof g_sites[0]; i++)
-+        if (!strncmp(main_build, g_sites[i].build, strlen(g_sites[i].build))) { if (!n) *out = &g_sites[i]; n++; }
++    for (size_t i = 0; i < nt; i++)
++        if (!strncmp(main_build, t[i].build, strlen(t[i].build))) { if (!n) *out = &t[i]; n++; }
 +    return n;
++}
++int coop_interact_sites(const char *main_build, const coop_site **out) { return sites_of(g_sites, sizeof g_sites / sizeof g_sites[0], main_build, out); }
++int coop_story_sites(const char *main_build, const coop_site **out) { return sites_of(g_story, sizeof g_story / sizeof g_story[0], main_build, out); }
++
++int coop_story_on(void) {
++    const char *e = getenv("DM_COOP_STORY");
++    return e && !strcmp(e, "1");
 +}
 +
 +int coop_interact_on(void) {
 +    const char *e = getenv("DM_COOP_INTERACT");
-+    return e && !strcmp(e, "1");
++    return (e && !strcmp(e, "1")) || coop_story_on();
 +}
 +
 +void coop_interact_site(int id, uint64_t *x) {
 +    if (id == COOP_SITE_MASK && !(x[22] & 1)) x[13] = 0x5ffffffe;   // the movk that follows adds bit 32
++    if (id == COOP_SITE_TALK && coop_story_on()) x[0] = 1;           // IsHost: yes
 +}
 +
 +uint64_t coop_mods_add(uint64_t h, const char *name) {
@@ -7987,10 +8009,10 @@ index 71a90bc..29862f0 100644
 +HLE_FORCE("_ZN2nn2oe23GetCurrentGraphicsScaleEv", "SWITCH2: current graphics scale enum; 0 until the am scaling table is modelled", int, h_oe_GetCurGfxScale, void) { return 0; }
 +HLE_FORCE("_ZN2nn2oe24GetServerEnvironmentTypeEv", "SWITCH2: server environment type; 0 = production", int, h_oe_GetServerEnvType, void) { return 0; }
 diff --git a/dm/host/hle_offline.c b/dm/host/hle_offline.c
-index 3270ea1..3ca0f58 100644
+index 3270ea1..9511c32 100644
 --- a/dm/host/hle_offline.c
 +++ b/dm/host/hle_offline.c
-@@ -14,65 +14,126 @@ HLE_FORCE("_ZN2nn5prepo12AddSessionIdEPNS0_10PlayReportEPKc", "telemetry session
+@@ -14,65 +14,129 @@ HLE_FORCE("_ZN2nn5prepo12AddSessionIdEPNS0_10PlayReportEPKc", "telemetry session
  HLE_FORCE("_ZN2nn5prepo27AddInternetConnectionStatusEPNS0_10PlayReportEPKcS4_S4_", "telemetry internet connection status: no service connection, nothing added, reports success", Result, h_prepo_AddNet, void *rep, const char *a, const char *b, const char *c) { (void)rep; (void)a; (void)b; (void)c; return RES_OK; }
  HLE_FORCE("_ZN2nn5prepo28RequestImmediateTransmissionEv", "telemetry immediate upload; nothing is sent, reports success", Result, h_prepo_Tx, void) { return RES_OK; }
  
@@ -8019,8 +8041,8 @@ index 3270ea1..3ca0f58 100644
 +static void coop_hsleep(void *u, int64_t ns) { (void)u; void dm_guest_sleep_ns(int64_t ns); dm_guest_sleep_ns(ns); }
 +static void coop_hstate(void *u, int st) { (void)u; (void)st; void *e = atomic_load(&g_ldn_attached); if (e) hle_signal_bound_system_event(e); }
 +static const char *coop_hbuild(void *u) { (void)u; return dm_main_build(); }   // peers compare builds before a join
-+// The cheats that are on (hle_cheats.c) and "Interact everywhere" (DM_COOP_INTERACT, hle_coop_interact.c) as one fingerprint: players meet only with the
-+// same set, since either changes what happens in the host's town. Interact everywhere alone gives the Windows build's fingerprint
++// The cheats that are on (hle_cheats.c), "Interact everywhere" (DM_COOP_INTERACT, hle_coop_interact.c) and Story co-op (DM_COOP_STORY) as one fingerprint:
++// players meet only with the same set, since each changes what happens in the host's town. Without cheats it is the Windows build's fingerprint
 +int dm_cheats_master(void); int dm_cheats_ncheats(void); int dm_cheat_on_at(int i); const char *dm_cheat_name_at(int i);
 +static uint64_t coop_hmods(void *u, char *what, size_t n) {
 +    (void)u; uint64_t h = 0; int k = 0; const coop_site *s;
@@ -8028,19 +8050,22 @@ index 3270ea1..3ca0f58 100644
 +        if (!dm_cheat_on_at(i)) continue;
 +        h = coop_mods_add(h, dm_cheat_name_at(i)); k++;
 +    }
-+    int ie = coop_interact_on() && coop_interact_sites(dm_main_build(), &s);
++    int ie = coop_interact_on() && coop_interact_sites(dm_main_build(), &s), st = ie && coop_story_on() && coop_story_sites(dm_main_build(), &s);
 +    if (ie) h = coop_mods_add(h, COOP_INTERACT_MOD);
-+    if (k) snprintf(what, n, "%d cheat%s on%s", k, k == 1 ? "" : "s", ie ? ", " COOP_INTERACT_MOD : "");
-+    else if (ie) snprintf(what, n, "%s", COOP_INTERACT_MOD);
++    if (st) h = coop_mods_add(h, COOP_STORY_MOD);
++    const char *mods = st ? COOP_INTERACT_MOD ", " COOP_STORY_MOD : ie ? COOP_INTERACT_MOD : "";
++    if (k) snprintf(what, n, "%d cheat%s on%s%s", k, k == 1 ? "" : "s", ie ? ", " : "", mods);
++    else if (ie) snprintf(what, n, "%s", mods);
 +    return h;
 +}
-+// "Interact everywhere": the profile's observation gate (patches.py, OBS_COOP_INTERACT with the site's id in the gate number's upper bits) calls the
-+// shared callback while DM_COOP_INTERACT=1, read when the gate fires (the iPhone's launcher sets it after the host's constructors have run)
++// "Interact everywhere" and Story co-op: the profile's observation gates (patches.py, OBS_COOP_INTERACT with the site's id in the gate number's upper bits)
++// call the shared callback while the switch is on, read when a gate fires (the iPhone's launcher sets it after the host's constructors have run)
 +static void coop_interact_gate(uint64_t *regs, int param) {
-+    static _Atomic int said;
++    static _Atomic int said, said_talk;
 +    if (!coop_interact_on()) return;
-+    uint64_t was = regs[13]; coop_interact_site(param, regs);
-+    if (regs[13] != was && !atomic_exchange(&said, 1)) LOG("[coop] Interact everywhere: this story area's Link Play session has Palette Town's permissions");
++    uint64_t was13 = regs[13], was0 = regs[0]; coop_interact_site(param, regs);
++    if (regs[13] != was13 && !atomic_exchange(&said, 1)) LOG("[coop] Interact everywhere: this story area's Link Play session has Palette Town's permissions");
++    if (param == COOP_SITE_TALK && regs[0] != was0 && !atomic_exchange(&said_talk, 1)) LOG("[coop] Story co-op: a visitor's talk takes the host's path");
 +}
 +__attribute__((constructor)) static void coop_interact_attach(void) { gate_obs_set(OBS_COOP_INTERACT, coop_interact_gate); }
 +coop_node *dm_coop(void) {   // the process's coop node when DM_COOP is set (and not off), else NULL (hle_net.c and hle_misc.c ask too)
@@ -8154,7 +8179,7 @@ index 3270ea1..3ca0f58 100644
  
  // ---------- irsensor: the Joy-Con IR camera (Big Brain Academy: Brain vs. Brain's input layer makes one per controller). The host has none: every camera is unconnected,
  // processors cannot run and report no states. The default-config getters and MakeRect only fill the game's structs and keep running in the SDK ----------
-@@ -200,3 +261,65 @@ HLE_FORCE("_ZN2nn5album21GetSharePostedLastUrlEPcmRKNS0_7ShareIdE", "URL of the
+@@ -200,3 +264,65 @@ HLE_FORCE("_ZN2nn5album21GetSharePostedLastUrlEPcmRKNS0_7ShareIdE", "URL of the
  HLE_FORCE("_ZN2nn5album14ShowAlbumFilesEv", "album applet: not shown", Result, h_album_Show, void) { return RES_FAIL; }
  // Pokémon Legends: Z-A (SDK 19): a screenshot of the current frame, taken by the capture service
  HLE_FORCE("_ZN2nn5album21SaveCurrentScreenshotENS0_17AlbumReportOptionE", "screenshot of the current frame (capsrv): no album, fails", Result, h_album_SaveCur, int report) { (void)report; LOG("album::SaveCurrentScreenshot (no album)"); return RES_FAIL; }
@@ -8581,7 +8606,7 @@ index 154ed24..f7f6712 100644
                  Operand value = EmitLoadConstant(context, slot, offset);
  
 diff --git a/dm/tools/tests/test_launcher_settings.py b/dm/tools/tests/test_launcher_settings.py
-index cd43d2d..1411ee7 100644
+index cd43d2d..688cb41 100644
 --- a/dm/tools/tests/test_launcher_settings.py
 +++ b/dm/tools/tests/test_launcher_settings.py
 @@ -94,7 +94,7 @@ class LauncherSettingsTests(unittest.TestCase):
@@ -8593,7 +8618,7 @@ index cd43d2d..1411ee7 100644
          self.assertEqual([e for e, s in rows.items() if s.get('level') == 'basic'], ['DM_FPS_TARGET', 'DM_RENDER_SCALE', 'DM_OPMODE', 'DM_LANG', 'DM_RUMBLE'])
          self.assertEqual(rows['DM_RUMBLE_GAIN']['needs'], 'DM_RUMBLE=1')
          self.assertFalse({'level', 'needs'} & set(rows['DM_METAL_HUD']), 'a row without meta has no optional fields')
-@@ -127,12 +127,31 @@ class LauncherSettingsTests(unittest.TestCase):
+@@ -127,12 +127,37 @@ class LauncherSettingsTests(unittest.TestCase):
                      patch.object(settings.nacp, 'languages', return_value=['en-US']), patch.dict(os.environ, {'GFXAPI': api, **({'SETTINGS_PLATFORM': platform} if platform else {})}):
                  self.assertEqual(conforms(settings.build(gid, tmp, Path(tmp) / 'control.nacp'), schema, schema), [])
  
@@ -8626,10 +8651,16 @@ index cd43d2d..1411ee7 100644
 +        self.assertEqual((rows['DM_COOP_INTERACT']['kind'], rows['DM_COOP_INTERACT']['default'], rows['DM_COOP_INTERACT']['needs']), ('toggle', '0', 'DM_COOP=auto'))
 +        envs = list(rows)
 +        self.assertEqual(envs.index('DM_COOP_INTERACT'), envs.index('DM_COOP_RELAY') + 1)
++
++    def test_story_coop_row(self):   # Story co-op, an experimental switch after Interact everywhere
++        rows = build(BOTW, 'nvn')
++        self.assertEqual((rows['DM_COOP_STORY']['kind'], rows['DM_COOP_STORY']['default'], rows['DM_COOP_STORY']['needs']), ('toggle', '0', 'DM_COOP=auto'))
++        envs = list(rows)
++        self.assertEqual(envs.index('DM_COOP_STORY'), envs.index('DM_COOP_INTERACT') + 1)
  
      def test_render_base_goes_into_the_render_scale_row(self):
          schema = json.loads((ROOT / 'docs/launcher.schema.json').read_text(encoding='utf-8'))
-@@ -154,7 +173,8 @@ class LauncherSettingsTests(unittest.TestCase):
+@@ -154,7 +179,8 @@ class LauncherSettingsTests(unittest.TestCase):
                           ('DM_X\ttoggle\t-\t0\talways\tGame\tX\t\tneeds=DM_NOPE=1\n', 'no row sets'),
                           ('DM_Y\ttoggle\t-\t0\talways\tGame\tY\t\tneeds=DM_X=on\n', 'never takes'),
                           ('DM_X\ttoggle\t-\t0\talways\tX\n', 'columns'), ('DM_X\ttoggle\t-\t0\talways\tsecret\tX\n', 'section'),
@@ -8640,10 +8671,10 @@ index cd43d2d..1411ee7 100644
                  (Path(tmp) / 'settings.tsv').write_text('# header\n' + good + bad, encoding='utf-8')
                  with patch.object(settings, 'HERE', Path(tmp)), \
 diff --git a/docs/env_switches.tsv b/docs/env_switches.tsv
-index 5fdc1af..452f64a 100644
+index 5fdc1af..774d658 100644
 --- a/docs/env_switches.tsv
 +++ b/docs/env_switches.tsv
-@@ -17,6 +17,14 @@ DM_CHEATS_ANY_BUILD	switch	`1` loads a cheat file written for another build of t
+@@ -17,6 +17,15 @@ DM_CHEATS_ANY_BUILD	switch	`1` loads a cheat file written for another build of t
  DM_CHEATS_DEBUG	diagnostic	Logs every memory write a cheat makes and the cheat file context the menu's "another version" rows come from
  DM_CHEATS_ON	switch	Comma-separated cheat names turned on at launch, besides the saved per-build enabled states
  DM_CHEATS_WINDOW	switch	`1` opens the Mac Cheats panel beside the game from the start
@@ -8654,11 +8685,12 @@ index 5fdc1af..452f64a 100644
 +DM_COOP_JOIN	player	`<IPv4>[:<port>]`: with `DM_COOP=auto`, joins that host instead of finding hosts with DNS-SD (as `DM_COOP=join:` does; a public address needs `DM_COOP_INTERNET=1`). The launcher's "Join address"; empty by default
 +DM_COOP_RELAY	player	`<IPv4>[:<port>]` (port 47610 by default): with `DM_COOP_INTERNET=1` and `DM_COOP=auto`, a relay players run themselves (windows-native tools/coop-relay): hosting opens the room there, scanning asks it for the room's host. The launcher's "Relay address"; empty by default
 +DM_COOP_ROOM	player	The room code, `XXXX-XXXX-XXXX-XXXX` (16 letters and digits, 80 bits): with `DM_COOP_INTERNET=1` every link proves it. A visitor needs the host's; a host without one gets a new one each session (in the log). The launcher's "Room code"; empty by default
++DM_COOP_STORY	player	`1` turns on "Story co-op" (the launcher's switch, experimental, windows-native docs/story-coop.md) and with it Interact everywhere: in Link Play a visitor talks to the town's story characters as the host does (hle_coop_interact.c, at an observation gate the profile places on 2.0.1). Story requests still count only for the host. Part of the mods fingerprint; off by default
 +DM_COOP_TCP	switch	`1` sends the game's Link Play datagrams over the control link instead of UDP (a TCP-only path such as an SSH tunnel)
  DM_COPY_GAME_RESOURCES	switch	`NO` skips the Xcode build phase that copies the game's resources into the app (`stage_resources.sh`, on by default); `build_ipa.sh` sets it for its unsigned build, which packs them itself
  DM_COPY_ROMFS	switch	`NO` keeps the game files out of the app, in the Xcode build phase (`stage_resources.sh`) and in the unsigned IPA of `build_ipa.sh` (on by default): `main.m` takes the validated `Documents/romfs.img` copied by `scripts/push_romfs.sh`, then a `Documents/romfs` folder; the build writes the image's identity as `romfs.id` into the app, and `main.m` uses only a matching image (`--romfs separate` of the NSP script sets this)
  DM_CTL	diagnostic	`=<file>` (Mac): the host polls the file every 100 ms and runs each appended line: button presses, `shot`, `passdump`, `texdump`, `env KEY=VALUE`, `peek`, `memdump`, `drag` and more
-@@ -309,6 +317,7 @@ DM_TOUCH_LOG	diagnostic	`=1` logs each touch-screen read with touch points (samp
+@@ -309,6 +318,7 @@ DM_TOUCH_LOG	diagnostic	`=1` logs each touch-screen read with touch points (samp
  DM_UDC_SELFTEST	diagnostic	`=1` runs a start-up check of DontCare load and store on private depth-stencil and RGBA8 textures (clear, Load + DontCare, read back) and logs one result line
  DM_UE_SHADERS	path	Folder of the Unreal shader code archives decoded by `uepak.py`, for `shader_split.py` (default `ue_shaders` beside the RomFS); needed when the RomFS has Unreal paks
  DM_UE_TEXTURE_POOL	switch	Megabytes Unreal's texture streaming pool (`r.Streaming.PoolSize`) is raised to, overriding the profile's `ue_texture_pool`; `0` keeps the game's own pool. On iOS only this switch turns it on (`Documents/env.txt`)

@@ -12,7 +12,7 @@ your Mac it builds a Mac app and an iPhone app. On a Windows PC it builds the ga
 PC, and the iPhone app too. Everything that comes from the game is created on your machine and stays in your build
 folder. Nothing from the game is in here.
 
-This works for both versions 1.0.5 (v327680) and 2.0.1 (v655360) as of 11/3/2026. The tool is version **1.2.6**.
+This works for both versions 1.0.5 (v327680) and 2.0.1 (v655360) as of 11/3/2026. The tool is version **1.3.0**.
 
 ## Which download do I need?
 
@@ -78,8 +78,9 @@ when I have captures from my own console they will go up next to these.
 - **A Mac app.** Double-click, press Play, it runs. Saves live in your Library folder like any Mac game.
 - **An iPhone app.** The game runs natively on the phone, full quality, 30 fps (the Switch 2 runs this game at 30 in
   handheld too). There is a catch about Apple developer accounts, explained below. Read it before you get excited.
-- **A Windows game.** On a Windows PC the game's code is recompiled for your PC and drawn with Vulkan: 60 fps, mouse look,
-  controllers with rumble, your save from Eden, the phone or the Mac. [Windows: play on your PC](#windows-play-on-your-pc).
+- **A Windows game.** On a Windows PC the game's code is recompiled for your PC and drawn with Vulkan: 60 fps, up to 4K
+  (it draws itself at your monitor's size), a settings menu in the game (F1), mouse look, controllers with rumble, your
+  save from Eden, the phone or the Mac. [Windows: play on your PC](#windows-play-on-your-pc).
 
 Both are built from your dump by one script, `nxs2.py`. The first build takes about an hour, nearly all of it the
 Mac compiling 3,800 shaders. After that, rebuilds take a couple of minutes.
@@ -373,6 +374,22 @@ Spectator Mode off, so visitors can water, pick up and place things, and build a
   will be restricted. The session is not restricted.
 - As in any Link Play visit, the town and its progress (challenges, building) belong to the host, and what a visitor picks up
   goes home with them.
+- It is experimental: keep a copy of your save before a long session.
+
+**Story co-op** (experimental, new)
+
+In a story town the game lets only the host talk to the town's story characters, such as Professor Tangrowth: a visitor gets
+the "Talk" prompt, but nothing happens. **Story co-op** lifts that, on top of Interact everywhere: visitors talk to the
+story characters and hear the same story as the host, including the host's current requests.
+
+- What counts for the host: what visitors do in the world, as with Interact everywhere: building, watering, placing and
+  picking up, and the host's challenges (habitats too, we expect, but that isn't tested end to end yet).
+- What doesn't: **story requests count only for the host.** A visitor can hear a request, but their conversation doesn't
+  complete it; the host has to do that part. A visitor can't buy a building kit for the host's town either (the shop sends
+  it home), but the host can drop one for them.
+- Turn it on **on every device**: iPhone and Mac: the launcher's **Story co-op** (under Link Play); Windows: the
+  **Story co-op (experimental)** box in the window before the game starts. It turns Interact everywhere on with it. A device
+  with it on only sees hosts that have it on too.
 - It is experimental: keep a copy of your save before a long session.
 
 Good to know:

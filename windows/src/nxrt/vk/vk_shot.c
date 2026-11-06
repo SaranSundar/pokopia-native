@@ -5,6 +5,7 @@
 #include "vk_present.h"
 #include "nxrt/path_sep.h"
 #include <math.h>
+#include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,11 +98,14 @@ int vks_shot_capture(const tex_t *t, const int crop[4], int flip, uint8_t **rgba
     if (!im || !im->content) return -1;
     NVNcopyRegion r = {0, 0, 0, (int)im->w, (int)im->h, 1};
     if (crop && crop[2] > 0 && crop[3] > 0 && crop[0] >= 0 && crop[1] >= 0 && (uint32_t)(crop[0] + crop[2]) <= im->w && (uint32_t)(crop[1] + crop[3]) <= im->h) { r.xoffset = crop[0]; r.yoffset = crop[1]; r.width = crop[2]; r.height = crop[3]; }
+    // F-5: a picture drawn larger is saved at its own size
+    int32_t x1 = vkt_sx(im, 0, (int64_t)r.xoffset + r.width), y1 = vkt_sy(im, 0, (int64_t)r.yoffset + r.height);
+    r.xoffset = vkt_sx(im, 0, r.xoffset); r.yoffset = vkt_sy(im, 0, r.yoffset); r.width = x1 - r.xoffset; r.height = y1 - r.yoffset;
     size_t n = (size_t)r.width * r.height, bytes = n * im->fi->vbpb;
     uint8_t *raw = malloc(bytes), *out = malloc(n * 4);
     if (!raw || !out) { free(raw); free(out); return -1; }
     vks_finish();   // the frame's GPU work first
-    if (vkt_readback_region(im, 0, 0, &r, raw, bytes) || vks_to_rgba8(im->fi->vk, raw, n, out)) {
+    if (vkt_readback_region_raw(im, 0, 0, &r, raw, bytes) || vks_to_rgba8(im->fi->vk, raw, n, out)) {
         static int nf; if (nf++ < 4) VKRED("screenshot: the presented image (format %s) could not be read back", im->fi->name);
         free(raw); free(out); return -1;
     }
@@ -117,6 +121,20 @@ static void shot_path(char *out, size_t n, uint64_t frame, const char *suffix) {
     else snprintf(out, n, "%s.shot-%06llu%s.png", lp && *lp ? lp : "nxrt", (unsigned long long)frame, suffix);
 }
 static int origin_ll(void) { extern int vk_origin_lower_left(void); return vk_origin_lower_left(); }
+static unsigned __stdcall window_shot(void *arg) {   // NXRT_VK_SHOT_WINDOW: arg is the path (freed here)
+    char *wpth = arg; uint32_t *wp = NULL; int ww, wh, bgr;
+    if (!vkp_capture_next(&wp, &ww, &wh, &bgr, 2000)) {
+        uint8_t *o = malloc((size_t)ww * wh * 4);
+        if (o) {
+            for (size_t i = 0; i < (size_t)ww * wh; i++) { uint32_t c = wp[i]; o[4 * i] = (uint8_t)(bgr ? c >> 16 : c); o[4 * i + 1] = (uint8_t)(c >> 8); o[4 * i + 2] = (uint8_t)(bgr ? c : c >> 16); o[4 * i + 3] = 255; }
+            if (!vks_png_write(wpth, o, ww, wh)) VKLOG("screenshot: the window (%dx%d) written to %s", ww, wh, wpth);
+            free(o);
+        }
+        free(wp);
+    } else VKLOG("screenshot: the window could not be read back (%s)", wpth);
+    free(wpth);
+    return 0;
+}
 
 void vks_shot_present(const tex_t *t, uint64_t frame, const int crop[4]) {
     int want = 0; char path[1100] = "";
@@ -146,14 +164,12 @@ void vks_shot_present(const tex_t *t, uint64_t frame, const int crop[4]) {
     free(px);
     g_count++;
     VKLOG("screenshot: present %llu (%dx%d) %s %s (%.1f ms)", (unsigned long long)frame, w, h, rc ? "could not be written to" : "written to", path, (now_ns() - t0) / 1e6);
-    if (g_window) {   // the window as shown: the next present's swapchain picture, on a thread of its own (it waits for the present thread)
-        uint32_t *wp = NULL; int ww, wh, bgr;
-        if (!vkp_capture_next(&wp, &ww, &wh, &bgr, 2000)) {
-            uint8_t *o = malloc((size_t)ww * wh * 4);
-            for (size_t i = 0; i < (size_t)ww * wh; i++) { uint32_t c = wp[i]; o[4 * i] = (uint8_t)(bgr ? c >> 16 : c); o[4 * i + 1] = (uint8_t)(c >> 8); o[4 * i + 2] = (uint8_t)(bgr ? c : c >> 16); o[4 * i + 3] = 255; }
-            char wpth[1200]; snprintf(wpth, sizeof wpth, "%.*s.window.png", (int)(strlen(path) > 4 ? strlen(path) - 4 : strlen(path)), path);
-            if (!vks_png_write(wpth, o, ww, wh)) VKLOG("screenshot: the window (%dx%d) written to %s", ww, wh, wpth);
-            free(o); free(wp);
+    if (g_window) {   // the window as shown: the next present's swapchain picture, on a thread of its own (it waits for the present thread, which waits for this one)
+        char *wpth = malloc(1200);
+        if (wpth) {
+            snprintf(wpth, 1200, "%.*s.window.png", (int)(strlen(path) > 4 ? strlen(path) - 4 : strlen(path)), path);
+            HANDLE th = (HANDLE)_beginthreadex(NULL, 0, window_shot, wpth, 0, NULL);
+            if (th) CloseHandle(th); else free(wpth);
         }
     }
 }

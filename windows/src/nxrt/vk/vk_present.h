@@ -8,13 +8,16 @@ extern "C" {
 #endif
 
 enum { VKP_FIFO = 0, VKP_MAILBOX = 1, VKP_IMMEDIATE = 2 };
-// What a present shows: the image's view in the layout it rests in between submissions, its size, whether its content is sRGB-encoded in a UNORM view
-typedef struct { VkImageView view; VkImageLayout layout; uint32_t w, h; } vkp_source;
+// What a present shows: the image's view in the layout it rests in between submissions, its size (the game's: the crop is in it) and its own size in pixels
+// (larger when the render targets are drawn larger, F-5)
+typedef struct { VkImageView view; VkImageLayout layout; uint32_t w, h, pw, ph; } vkp_source;
 typedef int (*vkp_resolve_fn)(uint64_t serial, vkp_source *out);   // 1 = the serial has a host image with content (vk_tex.c)
 
 int vkp_init(int mode);                     // after vk_dev_open and vkw_open; creates the swapchain and starts the present thread
 void vkp_shutdown(void);
 void vkp_set_resolver(vkp_resolve_fn fn);
+void vkp_set_upscale(int sharp, float sharpness);   // the in-game menu: Sharp (1) or Standard (0), sharpness 0..1
+void vkp_set_mode(int mode);                       // the in-game menu: VKP_FIFO (vsync) / VKP_MAILBOX, the swapchain made again
 // Enqueue one present; returns its ticket at once. serial 0 = nothing to show (the test pattern); wait_value: GPU timeline value the frame's work signals;
 // period: the least time the previous image stays on screen (s, 0 = none); crop: x, y, w, h in the texture (NULL = all of it); flip: GL's lower-left origin
 uint64_t vkp_enqueue(uint64_t serial, double period, uint64_t wait_value, const int crop[4], int flip);

@@ -1,7 +1,8 @@
 #!/bin/bash
 # play.sh: plays Pokemon Pokopia with nxrt on Linux (docs/LINUX-PLAN.md), the counterpart of play.ps1, with the same switches:
 #   play.sh --exefs <ExeFS folder> --game <game.so> --romfs <RomFS.img> --save <save folder> [--work <folder>] [--silent] [--fullscreen] [--window 1600x900]
-#           [--exe <nxrt>] [--link-play] [--join <IPv4[:port]>|ask] [--internet [--room <code>|ask] [--relay <IPv4[:port]>]] [--interact] [--ask] [--pad-check] [--dry-run]
+#           [--exe <nxrt>] [--link-play] [--join <IPv4[:port]>|ask] [--internet [--room <code>|ask] [--relay <IPv4[:port]>]] [--interact] [--story] [--ask] [--pad-check]
+#           [--dry-run]
 #   play.sh --config <play.json> [any switch above]: an installer build's launcher; paths come from play.json (relative ones from its folder, $VARIABLES
 #           and ~ expanded); a switch given here wins over the file. A save folder named only by the file is created empty the first time.
 # --save is the save the game plays on and writes to (B00 / G00 / S00; the game commits through <save>.work beside it): point it at a copy, never your only
@@ -11,12 +12,15 @@
 # relay you trust. With --config (or --ask) and no Link Play switch, a choice comes first (zenity or kdialog when the desktop has one, else this terminal),
 # remembered in ${XDG_CONFIG_HOME:-~/.config}/pokopia-native/linkplay.json; POKOPIA_ASK=1 brings it back after "don't ask again".
 # --interact turns on "Interact everywhere" (experimental, docs/coop-interact.md): Link Play visitors can use moves and items and build in every town, not
-# only Palette Town. Every player in a session needs it on. The keyboard's keys: ${XDG_CONFIG_HOME:-~/.config}/pokopia-native/controls.json, as the
-# Windows window's Controls tab writes it (an action's SDL scancode; front_map.h), handed to the game as DM_KEYMAP.
+# only Palette Town. Every player in a session needs it on. --story turns on "Story co-op" (experimental, docs/story-coop.md) on top of it: a visitor
+# talks to the town's NPCs as the host does; every player needs it on too. The keyboard's keys: ${XDG_CONFIG_HOME:-~/.config}/pokopia-native/controls.json,
+# as the Windows window's Controls tab writes it (an action's SDL scancode; front_map.h), handed to the game as DM_KEYMAP. The picture: display.json beside it
+# (console mode, the size the game draws at, window or full screen, upscaling, 30 fps, vsync, the FPS counter), applied with --config or --ask, a switch or
+# variable from outside winning. In the game, F1 (or a controller's Minus + Plus) changes the same settings and saves them there (docs/in-game-menu.md).
 set -euo pipefail
 die() { echo "play.sh: $*" >&2; exit 2; }
 EXEFS= GAME= ROMFS= SAVE= WORK= EXE= CONFIG= SHADERS= SHADER_BUILD= SHADER_TOOL= PYTHON= INSTALLER= SPIRV_TOOLS= FONTS= SEED= WINDOW=
-SILENT= FULLSCREEN= ASK= LINKPLAY= JOIN= INTERNET= ROOM= RELAY= PADCHECK= DRYRUN= NEWSAVE= INTERACT= NOSAVE= mode=
+SILENT= FULLSCREEN= ASK= LINKPLAY= JOIN= INTERNET= ROOM= RELAY= PADCHECK= DRYRUN= NEWSAVE= INTERACT= STORY= NOSAVE= mode=
 while [ $# -gt 0 ]; do
   a=$1; shift
   case $a in
@@ -26,7 +30,8 @@ while [ $# -gt 0 ]; do
     --fonts) FONTS=$1; shift ;; --pipeline-seed) SEED=$1; shift ;; --window) WINDOW=$1; shift ;;
     --silent) SILENT=1 ;; --fullscreen) FULLSCREEN=1 ;; --ask) ASK=1 ;; --link-play) LINKPLAY=1 ;; --join) JOIN=$1; shift ;;
     --internet) INTERNET=1 ;; --room) ROOM=$1; shift ;; --relay) RELAY=$1; shift ;; --pad-check) PADCHECK=1 ;; --dry-run) DRYRUN=1 ;; --interact) INTERACT=1 ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    --story) STORY=1 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) die "unknown switch $a (play.sh --help)" ;;
   esac
 done
@@ -72,7 +77,9 @@ ls -d "$SAVE"/[BGS]00 >/dev/null 2>&1 || { NOSAVE=1; echo "play.sh: $SAVE holds 
 
 IPPORT='^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])(:[0-9]{1,5})?$'
 ROOMRX='^[0-9A-TV-Za-tv-z]{16}$'   # after dashes and spaces are taken out: Crockford's base32
-PREF=${XDG_CONFIG_HOME:-$HOME/.config}/pokopia-native/linkplay.json
+SETTINGS=${POKOPIA_SETTINGS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/pokopia-native}   # POKOPIA_SETTINGS_DIR: another folder (tests)
+export NXRT_SETTINGS_DIR=$SETTINGS   # the in-game menu (F1) saves its changes there too
+PREF=$SETTINGS/linkplay.json
 pref_get() { [ -f "$PREF" ] && "$PY" -I -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else (str(v).lower() if isinstance(v,bool) else v))' "$PREF" "$1" 2>/dev/null || true; }
 pref_put() {   # key=value ...
   mkdir -p "$(dirname "$PREF")"
@@ -133,18 +140,25 @@ if { [ -n "$CONFIG" ] || [ -n "$ASK" ]; } && [ -z "$LINKPLAY$JOIN$INTERNET$ROOM$
         "$([ "$(pref_get interact)" = true ] && echo yes || echo no)")
       pref_put "interact=$([ "$ie" = yes ] && echo true || echo false)"; [ "$ie" = yes ] && INTERACT=1
     fi
+    if [ -n "$INTERACT" ] && [ -z "$STORY" ]; then
+      sc=$(ask_yes "Pokopia - Link Play" "Story co-op (experimental)? Visitors can talk to the town's story characters. Story requests still count only for the host. Every player needs it on." \
+        "$([ "$(pref_get story)" = true ] && echo yes || echo no)")
+      pref_put "story=$([ "$sc" = yes ] && echo true || echo false)"; [ "$sc" = yes ] && STORY=1
+    fi
     again=$(ask_text "Pokopia - Link Play" "Ask again next time? (yes / no; POKOPIA_ASK=1 brings this back)" "yes")
     pref_put "mode=$mode" "ask=$([ "${again,,}" = no ] && echo false || echo true)"
   else
     JOIN=$(pref_get join); ROOM=$(pref_get room)
     [ "$mode" != alone ] && [ "$(pref_get interact)" = true ] && INTERACT=1
+    [ "$mode" != alone ] && [ "$(pref_get story)" = true ] && STORY=1
   fi
   case $mode in
     alone) JOIN= ROOM= ;; host) LINKPLAY=1; JOIN= ROOM= ;; join) LINKPLAY=1; ROOM= ;; inet-host) INTERNET=1; JOIN= ROOM= ;; inet-visit) INTERNET=1 ;;
   esac
 fi
 [ -n "$JOIN$INTERNET$ROOM$RELAY" ] && LINKPLAY=1
-[ -z "$INTERACT" ] || [ -n "$LINKPLAY" ] || die "--interact goes with Link Play (--link-play, --join or --internet)"
+[ -n "$STORY" ] && INTERACT=1   # Story co-op needs Interact everywhere
+[ -z "$INTERACT" ] || [ -n "$LINKPLAY" ] || die "--interact$([ -n "$STORY" ] && echo ' (and --story)') goes with Link Play (--link-play, --join or --internet)"
 if [ -n "$LINKPLAY" ]; then
   [ "$JOIN" = ask ] && { read -r -p "The host's address (for example 203.0.113.7, or 192.168.1.20:47600): " JOIN; [ -n "$JOIN" ] || die "no address given"; }
   [ -z "$JOIN" ] || [[ $JOIN =~ $IPPORT ]] || die "--join wants the host's IPv4 address, for example 203.0.113.7 or 192.168.1.20:47600 (got '$JOIN')"
@@ -164,6 +178,7 @@ if [ -n "$LINKPLAY" ]; then
   [ -n "$RELAY" ] && export DM_COOP_RELAY=$RELAY
   echo
   [ -n "$INTERACT" ] && export DM_COOP_INTERACT=1 && echo "Interact everywhere: on (experimental). Every player needs it on; a session refuses a player whose setting differs."
+  [ -n "$STORY" ] && export DM_COOP_STORY=1 && echo "Story co-op: on (experimental). Every player needs it on as well."
   if [ -n "$JOIN" ]; then echo "Link Play: visiting $JOIN. In the game: Link Play, Local connection, then look for a town."
   else echo "Link Play: on. In the game: Link Play, Local connection, to host. Other players join this computer's address (ip -4 addr shows it)."; fi
   if [ -n "$INTERNET" ]; then
@@ -183,6 +198,36 @@ CACHE=$WORK/cache TEMP=$WORK/temp LOGS=$WORK/logs
 [ -n "$DRYRUN" ] || mkdir -p "$CACHE" "$TEMP" "$LOGS"
 export NXRT_VK_CACHE_DIR=$CACHE
 export DM_AUDIO=$([ -n "$SILENT" ] && echo 0 || echo 1)
+if [ -n "$CONFIG$ASK" ]; then   # the picture, saved for this computer (display.json); a switch or variable given from outside wins
+  D_CONSOLE=1 D_RES=default D_FULL=false D_WIN=1280x720 D_UPSCALE=sharp D_SHARP=0.5 D_FPS=60 D_VSYNC=true D_COUNTER=off
+  [ -n "$PY" ] && eval "$("$PY" -I - "$SETTINGS/display.json" <<'EOF'
+import json, re, shlex, sys
+d = {'console': 1, 'resolution': 'default', 'fullscreen': False, 'window': '1280x720', 'upscale': 'sharp', 'sharpness': 5, 'fps': 60, 'vsync': True, 'fps_counter': 'off'}
+try: d.update({k: v for k, v in json.load(open(sys.argv[1], encoding='utf-8')).items() if k in d})
+except Exception: pass
+def num(v, dflt):
+    try: return int(v)
+    except (TypeError, ValueError): return dflt
+r = str(d['resolution'])   # "default" or "<w>x<h>", kept as saved; a factor from before the sizes (1 / 1.5 / 2 / 3) was meant docked
+if r != 'default' and not re.fullmatch(r'\d+x\d+', r):
+    try: f = float(r)
+    except ValueError: f = 0
+    h = round(1080 * f); r = f'{round(h * 16 / 9)}x{h}' if f >= 1 else 'default'
+for var, v in (('D_CONSOLE', num(d['console'], 1)), ('D_RES', r), ('D_FULL', 'true' if d['fullscreen'] else 'false'), ('D_WIN', d['window'] or ''),
+               ('D_UPSCALE', d['upscale']), ('D_SHARP', f"{num(d['sharpness'], 5) / 10:g}"), ('D_FPS', num(d['fps'], 60)),
+               ('D_VSYNC', 'true' if d['vsync'] else 'false'), ('D_COUNTER', d['fps_counter'] if d['fps_counter'] in ('off', 'corner', 'detailed') else 'off')):
+    print(f'{var}={shlex.quote(str(v))}')
+EOF
+)"
+  [ -z "${DM_OPMODE:-}" ] && export DM_OPMODE=$D_CONSOLE
+  [ -z "${NXRT_VK_SCALE:-}${NXRT_VK_RESOLUTION:-}" ] && export NXRT_VK_RESOLUTION=$D_RES
+  if [ -z "$WINDOW$FULLSCREEN${NXRT_VK_WINDOW:-}${NXRT_VK_FULLSCREEN:-}" ]; then [ "$D_FULL" = true ] && FULLSCREEN=1 || WINDOW=$D_WIN; fi
+  [ -z "${NXRT_VK_UPSCALE:-}" ] && export NXRT_VK_UPSCALE=$D_UPSCALE
+  [ -z "${NXRT_VK_SHARPNESS:-}" ] && export NXRT_VK_SHARPNESS=$D_SHARP
+  [ -z "${DM_FPS:-}" ] && [ "$D_FPS" = 30 ] && export DM_FPS=30
+  [ -z "${NXRT_VK_PRESENT:-}" ] && [ "$D_VSYNC" = false ] && export NXRT_VK_PRESENT=mailbox
+  [ -z "${NXRT_FPS_COUNTER:-}" ] && [ "$D_COUNTER" != off ] && export NXRT_FPS_COUNTER=$D_COUNTER
+fi
 [ -n "$WINDOW" ] && export NXRT_VK_WINDOW=$WINDOW
 [ -n "$FULLSCREEN" ] && export NXRT_VK_FULLSCREEN=1
 [ -n "$PADCHECK" ] && export DM_PAD_CHECK=1 DM_RUMBLE_LOG=1 DM_MOTION_LOG=1
@@ -202,7 +247,7 @@ if [ -n "$SHADERS" ]; then
 fi
 [ -n "$FONTS" ] && export DM_FONT_DIR=$FONTS
 [ -n "$SEED" ] && export NXRT_VK_PIPELINE_SEED=$SEED
-KEYS=${XDG_CONFIG_HOME:-$HOME/.config}/pokopia-native/controls.json
+KEYS=$SETTINGS/controls.json
 [ -z "${DM_KEYMAP:-}" ] && [ -f "$KEYS" ] && export DM_KEYMAP=$KEYS   # the keyboard's keys; the game logs the map it uses
 abs() { case $1 in /*) echo "$1" ;; *) (cd "$(dirname "$1")" && echo "$PWD/$(basename "$1")") ;; esac; }   # a new save folder need not exist yet
 ARGS=("$(abs "$EXEFS")" --dll "$(abs "$GAME")" --romfs "$(abs "$ROMFS")" --save "$(abs "$SAVE")" --temp "$TEMP" --log "$LOGS" --gfx vulkan)
@@ -211,11 +256,14 @@ if [ -n "$DRYRUN" ]; then
   echo "env: NXRT_VK_CACHE_DIR=$NXRT_VK_CACHE_DIR DM_AUDIO=$DM_AUDIO DM_PAD_CHECK=${DM_PAD_CHECK:-}"
   [ -n "$SHADERS" ] && { echo "shaders: NXRT_SHADER_CACHE=$NXRT_SHADER_CACHE NXRT_SHADER_BUILD=${NXRT_SHADER_BUILD:-} NXSHADER_TOOLS=${NXSHADER_TOOLS:-}"; echo "shader tool: ${NXRT_SHADER_TOOL:-}"; }
   [ -n "$FONTS$SEED" ] && echo "fonts: ${DM_FONT_DIR:-}; pipeline seed: ${NXRT_VK_PIPELINE_SEED:-}"
-  [ -n "${DM_COOP:-}" ] && echo "link play: DM_COOP=$DM_COOP DM_COOP_JOIN=${DM_COOP_JOIN:-} DM_COOP_INTERNET=${DM_COOP_INTERNET:-} DM_COOP_INTERACT=${DM_COOP_INTERACT:-}"
+  [ -n "${DM_COOP:-}" ] && echo "link play: DM_COOP=$DM_COOP DM_COOP_JOIN=${DM_COOP_JOIN:-} DM_COOP_INTERNET=${DM_COOP_INTERNET:-} DM_COOP_INTERACT=${DM_COOP_INTERACT:-} DM_COOP_STORY=${DM_COOP_STORY:-}"
   [ -n "${DM_KEYMAP:-}" ] && echo "keys: DM_KEYMAP=$DM_KEYMAP"
+  echo "display: DM_OPMODE=${DM_OPMODE:-} NXRT_VK_SCALE=${NXRT_VK_SCALE:-} NXRT_VK_RESOLUTION=${NXRT_VK_RESOLUTION:-} NXRT_VK_WINDOW=${NXRT_VK_WINDOW:-}" \
+       "NXRT_VK_FULLSCREEN=${NXRT_VK_FULLSCREEN:-} NXRT_VK_UPSCALE=${NXRT_VK_UPSCALE:-} NXRT_VK_SHARPNESS=${NXRT_VK_SHARPNESS:-} DM_FPS=${DM_FPS:-}" \
+       "NXRT_VK_PRESENT=${NXRT_VK_PRESENT:-} NXRT_FPS_COUNTER=${NXRT_FPS_COUNTER:-} NXRT_SETTINGS_DIR=$NXRT_SETTINGS_DIR"
   exit 0
 fi
-echo "Pokopia: keyboard WASD move, mouse look (click the picture; Esc releases the mouse), J/K/U/I = A/B/X/Y, Return = +, Tab = -, F11 fullscreen."
+echo "Pokopia: keyboard WASD move, mouse look (click the picture; Esc releases the mouse), J/K/U/I = A/B/X/Y, Return = +, Tab = -, F11 fullscreen, F1 the menu."
 echo "Controllers work as Switch controllers (Steam Deck, Xbox / PlayStation / Switch Pro). Save: $SAVE. Logs: $LOGS"
 cd "$WORK"
 exec nice -n 2 "$(abs "$EXE")" "${ARGS[@]}"

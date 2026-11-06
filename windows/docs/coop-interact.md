@@ -69,6 +69,8 @@ attaching), the callback `coop_interact_site(id, x0..x30)`, `coop_interact_on()`
   on); `docs/env_switches.tsv` documents it.
 - **The fingerprint:** with the setting on, a device's mods fingerprint gains "Interact everywhere" (FNV-1a over the name, as nxnative's
   cheat names: `fd0b8d7d8a364d88` alone). Hosts whose fingerprint differs are hidden from scans, and a joiner's is checked again.
+- **Story co-op (experimental)**, the next switch (docs/story-coop.md), brings this one with it and adds a second site: visitors talk to the
+  town's story characters. Story requests still count only for the host.
 
 ## Tests (Windows, two instances over loopback)
 

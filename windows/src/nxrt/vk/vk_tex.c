@@ -16,12 +16,13 @@
 #include <string.h>
 
 typedef struct { uint64_t pool; int64_t off; int32_t target, format, samples, cls, storage_img, pkg_bh; uint32_t w, h, d, levels, stride, layout_flags; } skey;
-static vk_hmap g_share = {sizeof(skey)}, g_serial = {8}, g_live = {8}, g_cpu = {8}, g_samp = {sizeof(samp_par)};
+static vk_hmap g_share = {sizeof(skey)}, g_serial = {8}, g_live = {8}, g_cpu = {8}, g_samp = {sizeof(samp_par)}, g_noscale = {sizeof(skey)};
 static SRWLOCK g_lk = SRWLOCK_INIT;   // every table here; the replay and the present thread take it
 static vkt_reg *g_reg; static int g_nreg; static samp_par *g_sreg; static uint8_t *g_sreg_ok; static int g_nsreg;
 static int g_pool_n;   // the texture pool's capacity (IDs past it read as empty: the replay's descriptor lookups)
 int vkt_pool_n(void) { return g_pool_n; }
 static uint64_t g_frame;
+static _Atomic uint64_t s_same, s_same_bytes, s_hash_ns;   // re-uploads skipped because the storage held the same bytes
 static _Atomic uint64_t s_images, s_bytes, s_uploads, s_reuploads, s_up_bytes, s_up_ns, s_shared, s_astc_fast, s_astc_high, s_cpuw, s_evicted, s_samplers;
 // ASTC levels / layers still at the fast pass: where their high-quality data goes
 typedef struct { vka_key key; vkt_image *im; uint32_t level, layer, w, h, slices; } upgrade_t;
@@ -46,14 +47,43 @@ static int from_storage(const tex_t *t) {
     return fi && (fi->flags & VKF_COMPRESSED) && pool_cpu_writable(t->pool) && t->d.samples <= 1 &&
            !(t->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_SPARSE));
 }
-static void key_of(const tex_t *t, int cls, skey *k) {
+static void key_from(const pool_t *pool, int64_t off, const uint8_t *mem, const nvn_texdesc *d, int has_layout, int cls, skey *k) {
     memset(k, 0, sizeof *k);
-    k->pool = (uint64_t)(uintptr_t)t->pool; k->off = t->pool ? t->off : (int64_t)(uintptr_t)t->mem;
-    k->target = t->d.target; k->format = t->d.format; k->samples = t->d.samples > 1 ? t->d.samples : 1; k->cls = cls;
-    k->storage_img = (t->d.flags & NVN_TEXTURE_FLAGS_IMAGE) && !vkf_is_compressed(t->d.format);   // IMAGE adds storage use; it changes nothing for BC / ASTC
-    k->pkg_bh = t->has_layout ? t->d.pkg_block_h : 0;
-    k->w = t->d.width; k->h = t->d.height; k->d = t->d.depth; k->levels = t->d.levels ? t->d.levels : 1; k->stride = t->d.stride;
-    k->layout_flags = t->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_SPARSE);
+    k->pool = (uint64_t)(uintptr_t)pool; k->off = pool ? off : (int64_t)(uintptr_t)mem;
+    k->target = d->target; k->format = d->format; k->samples = d->samples > 1 ? d->samples : 1; k->cls = cls;
+    k->storage_img = (d->flags & NVN_TEXTURE_FLAGS_IMAGE) && !vkf_is_compressed(d->format);   // IMAGE adds storage use; it changes nothing for BC / ASTC
+    k->pkg_bh = has_layout ? d->pkg_block_h : 0;
+    k->w = d->width; k->h = d->height; k->d = d->depth; k->levels = d->levels ? d->levels : 1; k->stride = d->stride;
+    k->layout_flags = d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_SPARSE);
+}
+static void key_of(const tex_t *t, int cls, skey *k) { key_from(t->pool, t->off, t->mem, &t->d, t->has_layout, cls, k); }
+
+// ---------- F-5: render targets drawn larger ----------
+// NXRT_VK_SCALE (the launcher's Resolution): the factor. Which images: GPU content (what the game renders, never what it reads from guest memory), 2D or 2D arrays, not
+// block-compressed, an attachment, from 64 x 64 up to the docked screen's 1920 x 1080 and not square (shadow maps and their atlases, LUTs and cube faces stay
+// as they are, and so do the 2x1 exposure and the small probe targets), not linear (the CPU reads those in place), not one whose first content the game put in
+// guest memory (a lookup table: init_fill), within the device's limits. An image taken back to the game's size (vkt_unscale) stays so for the rest of the run
+// (g_noscale), as Ryujinx's resolution scaling blacklists a texture. NULL: scaled, else why not
+static float g_scale = 1.0f; static _Atomic uint32_t g_scale_req;   // the factor; one the in-game menu asked for (float bits, 0 = none)
+float vkt_scale(void) { return g_scale; }
+static float scale_clamp(float s) { return s > 1.01f && s <= 4.0f ? s : 1.0f; }
+static int init_fill_src(const tex_t *t, const vkf_info *fi);
+static const char *scale_wanted(const tex_t *t, const vkf_info *fi, int cls, VkImageUsageFlags u) {
+    if (cls != VKT_GPU) return "its content comes from guest memory";
+    if ((fi->flags & VKF_COMPRESSED) || !(u & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))) return "not an attachment";
+    if (t->d.target != NVN_TEXTURE_TARGET_2D && t->d.target != NVN_TEXTURE_TARGET_2D_ARRAY && t->d.target != NVN_TEXTURE_TARGET_RECTANGLE &&
+        t->d.target != NVN_TEXTURE_TARGET_2D_MULTISAMPLE && t->d.target != NVN_TEXTURE_TARGET_2D_MULTISAMPLE_ARRAY) return "not 2D";
+    if (t->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_SPARSE)) return "linear or sparse";
+    uint32_t w = t->d.width, h = t->d.height, lim = g_vk.props.limits.maxImageDimension2D;
+    if (g_vk.props.limits.maxFramebufferWidth < lim) lim = g_vk.props.limits.maxFramebufferWidth;
+    if (g_vk.props.limits.maxFramebufferHeight < lim) lim = g_vk.props.limits.maxFramebufferHeight;
+    if (w < 64 || h < 64) return "smaller than 64 x 64";
+    if (w == h) return "square";
+    if (w > 1920 || h > 1080) return "larger than the screen";
+    if (w * g_scale + 0.5f > lim || h * g_scale + 0.5f > lim) return "beyond the device's limits";
+    if (init_fill_src(t, fi) >= 0) return "its first content is data in guest memory";   // a lookup table the game fills (Pokopia's 256x64 tone LUT), not a picture
+    skey k; key_of(t, cls, &k);
+    return vk_hm_get(&g_noscale, &k) ? "taken back to the game's size earlier" : NULL;
 }
 
 // ---------- Image creation ----------
@@ -90,7 +120,7 @@ static void image_free(vkt_image *im) {
     if (im->present_view && im->present_view != im->view) vkDestroyImageView(g_vk.dev, im->present_view, NULL);
     if (im->view) vkDestroyImageView(g_vk.dev, im->view, NULL);
     if (im->img) vkDestroyImage(g_vk.dev, im->img, NULL);
-    vk_free_mem(&im->alloc);
+    vk_free_mem(&im->alloc); free(im->phash);
     atomic_fetch_sub(&s_images, 1); atomic_fetch_sub(&s_bytes, im->alloc.size);
     free(im);
 }
@@ -125,11 +155,27 @@ static vkt_image *image_create(const tex_t *t, int cls) {
     }
     im->usage = u;
     im->rest = (u & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT)) ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, NULL, cf, type, fi->vk, {im->w, im->h, im->depth}, im->levels, im->layers, im->samples,
-                            VK_IMAGE_TILING_OPTIMAL, u, VK_SHARING_MODE_EXCLUSIVE, 0, NULL, VK_IMAGE_LAYOUT_UNDEFINED};
-    if (vkCreateImage(g_vk.dev, &ci, NULL, &im->img) != VK_SUCCESS) { VKRED("vkCreateImage %ux%ux%u format %s (%d) levels %u layers %u failed", im->w, im->h, im->depth, fi->name, fi->vk, im->levels, im->layers); free(im); return NULL; }
-    VkMemoryRequirements mr; vkGetImageMemoryRequirements(g_vk.dev, im->img, &mr);
-    if (vk_alloc_mem(&mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &im->alloc)) { VKRED("no device memory for a %ux%u %s texture (%llu bytes)", im->w, im->h, fi->name, (unsigned long long)mr.size); vkDestroyImage(g_vk.dev, im->img, NULL); free(im); return NULL; }
+    im->vw = im->w; im->vh = im->h; im->scale = 1.0f; im->noscale_why = scale_wanted(t, fi, cls, u); im->scalable = !im->noscale_why;
+    if (!im->noscale_why && g_scale == 1.0f) im->noscale_why = "resolution x1";
+    for (int scaled = !im->noscale_why; scaled >= 0; scaled--) {   // a scaled image the device cannot make or hold is made at the game's size
+        if (scaled) { im->vw = (uint32_t)(im->w * g_scale + 0.5f); im->vh = (uint32_t)(im->h * g_scale + 0.5f); im->scale = g_scale; }
+        else { im->vw = im->w; im->vh = im->h; im->scale = 1.0f; }
+        VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, NULL, cf, type, fi->vk, {im->vw, im->vh, im->depth}, im->levels, im->layers, im->samples,
+                                VK_IMAGE_TILING_OPTIMAL, u, VK_SHARING_MODE_EXCLUSIVE, 0, NULL, VK_IMAGE_LAYOUT_UNDEFINED};
+        if (vkCreateImage(g_vk.dev, &ci, NULL, &im->img) != VK_SUCCESS) {
+            VKRED("vkCreateImage %ux%ux%u format %s (%d) levels %u layers %u failed", im->vw, im->vh, im->depth, fi->name, fi->vk, im->levels, im->layers);
+            if (scaled) { im->noscale_why = "the device could not make it larger"; continue; }
+            free(im); return NULL;
+        }
+        VkMemoryRequirements mr; vkGetImageMemoryRequirements(g_vk.dev, im->img, &mr);
+        if (vk_alloc_mem(&mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &im->alloc)) {
+            VKRED("no device memory for a %ux%u %s texture (%llu bytes)", im->vw, im->vh, fi->name, (unsigned long long)mr.size); vkDestroyImage(g_vk.dev, im->img, NULL); im->img = VK_NULL_HANDLE;
+            if (scaled) { im->noscale_why = "no device memory to make it larger"; continue; }
+            free(im); return NULL;
+        }
+        break;
+    }
+    if (im->scale != 1.0f) { static int n; if (n++ < 24) VKLOG("render target ser=%llu %ux%u %s drawn at %ux%u (resolution x%g)", (unsigned long long)t->serial, im->w, im->h, fi->name, im->vw, im->vh, im->scale); }
     vkBindImageMemory(g_vk.dev, im->img, im->alloc.mem, im->alloc.off);
     im->view = make_view(im, fi->vk, im->vtype, fi->swz, 0, im->levels, 0, im->layers, im->aspect & ~VK_IMAGE_ASPECT_STENCIL_BIT ? im->aspect & ~VK_IMAGE_ASPECT_STENCIL_BIT : im->aspect);
     VkFormat pf = vkf_unorm_of(fi->vk);
@@ -309,13 +355,18 @@ static int mem_any(const uint8_t *p, uint64_t n) {
     return any;
 }
 #endif
-static int init_fill(const tex_t *t, const vkt_image *im) {
-    if (!t->mem || !t->pool || (t->pool->flags & NVN_MEMORY_POOL_FLAGS_VIRTUAL) || t->has_layout || t->d.samples > 1 || (t->d.flags & NVN_TEXTURE_FLAGS_COMPRESSIBLE)) return 0;
-    if ((im->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) || (im->fi->flags & VKF_COMPRESSED)) return 0;
+static int init_fill_src(const tex_t *t, const vkf_info *fi) {   // where the initial content is: 0 / 1 / 2 (the log's three cases), -1 none
+    if (!t->mem || !t->pool || (t->pool->flags & NVN_MEMORY_POOL_FLAGS_VIRTUAL) || t->has_layout || t->d.samples > 1 || (t->d.flags & NVN_TEXTURE_FLAGS_COMPRESSIBLE)) return -1;
+    if (fi->flags & (VKF_DEPTH | VKF_STENCIL | VKF_COMPRESSED)) return -1;
     int no_cpu = (t->pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) != 0, uncached = (t->pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED) != 0;
-    if (!no_cpu && !uncached && !nvn_flushed(t->mem, t->L.size)) return 0;
-    if (!mem_any(t->mem, t->L.size)) return 0;
-    int why = no_cpu ? 0 : uncached ? 1 : 2;
+    if (!no_cpu && !uncached && !nvn_flushed(t->mem, t->L.size)) return -1;
+    if (!mem_any(t->mem, t->L.size)) return -1;
+    return no_cpu ? 0 : uncached ? 1 : 2;
+}
+static int init_fill(const tex_t *t, const vkt_image *im) {
+    if (im->vw != im->w || im->vh != im->h) return 0;   // F-5: a scaled render target starts cleared (one with content of its own is never scaled)
+    int why = init_fill_src(t, im->fi);
+    if (why < 0) return 0;
     static uint64_t n[3]; if (n[why]++ < 4) VKLOG("initial content: ser=%llu %ux%ux%u format %#x filled from its storage, %s (%llu so far)", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.depth, t->d.format,
                                                  (const char *[]){"a CPU_NO_ACCESS pool's", "a CPU_UNCACHED pool's", "flushed by the CPU before its first use"}[why], (unsigned long long)n[why]);
     return 1;
@@ -325,6 +376,71 @@ static int init_fill(const tex_t *t, const vkt_image *im) {
 static VkCommandBuffer cb_get(int *once) { VkCommandBuffer cb = vks_upload_cb(); *once = 0; if (!cb && vks_owner() < 0) { cb = vk_once_begin(); *once = 1; } return cb; }
 static void cb_put(VkCommandBuffer cb, int once) { if (once) vk_once_end(cb); }
 
+// Quantum's re-upload skip (reference/quantum-1.2.5): a fast 64-bit hash of each 4 KB page of a texture's storage at its upload; pages written since
+// then that hold the same bytes (a neighbour's writes, the game rewriting what it had) need no upload. 0 when the storage cannot be read: the caller
+// uploads then. NXRT_TEX_HASH=0 turns the check off (every written texture uploads again, as before)
+static int hash_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("NXRT_TEX_HASH"); on = !(e && *e == '0'); } return on; }
+#ifdef _WIN32
+static uint64_t range_hash(const uint8_t *p, uint64_t n) {
+    const uint64_t K = 0x9E3779B97F4A7C15ull;
+    __try {
+        uint64_t a = 1, b = 2, c = 3, d = 4, i = 0, v[4];
+        for (; i + 32 <= n; i += 32) {
+            memcpy(v, p + i, 32);
+            a = (a ^ v[0]) * K; b = (b ^ v[1]) * K; c = (c ^ v[2]) * K; d = (d ^ v[3]) * K;
+            a ^= a >> 29; b ^= b >> 29; c ^= c >> 29; d ^= d >> 29;
+        }
+        for (; i < n; i++) a = (a ^ p[i]) * K;
+        uint64_t h = a ^ (b * 31) ^ (c * 1009) ^ (d * 65537) ^ n;
+        h ^= h >> 33; h *= 0xff51afd7ed558ccdull; h ^= h >> 33;
+        return h ? h : 1;
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { return 0; }
+}
+#else
+static uint64_t range_hash(const uint8_t *p, uint64_t n) {
+    const uint64_t K = 0x9E3779B97F4A7C15ull;
+    plat_guard g; PLAT_GUARD_PUSH(&g);
+    if (sigsetjmp(g.jb, 0)) return 0;
+    uint64_t a = 1, b = 2, c = 3, d = 4, i = 0, v[4];
+    for (; i + 32 <= n; i += 32) {
+        memcpy(v, p + i, 32);
+        a = (a ^ v[0]) * K; b = (b ^ v[1]) * K; c = (c ^ v[2]) * K; d = (d ^ v[3]) * K;
+        a ^= a >> 29; b ^= b >> 29; c ^= c >> 29; d ^= d >> 29;
+    }
+    for (; i < n; i++) a = (a ^ p[i]) * K;
+    PLAT_GUARD_POP(&g);
+    uint64_t h = a ^ (b * 31) ^ (c * 1009) ^ (d * 65537) ^ n;
+    h ^= h >> 33; h *= 0xff51afd7ed558ccdull; h ^= h >> 33;
+    return h ? h : 1;
+}
+#endif
+// The storage's pages (4 KB, the first and last ones partly): their count, and page i's part of [mem, mem + size)
+static uint32_t npages_of(const uint8_t *mem, uint64_t size) { uintptr_t a = (uintptr_t)mem & ~(uintptr_t)4095, b = ((uintptr_t)mem + size + 4095) & ~(uintptr_t)4095; return (uint32_t)((b - a) >> 12); }
+static void page_part(const uint8_t *mem, uint64_t size, uint32_t i, const uint8_t **a, uint64_t *n) {
+    uintptr_t lo = ((uintptr_t)mem & ~(uintptr_t)4095) + ((uintptr_t)i << 12), hi = lo + 4096;
+    if (lo < (uintptr_t)mem) lo = (uintptr_t)mem;
+    if (hi > (uintptr_t)mem + size) hi = (uintptr_t)mem + size;
+    *a = (const uint8_t *)lo; *n = hi > lo ? hi - lo : 0;
+}
+// Every page's hash, taken after the protection and before the upload reads the bytes: a write in between makes the page dirty again, and its new
+// bytes then differ from this hash (hashed after the upload, such a write would match and leave the image stale). 0 where unreadable: always changed
+static void hash_pages(vkt_image *im, const tex_t *t) {
+    uint32_t n = npages_of(t->mem, t->L.size);
+    if (im->npg != n) { free(im->phash); im->phash = malloc((size_t)n * sizeof *im->phash); im->npg = im->phash ? n : 0; }
+    for (uint32_t i = 0; i < im->npg; i++) { const uint8_t *a; uint64_t k; page_part(t->mem, t->L.size, i, &a, &k); im->phash[i] = k ? range_hash(a, k) : 1; }
+}
+// Whether the pages written since the last upload hold the bytes they held then (only those pages are read)
+static int pages_same(const vkt_image *im, const tex_t *t) {
+    if (!im->phash || im->npg != npages_of(t->mem, t->L.size)) return 0;
+    for (uint32_t i = 0; i < im->npg; i++) {
+        const uint8_t *a; uint64_t k; page_part(t->mem, t->L.size, i, &a, &k);
+        if (!k || !nvn_dirty_since_span(im->span, a, (size_t)k, im->stamp)) continue;
+        uint64_t h = range_hash(a, k);
+        if (!h || h != im->phash[i]) return 0;
+    }
+    return 1;
+}
+
 // Uploads a storage-backed image when its pages were written since its last upload (nxnative's order: stamp, protect, then read). Caller holds g_lk
 static void refresh(vkt_image *im, const tex_t *t) {
     if (!im->span) im->span = nvn_dirty_span(t->mem, (size_t)t->L.size);
@@ -333,8 +449,14 @@ static void refresh(vkt_image *im, const tex_t *t) {
     if (!cb) return;
     uint64_t st = nvn_dirty_now();
     if (im->span) nvn_dirty_protect(t->mem, (size_t)t->L.size);
-    int first = !im->content;
+    int first = !im->content, hashing = hash_on() && im->span && t->mem;
+    if (hashing && !first) {   // the pages were written: with the same bytes, the image stays
+        uint64_t th = now_ns(); int same = pages_same(im, t); atomic_fetch_add(&s_hash_ns, now_ns() - th);
+        if (same) { im->stamp = st; atomic_fetch_add(&s_same, 1); atomic_fetch_add(&s_same_bytes, t->L.size); cb_put(cb, once); return; }
+    }
+    if (hashing) { uint64_t th = now_ns(); hash_pages(im, t); atomic_fetch_add(&s_hash_ns, now_ns() - th); }
     if (upload(im, t, cb) >= 0) { im->stamp = st; if (first) atomic_fetch_add(&s_uploads, 1); else atomic_fetch_add(&s_reuploads, 1); }
+    else im->npg = 0;   // not uploaded: the hashes describe nothing
     cb_put(cb, once);
 }
 
@@ -574,6 +696,29 @@ int vkt_samp_copy(int id, samp_par *out) {
 }
 
 int vkt_readback_region(vkt_image *im, unsigned level, unsigned layer, const NVNcopyRegion *r, uint8_t *dst, size_t size) {
+    if (!im || (im->vw == im->w && im->vh == im->h)) return vkt_readback_region_raw(im, level, layer, r, dst, size);
+    if (level >= im->levels || r->width <= 0 || r->height <= 0) return -1;
+    // F-5: the scaled image's pixels over the region, then the one nearest each game pixel's centre (bytes per texel as the caller sized dst)
+    size_t bpp = size / ((size_t)r->width * r->height);
+    uint32_t vw = vkt_vlw(im, level), vh = vkt_vlh(im, level), nw = mip(im->w, level), nh = mip(im->h, level);
+    int32_t x0 = vkt_sx(im, level, r->xoffset), y0 = vkt_sy(im, level, r->yoffset), x1 = vkt_sx(im, level, (int64_t)r->xoffset + r->width), y1 = vkt_sy(im, level, (int64_t)r->yoffset + r->height);
+    if (x1 > (int32_t)vw) x1 = (int32_t)vw; if (y1 > (int32_t)vh) y1 = (int32_t)vh;
+    if (!bpp || x1 <= x0 || y1 <= y0) return -1;
+    NVNcopyRegion rr = {x0, y0, r->zoffset, x1 - x0, y1 - y0, 1};
+    uint8_t *tmp = malloc((size_t)rr.width * rr.height * bpp);
+    int rc = tmp ? vkt_readback_region_raw(im, level, layer, &rr, tmp, (size_t)rr.width * rr.height * bpp) : -1;
+    if (!rc)
+        for (int y = 0; y < r->height; y++) {
+            int64_t sy = ((2 * (int64_t)(r->yoffset + y) + 1) * vh / (2 * (int64_t)nh)) - y0; sy = sy < 0 ? 0 : sy >= rr.height ? rr.height - 1 : sy;
+            for (int x = 0; x < r->width; x++) {
+                int64_t sx = ((2 * (int64_t)(r->xoffset + x) + 1) * vw / (2 * (int64_t)nw)) - x0; sx = sx < 0 ? 0 : sx >= rr.width ? rr.width - 1 : sx;
+                memcpy(dst + ((size_t)y * r->width + x) * bpp, tmp + ((size_t)sy * rr.width + sx) * bpp, bpp);
+            }
+        }
+    free(tmp);
+    return rc;
+}
+int vkt_readback_region_raw(vkt_image *im, unsigned level, unsigned layer, const NVNcopyRegion *r, uint8_t *dst, size_t size) {
     if (!im || level >= im->levels || r->width <= 0 || r->height <= 0) return -1;
     VkBufferCreateInfo bci = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, 0, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_SHARING_MODE_EXCLUSIVE, 0, NULL};
     VkBuffer b; vk_alloc m;
@@ -608,7 +753,7 @@ int vkt_readback(vkt_image *im, unsigned level, unsigned layer, uint8_t *dst, si
     VkCommandBuffer cb = vk_once_begin();
     VkImageAspectFlags asp = im->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_ASPECT_DEPTH_BIT : im->aspect;
     vk_image_barrier(cb, im->img, im->aspect, im->rest, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-    uint32_t lw = mip(im->w, level), lh = mip(im->h, level), ld = im->vtype == VK_IMAGE_VIEW_TYPE_3D ? mip(im->depth, level) : 1;
+    uint32_t lw = vkt_vlw(im, level), lh = vkt_vlh(im, level), ld = im->vtype == VK_IMAGE_VIEW_TYPE_3D ? mip(im->depth, level) : 1;   // the image's own pixels (tests)
     VkBufferImageCopy c = {0, 0, 0, {asp, level, layer, 1}, {0, 0, 0}, {lw, lh, ld}};
     vkCmdCopyImageToBuffer(cb, im->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, b, 1, &c);
     vk_image_barrier(cb, im->img, im->aspect, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, im->rest, VK_PIPELINE_STAGE_2_COPY_BIT, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
@@ -661,9 +806,91 @@ int vkt_present_source(uint64_t serial, vkp_source *out) {
     AcquireSRWLockShared(&g_lk);
     vkt_image *im = vk_hm_get(&g_serial, &serial);
     int ok = im && im->content && im->present_view;
-    if (ok) { out->view = im->present_view; out->layout = im->rest; out->w = im->w; out->h = im->h; }
+    if (ok) { out->view = im->present_view; out->layout = im->rest; out->w = im->w; out->h = im->h; out->pw = im->vw; out->ph = im->vh; }
     ReleaseSRWLockShared(&g_lk);
     return ok;
+}
+
+// F-5: a scaled image back at the game's size. A new image of the same description replaces its Vulkan objects (the old ones go behind the GPU), its content
+// blitted down when the format can be, else cleared
+typedef struct { VkImage img; vk_alloc alloc; VkImageView v[VKT_NVIEWS + 2]; int nv; } old_image;
+static void old_free_cb(void *p) { old_image *o = p; for (int i = 0; i < o->nv; i++) vkDestroyImageView(g_vk.dev, o->v[i], NULL); vkDestroyImage(g_vk.dev, o->img, NULL); vk_free_mem(&o->alloc); free(o); }
+// The image re-made at factor s (its size vw x vh), the content blitted over (scaled) when the format can be, else cleared; caller logs. Recorded into cb, outside a pass
+static int resize_image(vkt_image *im, VkCommandBuffer cb, float s, int *blitted) {
+    if (!im || !cb) return -1;
+    uint32_t nvw = s == 1.0f ? im->w : (uint32_t)(im->w * s + 0.5f), nvh = s == 1.0f ? im->h : (uint32_t)(im->h * s + 0.5f);
+    if (nvw == im->vw && nvh == im->vh) return -1;
+    const vkf_info *fi = im->fi; int depth = (fi->flags & (VKF_DEPTH | VKF_STENCIL)) != 0;
+    VkImageCreateFlags cf = (im->vtype == VK_IMAGE_VIEW_TYPE_CUBE || im->vtype == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0) | (!depth ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0);
+    VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, NULL, cf, VK_IMAGE_TYPE_2D, fi->vk, {nvw, nvh, 1}, im->levels, im->layers, im->samples, VK_IMAGE_TILING_OPTIMAL, im->usage,
+                            VK_SHARING_MODE_EXCLUSIVE, 0, NULL, VK_IMAGE_LAYOUT_UNDEFINED};
+    VkImage img; vk_alloc alloc;
+    if (vkCreateImage(g_vk.dev, &ci, NULL, &img) != VK_SUCCESS) return -1;
+    VkMemoryRequirements mr; vkGetImageMemoryRequirements(g_vk.dev, img, &mr);
+    if (vk_alloc_mem(&mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, &alloc)) { vkDestroyImage(g_vk.dev, img, NULL); return -1; }
+    vkBindImageMemory(g_vk.dev, img, alloc.mem, alloc.off);
+    VkFormatProperties fp; vkGetPhysicalDeviceFormatProperties(g_vk.pd, fi->vk, &fp);
+    int blit = (fp.optimalTilingFeatures & (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) == (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT) && im->samples == 1;
+    int lin = !depth && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) && !(fi->flags & VKF_INT);
+    vk_image_barrier(cb, im->img, im->aspect, im->rest, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+    vk_image_barrier(cb, img, im->aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    if (blit) {
+        VkImageBlit r[16]; uint32_t n = 0;
+        for (uint32_t l = 0; l < im->levels && n < 16; l++)
+            r[n++] = (VkImageBlit){{im->aspect, l, 0, im->layers}, {{0, 0, 0}, {(int32_t)vkt_vlw(im, l), (int32_t)vkt_vlh(im, l), 1}}, {im->aspect, l, 0, im->layers}, {{0, 0, 0}, {(int32_t)mip(nvw, l), (int32_t)mip(nvh, l), 1}}};
+        vkCmdBlitImage(cb, im->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, n, r, lin ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+    } else {
+        VkImageSubresourceRange rr = {im->aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+        if (depth) { VkClearDepthStencilValue z = {1.0f, 0}; vkCmdClearDepthStencilImage(cb, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &z, 1, &rr); }
+        else { VkClearColorValue z = {{0}}; vkCmdClearColorImage(cb, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &z, 1, &rr); }
+    }
+    vk_image_barrier(cb, img, im->aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, im->rest, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    AcquireSRWLockExclusive(&g_lk);
+    old_image *o = calloc(1, sizeof *o); o->img = im->img; o->alloc = im->alloc;
+    for (int i = 0; i < im->nviews; i++) o->v[o->nv++] = im->views[i].v;
+    if (im->present_view && im->present_view != im->view) o->v[o->nv++] = im->present_view;
+    if (im->view) o->v[o->nv++] = im->view;
+    atomic_fetch_sub(&s_bytes, im->alloc.size); atomic_fetch_add(&s_bytes, alloc.size);
+    im->img = img; im->alloc = alloc; im->nviews = 0; im->vw = nvw; im->vh = nvh; im->scale = s;
+    im->view = make_view(im, fi->vk, im->vtype, fi->swz, 0, im->levels, 0, im->layers, im->aspect & ~VK_IMAGE_ASPECT_STENCIL_BIT ? im->aspect & ~VK_IMAGE_ASPECT_STENCIL_BIT : im->aspect);
+    VkFormat pf = vkf_unorm_of(fi->vk);
+    im->present_view = pf != fi->vk ? make_view(im, pf, VK_IMAGE_VIEW_TYPE_2D, (VkComponentMapping){0}, 0, 1, 0, 1, VK_IMAGE_ASPECT_COLOR_BIT) : VK_NULL_HANDLE;
+    if (!im->present_view && im->vtype == VK_IMAGE_VIEW_TYPE_2D && !depth) im->present_view = im->view;
+    ReleaseSRWLockExclusive(&g_lk);
+    vk_retire(old_free_cb, o);
+    *blitted = blit;
+    return 0;
+}
+int vkt_unscale(vkt_image *im, VkCommandBuffer cb, const char *why) {
+    int blit = 0;
+    if (!im || (im->vw == im->w && im->vh == im->h) || resize_image(im, cb, 1.0f, &blit)) return -1;
+    AcquireSRWLockExclusive(&g_lk);
+    im->noscale_why = "taken back to the game's size"; im->scalable = 0;
+    skey k; key_from(im->pool, im->off, im->mem, &im->d, im->has_layout, im->cls, &k); vk_hm_put(&g_noscale, &k, (void *)1);
+    ReleaseSRWLockExclusive(&g_lk);
+    VKLOG("render target ser=%llu %ux%u %s: back at the game's size (%s; %s)", (unsigned long long)im->serial, im->w, im->h, im->fi->name, why, blit ? "its content scaled down" : "its content cleared");
+    return 0;
+}
+// The in-game menu's resolution: the factor changes at a submission's start, and every image the rule takes is re-made at it (beyond the device's
+// limits: at the game's size). Images made later follow the new factor
+void vkt_request_scale(float s) { s = scale_clamp(s); uint32_t b; memcpy(&b, &s, 4); atomic_store(&g_scale_req, b); }
+void vkt_apply_scale(VkCommandBuffer cb) {
+    uint32_t b = atomic_exchange(&g_scale_req, 0); if (!b || !cb) return;
+    float s; memcpy(&s, &b, 4); if (s == g_scale) return;
+    uint32_t lim = g_vk.props.limits.maxImageDimension2D;
+    if (g_vk.props.limits.maxFramebufferWidth < lim) lim = g_vk.props.limits.maxFramebufferWidth;
+    if (g_vk.props.limits.maxFramebufferHeight < lim) lim = g_vk.props.limits.maxFramebufferHeight;
+    g_scale = s; int n = 0, cleared = 0;
+    AcquireSRWLockShared(&g_lk); int cap = (int)g_share.cap; vkt_image **all = calloc((size_t)cap + 1, sizeof *all); int na = 0;
+    for (int i = 0; i < cap; i++) if (g_share.vals[i] && ((vkt_image *)g_share.vals[i])->scalable) all[na++] = g_share.vals[i];
+    ReleaseSRWLockShared(&g_lk);
+    for (int i = 0; i < na; i++) {
+        vkt_image *im = all[i]; float f = im->w * s + 0.5f > lim || im->h * s + 0.5f > lim ? 1.0f : s; int blit = 0;
+        if (!resize_image(im, cb, f, &blit)) { n++; cleared += !blit; im->noscale_why = f == 1.0f ? "resolution x1" : NULL; }
+    }
+    free(all);
+    VKLOG("resolution x%g from the in-game menu: %d render targets re-made (%d cleared, the rest scaled over)", s, n, cleared);
 }
 
 void vkt_frame(uint64_t frame) {
@@ -676,6 +903,8 @@ void vkt_frame(uint64_t frame) {
           s.upload_bytes / 1048576.0, s.upload_ns / 1e6, (unsigned long long)s.shared_hits, (unsigned long long)s.cpu_written, (unsigned long long)s.evicted,
           (unsigned long long)s.samplers, (unsigned long long)a.misses, a.fast_ns ? a.fast_texels / (a.fast_ns / 1e3) : 0.0, (unsigned long long)a.high_done,
           (unsigned long long)a.hits_high, (unsigned long long)a.hits_fast);
+    if (hash_on()) VKLOG("textures up to frame %llu: %llu re-uploads skipped, the storage unchanged (%.1f MB not sent; hashing %.1f ms in all)", (unsigned long long)frame,
+                         (unsigned long long)atomic_load(&s_same), atomic_load(&s_same_bytes) / 1048576.0, atomic_load(&s_hash_ns) / 1e6);
 }
 
 void vkt_stats(vkt_stats_t *s) {
@@ -684,11 +913,22 @@ void vkt_stats(vkt_stats_t *s) {
     s->astc_high = atomic_load(&s_astc_high); s->cpu_written = atomic_load(&s_cpuw); s->evicted = atomic_load(&s_evicted); s->samplers = atomic_load(&s_samplers);
 }
 
-int vkt_init(void) { vkp_set_resolver(vkt_present_source); return 0; }
+int vkt_init(void) {
+    vkp_set_resolver(vkt_present_source);
+    // NXRT_VK_RESOLUTION (the launcher's and the in-game menu's choice: "default" = the monitor's height, or "<w>x<h>") before NXRT_VK_SCALE (a factor)
+    float menu_resolution_scale(const char *choice);
+    const char *r = getenv("NXRT_VK_RESOLUTION"), *e = getenv("NXRT_VK_SCALE");
+    float s = r && *r ? menu_resolution_scale(r) : e && *e ? (float)atof(e) : 1.0f;
+    g_scale = scale_clamp(s);
+    if (g_scale != 1.0f) VKLOG("resolution x%g: the game's screen-sized render targets are drawn at %g times their size (%s)", g_scale, g_scale,
+                               r && *r ? "NXRT_VK_RESOLUTION" : "NXRT_VK_SCALE");
+    else if (r && *r) VKLOG("resolution x1 (NXRT_VK_RESOLUTION %s)", r);
+    return 0;
+}
 void vkt_shutdown(void) {
     AcquireSRWLockExclusive(&g_lk);
     for (uint32_t i = 0; i < g_share.cap; i++) if (g_share.vals[i]) image_free(g_share.vals[i]);
-    vk_hm_free(&g_share); vk_hm_free(&g_serial); vk_hm_free(&g_live); vk_hm_free(&g_cpu);
+    vk_hm_free(&g_share); vk_hm_free(&g_serial); vk_hm_free(&g_live); vk_hm_free(&g_cpu); vk_hm_free(&g_noscale);
     for (uint32_t i = 0; i < g_samp.cap; i++) if (g_samp.vals[i]) vkDestroySampler(g_vk.dev, (VkSampler)g_samp.vals[i], NULL);
     vk_hm_free(&g_samp);
     free(g_reg); g_reg = NULL; g_nreg = 0; free(g_sreg); free(g_sreg_ok); g_sreg = NULL; g_sreg_ok = NULL; g_nsreg = 0;

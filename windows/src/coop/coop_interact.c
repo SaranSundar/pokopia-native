@@ -1,4 +1,5 @@
-// coop_interact: "Interact everywhere" (docs/coop-interact.md), an experimental opt-in for Link Play outside Palette Town. MIT, our own code.
+// coop_interact: "Interact everywhere" (docs/coop-interact.md), an experimental opt-in for Link Play outside Palette Town, and "Story co-op"
+// (docs/story-coop.md), the experimental step after it. MIT, our own code.
 // The game keeps a session's permissions in a 36-bit mask (GameMgr+0x8c; its top bits are the online / host / visitor bits at +0x90) and rebuilds it
 // whenever a session starts or the town changes. In a story area (stage type 1: Withered Wasteland and the other story towns) an online player always
 // gets the Spectator pattern, whatever the host chose; Palette Town with Spectator Mode Off gets the normal online pattern. One site per supported main
@@ -16,22 +17,37 @@ static const coop_site g_sites[] = {
     {"76a489f3bd3642fa5e18bd83d32c98ba", 0xb0f60, 0xb1030, 0xf2c0002du, COOP_SITE_MASK, "permission mask: story areas get Palette Town's Spectator-Off pattern"},
 };
 
-int coop_interact_sites(const char *main_build, const coop_site **out) {
+// Story co-op, 2.0.1 main. The A button asks a chain of handlers (main+0x4c3ec8) what it does; the talk handler (main+0x4c024c) gives an online
+// player who is not the host a visitor's reply (kinds 0xa/0xb, no conversation) unless the NPC is one of three every visitor may talk to. At the site
+// (orr w8, w25, w0) w0 is IsHost's answer, so a visitor takes the host's path: the NPC's own conversation
+static const coop_site g_story[] = {
+    {"76a489f3bd3642fa5e18bd83d32c98ba", 0x4c024c, 0x4c06d8, 0x2a000328u, COOP_SITE_TALK, "talk: a visitor gets the NPC's conversation, as the host"},
+};
+
+static int sites_of(const coop_site *t, size_t nt, const char *main_build, const coop_site **out) {
     int n = 0;
     *out = NULL;
     if (!main_build) return 0;
-    for (size_t i = 0; i < sizeof g_sites / sizeof g_sites[0]; i++)
-        if (!strncmp(main_build, g_sites[i].build, strlen(g_sites[i].build))) { if (!n) *out = &g_sites[i]; n++; }
+    for (size_t i = 0; i < nt; i++)
+        if (!strncmp(main_build, t[i].build, strlen(t[i].build))) { if (!n) *out = &t[i]; n++; }
     return n;
+}
+int coop_interact_sites(const char *main_build, const coop_site **out) { return sites_of(g_sites, sizeof g_sites / sizeof g_sites[0], main_build, out); }
+int coop_story_sites(const char *main_build, const coop_site **out) { return sites_of(g_story, sizeof g_story / sizeof g_story[0], main_build, out); }
+
+int coop_story_on(void) {
+    const char *e = getenv("DM_COOP_STORY");
+    return e && !strcmp(e, "1");
 }
 
 int coop_interact_on(void) {
     const char *e = getenv("DM_COOP_INTERACT");
-    return e && !strcmp(e, "1");
+    return (e && !strcmp(e, "1")) || coop_story_on();
 }
 
 void coop_interact_site(int id, uint64_t *x) {
     if (id == COOP_SITE_MASK && !(x[22] & 1)) x[13] = 0x5ffffffe;   // the movk that follows adds bit 32
+    if (id == COOP_SITE_TALK && coop_story_on()) x[0] = 1;           // IsHost: yes
 }
 
 uint64_t coop_mods_add(uint64_t h, const char *name) {

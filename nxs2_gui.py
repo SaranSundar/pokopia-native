@@ -731,13 +731,16 @@ class App(tk.Tk):
         bad = self.render_checks(rc)
         if bad: return
         nx = pathlib.Path(os.environ.get('NXNATIVE') or HERE / 'nxnative')
-        if (nx / 'dm' / 'host' / 'Makefile').is_file(): self.setup_state = ('ok', 'ready')
-        else:
+        if (nx / 'dm' / 'host' / 'Makefile').is_file() and self.settings.get('setup_with') == self.setup_key(): self.setup_state = ('ok', 'ready')
+        else:   # Setup again when this copy, its version or the iPhone choice changed: an update unzipped over an old copy keeps the old host patch
             self.setup_state = ('wait', 'getting them ready, about a minute')
             if not self.run_wiz(self.do_setup, done=self.setup_done): self.setup_state = ('bad', 'could not start', '')
         self.render_checks(rc)
 
+    def setup_key(self): return f'{HERE}|{tool_version()}|{"no-ios" if self.skip_ios() else "ios"}'
+
     def setup_done(self, rc):
+        if rc == 0: self.save_settings(setup_with=self.setup_key())
         self.setup_state = ('ok', 'ready (set up just now)') if rc == 0 else ('bad', 'setup stopped', self.result.get('fail') or f'exit code {rc}')
         if self.check_box.winfo_exists(): self.render_checks(0)
 

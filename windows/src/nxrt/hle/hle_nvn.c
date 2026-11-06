@@ -1282,7 +1282,15 @@ uint64_t nxrt_nvn_display(uint64_t now, int interval, int idx, unsigned *skipped
 uint64_t nxrt_nvn_texture_busy_until(int idx) {
     AcquireSRWLockShared(&g_disp_lk); uint64_t t = idx >= 0 && idx < 4 ? g_free_at[idx] : 0; ReleaseSRWLockShared(&g_disp_lk); return t;
 }
-static int present_itv(const win_t *o) { return o->interval > 0 ? o->interval : 1; }   // vsyncs per frame (the game's present interval)
+// Vsyncs per frame: the game's present interval, at least 2 under a 30 fps cap (DM_FPS=30, the launcher's Frame rate: gfx_fps_target). nxnative runs its display link
+// at 30 Hz then (nvn_mtl.m mtl_fps_target), which holds the game's acquires; here each frame stays on screen two vsyncs and the swap chain holds them the same way
+static int present_itv(const win_t *o) {
+    static int last;   // the cap is read each frame: the in-game menu changes it
+    int cap = gfx_fps_target() == 30 ? 2 : 1;
+    if (cap != last) { if (cap == 2 || last) LOG("[nvn] frame rate cap %d: each frame stays on screen for at least %d vsync%s", cap == 2 ? 30 : 60, cap, cap > 1 ? "s" : ""); last = cap; }
+    int itv = o->interval > 0 ? o->interval : 1;
+    return itv > cap ? itv : cap;
+}
 static uint64_t present_period(const win_t *o) { return (uint64_t)present_itv(o) * 1000000000ull / 60; }
 NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsync *s, int *idx) {
     win_t *o = (win_t *)w;
@@ -1292,7 +1300,7 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
     if (gfx_link_active()) gfx_link_wait_tick(present_itv(o), 2 * present_period(o));
     else {
         uint64_t until = nxrt_nvn_texture_busy_until(*idx);
-        if (until == UINT64_MAX) until = t0 + 1000000000ull / 60;   // the one texture on screen with no frame after it (a swap chain of one): a vsync
+        if (until == UINT64_MAX) until = t0 + present_period(o);   // the one texture on screen with no frame after it (a swap chain of one): a frame's vsyncs
         if (until > t0) { uint64_t d = until - t0; plat_sleep_ns(d < 100000000ull ? d : 100000000ull); }
     }
     // The previous present of this texture has not been handed to the GPU yet (the backend's present queue is a whole swap chain behind): wait for it
@@ -1372,7 +1380,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     }
     gfx_leave();
     atomic_fetch_add(&g_nvn_ns, now_ns() - t0);
-    unsigned skipped; uint64_t now = now_ns(), at = nxrt_nvn_display(now, o->interval, idx, &skipped);
+    unsigned skipped; uint64_t now = now_ns(), at = nxrt_nvn_display(now, present_itv(o), idx, &skipped);
     g_vs_skipped += skipped;
     if (idx >= 0 && idx < 4) o->avail[idx] = at + present_period(o);
     if (g_last_present_ns) frame_stats(n, (now - g_last_present_ns) / 1e6, now, (at - now) / 1e6);
