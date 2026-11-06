@@ -78,7 +78,7 @@ say whether that helped.
 ## Known
 
 - **Untested on real hardware**: the Steam Deck, AMD, Intel and NVIDIA graphics on Linux, Game Mode, controllers through Steam Input.
-- **At 2560x1440, Mesa's software renderer still closed the game now and then** in our tests (about 1 start in 5, a couple of minutes in);
+- **At 2560x1440, Mesa's software renderer still closed the game now and then** in our tests (once in 7 starts, a couple of minutes in);
   at 1920x1080 it did not. We do not know yet whether real graphics cards do the same. If the game closes by itself, choose 1920x1080 under
   Resolution (F1), and please send the report.
 - **Link Play** is built in and meant to play with Windows, Mac and iPhone players on the same version (the same rules as 1.3.0), but it has not been
