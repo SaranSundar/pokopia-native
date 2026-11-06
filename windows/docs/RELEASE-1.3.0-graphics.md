@@ -36,7 +36,8 @@ Status, 2026-11-06: on `main` at f5ddb0c (the `gfx` branch fast-forwarded), loca
 - **A fix for a freeze on NVIDIA cards.** Players reported the whole game stopping with "device lost" on NVIDIA cards:
   - **RTX 50, #12:** fixed in 1.2.6.
   - **RTX 3050 Laptop, D-1:** the same kind of GPU hang in another compute shader. The fix now covers every shader of that kind in the game: 11
-    shaders.
+    shaders, on NVIDIA cards. Other cards run those shaders as translated, as before 1.2.6: the fix assumes NVIDIA's 32-lane groups, and the hang
+    was only ever seen on NVIDIA.
 - **The launcher's Display tab** lists the same real sizes as the in-game menu, names the console modes "Docked (TV)" and "Handheld", and shows
   Default's size, including the 2560x1440 limit on 4 GB cards.
 
@@ -54,7 +55,7 @@ Players do not need these; they are for testing and for comparing against 1.2.6.
 | `NXRT_TEX_HASH=0` | Turns off skipping unchanged texture uploads. |
 | `NXRT_VK_STATE_CACHE=0` | Turns off recording only the changed draw settings. |
 | `NXRT_VK_SET_REUSE=0` | Turns off reusing identical resource bindings. |
-| `NXRT_VK_BALLOT_FIX=0` | Leaves the shaders of the NVIDIA freeze fix as translated (the 1.2.5 behaviour). |
+| `NXRT_VK_BALLOT_FIX=0` or `=1` | The NVIDIA freeze fix: 0 leaves those shaders as translated (the 1.2.5 behaviour); 1 applies it on any GPU (by default only on NVIDIA's). |
 | `NXRT_SETTINGS_DIR`, `POKOPIA_SETTINGS_DIR` | Another folder for `display.json` and `controls.json` (tests); default `%APPDATA%\Pokopia Native`. |
 | `NXRT_VK_SHOT_WINDOW=1`, `DM_CTL` lines `menu ...` | Test tools: screenshots of the window with the menu, and the menu driven by script (docs/in-game-menu.md). |
 
@@ -112,7 +113,7 @@ Setup + Build with the 1.3.0 kit redoes only these steps. Measured on our PC on 
 |---|---|---|
 | Analysis (`program.db`) | Runs again: `nxanalyze.exe` and `hle_inventory.tsv` have new bytes. The tool differs only in its link time stamp, the inventory only in source line numbers. The new `program.db` is byte for byte 1.2.6's. | 3 s |
 | game.dll | Rebuilt: `nxlift.exe` has a new link time stamp, so its stamp no longer matches. Every one of the 305 parts comes from the object cache (keyed by its code, which is unchanged); nothing is compiled, only lifted again to look the parts up, then linked. The result differs from 1.2.6's game.dll only in its time stamp. `nxrt.lib` is unchanged. | 6 min at 2 workers, idle priority (the first build took 33 min) |
-| Shaders | Not translated again: nxshader and its ABI header are unchanged, and shaders already in the cache are kept. The freeze fix rewrites shaders as the game loads them, so 10 shaders get new pipelines, built once at first use. | none |
+| Shaders | Not translated again: nxshader and its ABI header are unchanged, and shaders already in the cache are kept. The freeze fix rewrites shaders as the game loads them, so on NVIDIA cards 10 shaders get new pipelines, built once at first use. | none |
 | Runtime and launcher | `nxrt.exe` and `play.ps1` copied (both changed). | seconds |
 
 ## Known limits

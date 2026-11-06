@@ -313,6 +313,8 @@ size_t vkspv_ballot_per_lane(uint32_t **pw, size_t n, int *rewritten) {
     return o.n;
 }
 
+int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env) { return env ? *env != '0' : vendor == 0x10de; }
+
 int vkspv_reads_member(const uint32_t *w, size_t n, uint32_t binding, uint32_t member) {
     enum { OP_CONSTANT = 43, OP_ACCESS_CHAIN = 65, OP_IN_BOUNDS_ACCESS_CHAIN = 66 };
     if (!spv_ok(w, n)) return 0;
@@ -719,8 +721,14 @@ vks_shader *vksh_make(const char *key, const uint8_t *spv, size_t spv_size, cons
         size_t tn = vkspv_trim_cull(&w, nw, g_vk.props.limits.maxCombinedClipAndCullDistances);
         if (tn) nw = tn; else { static int n; if (n++ < 4) VKRED("shader %s: more clip and cull distances than the device takes, and the cull ones are used", key); }
     }
-    static int ballot_fix = -1;   // NXRT_VK_BALLOT_FIX=0 leaves the ballots as translated (to compare)
-    if (ballot_fix < 0) { const char *e = getenv("NXRT_VK_BALLOT_FIX"); ballot_fix = !(e && *e == '0'); }
+    static int ballot_fix = -1;   // decided at the first shader
+    if (ballot_fix < 0) {
+        const char *e = getenv("NXRT_VK_BALLOT_FIX");
+        ballot_fix = vkspv_ballot_fix_wanted(g_vk.props.vendorID, e);
+        if (e) VKLOG("subgroup ballots: the per-lane rewrite %s (NXRT_VK_BALLOT_FIX=%s)", ballot_fix ? "on" : "off", e);
+        else if (ballot_fix) VKLOG("subgroup ballots: counters made per lane on this NVIDIA GPU (the hang after early returns: #12, D-1)");
+        else VKLOG("subgroup ballots left as translated: their rewrite is for NVIDIA's GPUs (NXRT_VK_BALLOT_FIX=1 makes it anyway)");
+    }
     if (ballot_fix) {
         int nb = 0; size_t bn = vkspv_ballot_per_lane(&w, nw, &nb);
         if (nb) { nw = bn; VKLOG("shader %s: %d subgroup ballot%s for a counter made per lane (NVIDIA hang after early returns: #12, D-1)", key, nb, nb > 1 ? "s" : ""); }
