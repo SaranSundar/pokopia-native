@@ -109,7 +109,8 @@ step is one command; copy them as they are. Start the screen recording (the "Rec
 ```
 
 (the file is named after your game version: `ls ~/Games/Pokopia_native/out/`). A small window asks how to play first: alone, or Link Play. The first
-start translates the shaders the game makes while it runs: for about a minute the ground and some menus may be white. That is expected.
+start translates the shaders the game makes while it runs: for about a minute the ground and some menus may be white. That is expected. After
+"don't ask again", `pokopia-settings-<version>.sh` beside it asks again, then starts the game.
 
 - **Controls**: the Steam Deck's own controls work as a Switch controller (A/B/X/Y by position, the sticks, the triggers). Keyboard and mouse:
   WASD to move, the mouse to look (click the picture; Esc releases the mouse), J/K/U/I for A/B/X/Y, Return for +, Tab for −, F11 for full screen.

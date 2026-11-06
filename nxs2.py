@@ -1329,11 +1329,18 @@ export POKOPIA_PY="${{POKOPIA_PY:-{PY}}}"   # the builder's Python reads play.js
 exec "$here/../linux/runtime/play.sh" --config "$here/../linux/play.json" "$@"
 ''', encoding='utf-8')
     sh.chmod(0o755)
+    st = b.outputs / f'pokopia-settings-{b.version}.sh'   # Windows' "Pokopia Settings": the choice again after "don't ask again", then the game
+    st.write_text(f'''#!/bin/sh
+# The Link Play choice before Pokemon Pokopia {b.version} starts (alone, Link Play, internet; Interact everywhere), even after "don't ask again", then the game.
+export POKOPIA_ASK=1
+exec "$(cd "$(dirname "$0")" && pwd)/play-pokopia-{b.version}.sh" "$@"
+''', encoding='utf-8')
+    st.chmod(0o755)
     desk = b.outputs / f'pokopia-{b.version}.desktop'   # double-clickable in a file manager, and what Steam's "Add a Non-Steam Game" lists once installed
     desk.write_text(f'[Desktop Entry]\nType=Application\nName=Pokemon Pokopia {b.version}\nComment=pokopia-native {TOOL_VERSION}, built from your own dump\n'
                     f'Exec="{sh}"\nTerminal=false\nCategories=Game;\n' + (f'Icon={b.icon}\n' if b.icon.is_file() else ''), encoding='utf-8')
     desk.chmod(0o755)
-    say(f'Linux game: {sh}  (save: {linux_save_dir(b)})')
+    say(f'Linux game: {sh}  (the choice again: {st.name} beside it; save: {linux_save_dir(b)})')
     return sh
 
 
