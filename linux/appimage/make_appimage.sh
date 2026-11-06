@@ -1,6 +1,7 @@
 #!/bin/bash
 # make_appimage.sh: Pokopia-Native-Builder-<version>-x86_64.AppImage from the "for Linux" download (docs/LINUX.md). Runs on Linux (or WSL).
 #   make_appimage.sh --zip <Pokopia-Native-for-Linux(-beta).zip> --tools <folder> --dotnet <.NET root> --rules <rules.tsv> --out <folder> [--work <folder>]
+#                    [--version <v>]: the builder's version (its name, VERSION, its folder); default TOOL_VERSION, with "-beta" for a beta zip
 # --tools holds the downloads, each checked against its publisher's sha256 before use: python-build-standalone's
 # cpython-3.12.16+20261026-x86_64-unknown-linux-gnu-install_only.tar.gz, AppImage's appimagetool-x86_64.AppImage and its static type-2 runtime
 # runtime-x86_64 (no libfuse2 needed). --dotnet is a .NET 10 runtime install (dotnet-install.sh --runtime dotnet). The contents (payload/):
@@ -10,9 +11,9 @@
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1   # no .pyc from this build in the contents: they would name the folder it ran in
 HERE=$(cd "$(dirname "$0")" && pwd)
-ZIP= TOOLS= DOTNET= RULES= OUT= WORK=${TMPDIR:-/tmp}/pokopia-appimage
+ZIP= TOOLS= DOTNET= RULES= OUT= VER= WORK=${TMPDIR:-/tmp}/pokopia-appimage
 while [ $# -gt 0 ]; do
-  case $1 in --zip) ZIP=$2 ;; --tools) TOOLS=$2 ;; --dotnet) DOTNET=$2 ;; --rules) RULES=$2 ;; --out) OUT=$2 ;; --work) WORK=$2 ;;
+  case $1 in --zip) ZIP=$2 ;; --tools) TOOLS=$2 ;; --dotnet) DOTNET=$2 ;; --rules) RULES=$2 ;; --out) OUT=$2 ;; --work) WORK=$2 ;; --version) VER=$2 ;;
     *) echo "make_appimage.sh: unknown $1" >&2; exit 2 ;; esac
   shift 2
 done
@@ -44,7 +45,7 @@ mkdir -p "$P/dotnet" && cp -a "$DOTNET/dotnet" "$DOTNET/host" "$DOTNET/shared" "
 say "the download: $(basename "$ZIP")"
 mkdir -p "$WORK/unzip" && unzip -q "$ZIP" -d "$WORK/unzip"
 mv "$WORK/unzip"/pokopia-native-*/ "$P/installer"
-VER=$(sed -n "s/^TOOL_VERSION = '\([^']*\)'.*/\1/p" "$P/installer/nxs2.py")$(case $(basename "$ZIP") in *-beta.zip) echo -beta ;; esac)
+[ -n "$VER" ] || VER=$(sed -n "s/^TOOL_VERSION = '\([^']*\)'.*/\1/p" "$P/installer/nxs2.py")$(case $(basename "$ZIP") in *-beta.zip) echo -beta ;; esac)
 
 say "nxnative: the download's own setup, then its git history left out"
 (cd "$P/installer" && PATH="$P/dotnet:$PATH" DOTNET_ROOT="$P/dotnet" "$PY" -s nxs2.py setup --no-ios)
