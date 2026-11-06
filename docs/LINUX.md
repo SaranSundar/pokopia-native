@@ -26,7 +26,9 @@ runtime, the Linux tools and nxnative): no terminal steps, no Python packages, n
    Or in a terminal: `chmod +x ~/Downloads/Pokopia-Native-Builder-*.AppImage`
 2. **Double-click it.** The first start unpacks the builder to `~/.local/share/pokopia-native/builder/<version>` (about 1 GB, once per version;
    the games you build use its Python and .NET from there), then the window opens.
-3. In the window: **Choose…** your dump folder, then **Build**, then **Play**. **Import save…** brings your save from Eden, the phone or a Mac.
+3. The window walks you through it, one page at a time: what to make (the game for this computer), a check of your computer, your game files,
+   the build, then **Play**. **Bring my save** on the last page brings your save from Eden, the phone or a Mac. **Advanced** (top right) has
+   the one-screen view with every button.
 
 The game itself is still built on your computer from your own dump, into the build folder; the AppImage carries nothing of the game. To play from
 Steam (Game Mode), add the game's launcher `<build folder>/out/play-pokopia-<game version>.sh` as a non-Steam game, as below, not the AppImage.

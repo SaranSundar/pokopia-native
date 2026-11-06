@@ -140,8 +140,9 @@ BUILD_STAGES = (('Copying your game files', r'^(RomFS image|\.nup: )', ''),
                 ('Preparing the graphics', r'^(extracting the shaders|corpus: |adding shader dumps|lowering the shaders|packaging the shaders|tables: |'
                                            r'translating the shaders|Metal libraries|shaders: )',
                  'The longest part on a Mac: often 30 to 45 minutes.' if MAC else ''),
-                (f'Recompiling the game for your {PC}', r'^(recompiling the game|game\.dll: )', 'The longest part: often 15 to 40 minutes.'),
-                ('Packing it up', r'^(packing the Mac app|building the IPA|preparing the Xcode|Windows game: )', ''))
+                (f'Recompiling the game for your {PC}', r'^(recompiling the game|game\.dll: ' + (r'|game\.so: ' if LINUX else '') + ')',
+                 'The longest part: often 15 to 40 minutes.'),
+                ('Packing it up', r'^(packing the Mac app|building the IPA|preparing the Xcode|Windows game: ' + (r'|Linux game: ' if LINUX else '') + ')', ''))
 REFRESH_STAGES = (('Finding what you played', r'^shaders: ', ''),
                   ('Preparing the new graphics', r'^(extracting the shaders|corpus: |adding shader dumps|lowering the shaders|packaging the shaders|tables: |'
                                                  r'translating the shaders|Metal libraries)', 'Usually a few minutes.'),
@@ -152,7 +153,8 @@ CHECK_NAMES = ((r'^Windows on x64', 'Windows (64-bit)'), (r'^Python 3', 'Python'
                (r'^a CPU with AVX2', 'Your processor'), (r'^Vulkan', 'Graphics driver (Vulkan)'), (r'^the Windows game tools', 'The Windows game tools'),
                (r'^macOS on Apple silicon', 'An Apple silicon Mac'), (r'^(Xcode command line tools|clang$|make$)', 'Apple developer tools'),
                (r'^Metal compiler for macosx', 'Metal (the Mac graphics)'), (r'^Metal compiler for iphoneos', 'Metal (the iPhone graphics)'),
-               (r'^xcodegen', 'XcodeGen (the iPhone app)'), (r'^LLVM|^Metal Developer Tools|^ldid|^rcodesign', 'The iPhone app tools'))
+               (r'^xcodegen', 'XcodeGen (the iPhone app)'), (r'^LLVM|^Metal Developer Tools|^ldid|^rcodesign', 'The iPhone app tools')) + \
+              (((r'^Linux on x86-64', 'Linux (64-bit)'), (r'^the Linux game tools', 'The Linux game tools')) if LINUX else ())
 
 
 class App(tk.Tk):
@@ -607,7 +609,8 @@ class App(tk.Tk):
 
     @staticmethod
     def made_text(made):
-        names = {'windows': 'the game for this PC', 'app': 'the Mac app', 'ipa': 'the iPhone app', 'signed': 'the iPhone app', 'xcode': 'the iPhone app'}
+        names = {'windows': 'the game for this PC', 'app': 'the Mac app', 'ipa': 'the iPhone app', 'signed': 'the iPhone app', 'xcode': 'the iPhone app',
+                 'linux': 'the game for this computer'}
         out = list(dict.fromkeys(names[k] for k in made if k in names))
         return ' and '.join(out) if out else 'nothing yet'
 
@@ -633,7 +636,7 @@ class App(tk.Tk):
     # ---- the pages
     def home(self):
         s, b = self.settings, self.build_dir()
-        built = [k for k in s.get('built', []) if k in ('windows', 'app', 'ipa', 'xcode', 'signed')]
+        built = [k for k in s.get('built', []) if k in ('windows', 'app', 'ipa', 'xcode', 'signed') + (('linux',) if LINUX else ())]
         if not (built and b and b.is_dir()): return self.p_welcome()
         new = s.get('built_with') and s['built_with'] != tool_version()
         pg = self.page(None, 'Welcome back', f'Your build: {self.made_text(built)}' + (f', from Pokopia {s["game"]}.' if s.get('game') else '.'))
@@ -663,6 +666,13 @@ class App(tk.Tk):
             n += 1; self.step_card(pg, n, 'Play', 'The first minutes can hitch while the game prepares its graphics; it gets smooth after that. '
                                    'F11 or Alt+Enter switches to full screen. "Pokopia Settings" in your build folder changes the window, the controls '
                                    'and Link Play.', [('Play', self.do_play, kind)])
+        if 'linux' in built:
+            n += 1; self.step_card(pg, n, 'Bring your save (optional)', 'From Eden, your iPhone or a Mac, so you carry on where you were. Skip it to '
+                                   'start a new game. The save the game has now is kept beside it, not deleted.', [('Bring my save', self.wiz_import, 'plain')])
+            n += 1; self.step_card(pg, n, 'Play', 'The first minutes can hitch while the game prepares its graphics; it gets smooth after that. F11 '
+                                   'switches to full screen. To play from Steam (Game Mode on a Steam Deck), add out/play-pokopia-<version>.sh from your '
+                                   'build folder as a non-Steam game. pokopia-settings-<version>.sh beside it asks the Link Play choice again.',
+                                   [('Play', self.do_play, kind), ('Show me how', lambda: webbrowser.open((HERE / 'docs' / 'LINUX.md').as_uri()), 'plain')])
         if 'app' in built:
             n += 1; self.step_card(pg, n, 'Play the Mac app', 'Open it and play into your town. The first time, some graphics can be black or missing: '
                                    'that is expected. The app notes which graphics it makes, and Refresh then prepares them.',
@@ -685,6 +695,7 @@ class App(tk.Tk):
         self.navb(nxt=self.p_make, text="Let's start")
 
     def p_make(self):
+        if LINUX: return self.p_make_linux()
         pg = self.page(1, 'What do you want to make?', 'Pick one or both. You can add the other later.')
         here = self.windows if WIN else self.mac_app if MAC else None
         def flip(v): v.set(not v.get()); self.save_settings(); self.p_make()
@@ -694,6 +705,12 @@ class App(tk.Tk):
         self.choice(pg, 'Play on your iPhone', 'An iPhone app you install yourself: ' + ('you sign it here with your Apple certificate.' if WIN else
                     'sign it with your Apple certificate, or with Xcode in Advanced.'), self.ipa.get(), lambda: flip(self.ipa))
         self.navb(self.p_welcome, lambda: self.p_check(then=self.p_files), 'Next', (here is not None and here.get()) or self.ipa.get())
+
+    def p_make_linux(self):   # Linux makes the Linux game (the iPhone app needs a Mac or a Windows PC)
+        pg = self.page(1, 'What do you want to make?', 'The game for this computer. The iPhone app is made on a Mac or a Windows PC.')
+        def flip(): self.linux.set(not self.linux.get()); self.save_settings(); self.p_make_linux()
+        self.choice(pg, f'Play on this {PC}', 'The Steam Deck too: its own controls, a controller, or keyboard and mouse.', self.linux.get(), flip, 'recommended')
+        self.navb(self.p_welcome, lambda: self.p_check(then=self.p_files), 'Next', self.linux.get())
 
     def p_check(self, then):
         if MAC: self.no_ios.set(not self.ipa.get())
@@ -705,7 +722,7 @@ class App(tk.Tk):
         if not self.run_wiz(self.do_doctor, line=self.check_line, done=self.check_done): self.check_done(1)
 
     def check_line(self, line):
-        m = re.match(r'^\s+(ok|MISSING|WARNING)\s+(.*)', line)
+        m = re.match(r'^\s+(ok|MISSING|WARNING' + ('|note' if LINUX else '') + r')\s+(.*)', line)
         if m:
             name, _, hint = m.group(2).partition('   -> ')
             self.checks.append((m.group(1), name.strip(), hint.strip()))
@@ -730,7 +747,7 @@ class App(tk.Tk):
         for c in box.winfo_children(): c.destroy()
         rows, warns = {}, []
         for kind, name, hint in self.checks:
-            if kind == 'WARNING': warns.append(name); continue
+            if kind in ('WARNING', 'note'): warns.append(name); continue
             nice = next((n for pat, n in CHECK_NAMES if re.search(pat, name)), name)
             if nice is None: continue
             st, hints = rows.get(nice, ('ok', []))
@@ -824,7 +841,8 @@ class App(tk.Tk):
 
     def p_build(self):
         pg = self.page(4, 'Ready to build')
-        made = [k for k, v in (('windows', WIN and self.windows.get()), ('app', MAC and self.mac_app.get()), ('ipa', self.ipa.get())) if v]
+        made = [k for k, v in (('windows', WIN and self.windows.get()), ('app', MAC and self.mac_app.get()), ('ipa', self.ipa.get())) +
+                ((('linux', self.linux.get()),) if LINUX else ()) if v]
         self.row(pg, 'Making', 'info', self.made_text(made))
         if self.dump_info and self.dump_info[1] == 'ok': self.row(pg, 'From', 'info', self.dump_info[2])
         label(pg, 'How fast should it build?', 12, True, C['title']).pack(fill='x', pady=(12, 2))
@@ -842,7 +860,7 @@ class App(tk.Tk):
         if MAC: self.no_ios.set(not self.ipa.get())
         i = self.dump_info
         if i and i[1] == 'ok' and i[0] == self.dump.get().strip() and i[2].startswith('Pokopia '): self.save_settings(game=i[2][8:])
-        self.prog = {'kind': 'Build', 'stages': [s for s in BUILD_STAGES if WIN or not s[0].startswith('Recompiling')], 'cur': None, 'pct': None,
+        self.prog = {'kind': 'Build', 'stages': [s for s in BUILD_STAGES if WIN or LINUX or not s[0].startswith('Recompiling')], 'cur': None, 'pct': None,
                      'shaders': None, 'dirty': True, 'first': not self.settings.get('built_with')}
         self.prog['state'] = ['wait'] * len(self.prog['stages'])
         if self.run_wiz(self.do_build, line=self.prog_line, done=self.prog_done, tick=self.prog_tick): self.p_progress()
@@ -933,7 +951,7 @@ class App(tk.Tk):
         if rc == 0:
             p['state'] = ['done'] * len(p['stages'])
             if p['kind'] == 'Build':
-                made = [k for k in ('windows', 'app', 'ipa', 'xcode') if k in self.result]
+                made = [k for k in ('windows', 'app', 'ipa', 'xcode') + (('linux',) if LINUX else ()) if k in self.result]
                 apple = any(k in made for k in ('app', 'ipa', 'xcode'))
                 self.save_settings(built=sorted(set(self.settings.get('built', [])) | set(made)), built_with=tool_version(),
                                    refresh_due=bool(self.settings.get('refresh_due')) or (apple and p['first']))
@@ -963,7 +981,7 @@ class App(tk.Tk):
     def p_play(self, made):
         apple = any(k in made for k in ('app', 'ipa', 'xcode'))
         pg = self.page(5, 'Your game is ready!', 'One more step after your first play, and the builder reminds you.' if apple and self.settings.get('refresh_due')
-                       else 'A couple of optional things first, then play.' if 'windows' in made else 'Here is what to do next.')
+                       else 'A couple of optional things first, then play.' if 'windows' in made or 'linux' in made else 'Here is what to do next.')
         n = self.play_cards(pg, made)
         if apple and self.settings.get('refresh_due'):
             self.step_card(pg, n + 1, 'Then come back here and press Refresh', 'It prepares the graphics your game noted while you played, usually in a '
