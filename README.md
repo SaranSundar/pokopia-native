@@ -375,6 +375,22 @@ Spectator Mode off, so visitors can water, pick up and place things, and build a
   goes home with them.
 - It is experimental: keep a copy of your save before a long session.
 
+**Story co-op** (experimental, new)
+
+In a story town the game lets only the host talk to the town's story characters, such as Professor Tangrowth: a visitor gets
+the "Talk" prompt, but nothing happens. **Story co-op** lifts that, on top of Interact everywhere: visitors talk to the
+story characters and hear the same story as the host (the host's current requests, in the host's words).
+
+- What counts for the host: what visitors do in the world, as with Interact everywhere: building, watering, placing and
+  picking up, the host's challenges, and habitats.
+- What doesn't: **story requests count only for the host.** A visitor can hear a request, but their conversation doesn't
+  complete it; the host has to do that part. A visitor can't buy a building kit for the host's town either (the shop sends
+  it home), but the host can drop one for them.
+- Turn it on **on every device**: iPhone and Mac: the launcher's **Story co-op** (under Link Play); Windows: the
+  **Story co-op (experimental)** box in the window before the game starts. It turns Interact everywhere on with it. A device
+  with it on only sees hosts that have it on too.
+- It is experimental: keep a copy of your save before a long session.
+
 Good to know:
 
 - **Internet play must match on every device.** With Internet play on, a device only sees hosts that have it on too

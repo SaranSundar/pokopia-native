@@ -129,7 +129,9 @@ a save copied from one device to another cannot join itself).
 
 Under them, **Interact everywhere (experimental)** lets Link Play players use moves and items and build in every town, not only
 Palette Town (the README's [Playing together](../README.md#playing-together-link-play) explains it). Every player needs it on,
-the iPhone and Mac in their launcher.
+the iPhone and Mac in their launcher. **Story co-op (experimental)** goes one step further: visitors can also talk to the
+town's story characters (it turns Interact everywhere on with it). Story requests still count only for the host; the README
+says what does and doesn't count. Every player needs it on too.
 
 It remembers your choice. **Don't ask again** starts the same way every time; **`Pokopia Settings <version>.cmd`**, beside
 the Play launcher in `<build folder>\out`, shows the window again (so does holding **Shift** while starting the game). The
@@ -137,7 +139,7 @@ settings live in `%APPDATA%\Pokopia Native\linkplay.json`.
 
 From a terminal, switches after the launcher's name skip the window: `-LinkPlay`; `-Join <address>[:<port>]` visits one
 host by address; `-Internet` with `-Room <code>` (a host without one gets a new code); `-Relay <address>[:<port>]` goes
-through a relay you trust; `-Interact` turns on Interact everywhere.
+through a relay you trust; `-Interact` turns on Interact everywhere; `-Story` turns on Story co-op (and Interact everywhere).
 
 - **The first time**, Windows Firewall asks whether the game may use networks: allow **Private networks**. Your network
   must be Private (Settings → Network & internet → your connection → Network profile type: Private): on a Public network
