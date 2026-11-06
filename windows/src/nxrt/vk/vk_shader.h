@@ -21,6 +21,7 @@ typedef struct {
     uint16_t c0_off;           // storage buffers: the c0 byte of their address (nxs_refl.py c0_offset)
     // the image the shader declares (SPIR-V OpTypeImage): view type, sampled type, depth comparison, multisample
     VkImageViewType vtype; uint8_t ct, depth, ms, dim;
+    int8_t scale_idx;          // F-5: the support buffer's render scale entry of this texture or image (Ryujinx's 1 + its rank, images after textures), -1 none
 } vks_bind;
 
 typedef struct vks_shader {
@@ -41,6 +42,7 @@ typedef struct vks_shader {
     struct { uint64_t key; struct vks_shader *s; } var[8]; int nvar;
     uint8_t dual, alpha, fs_flags;                          // a fragment variant: output 1 is Location 0 Index 1; the alpha test reads its push constants; what made it
     uint32_t vin_mask; uint8_t vin_ct[32];                  // a vertex input variant: what made it (the pipeline manifest names variants by these)
+    uint8_t reads_scale;                                    // F-5: the module reads the support buffer's render scales (fragment position, texel fetches, sizes)
 } vks_shader;
 
 int vksh_init(void);
@@ -73,6 +75,7 @@ uint32_t *vkspv_retype_inputs(const uint32_t *words, size_t nwords, uint32_t mas
 int vkspv_set_descriptor_set(uint32_t *words, size_t nwords, uint32_t set);   // decorations changed, or -1 when the module is malformed
 typedef struct { uint32_t binding; uint8_t found, dim, arrayed, ms, depth, ct, is_image; } vkspv_img;
 int vkspv_image_of(const uint32_t *words, size_t nwords, uint32_t binding, vkspv_img *out);   // 0 when the binding exists
+int vkspv_reads_member(const uint32_t *words, size_t nwords, uint32_t binding, uint32_t member);   // 1 when an access chain into that block's member exists
 // gl_PerVertex's CullDistance member removed when the clip and cull arrays exceed limit and nothing reads or writes it: the new word count (*words replaced),
 // nwords when nothing needed changing, 0 when it could not be done
 size_t vkspv_trim_cull(uint32_t **words, size_t nwords, uint32_t limit);

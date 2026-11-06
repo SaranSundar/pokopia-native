@@ -1,19 +1,23 @@
-/* vkspv_ballot_per_lane (#12, #21, #22): the warp-aggregated counter of shader d2c50cca6e386abc after an early return gets a per-lane ballot, the same
-   counter with its result read keeps its ballot, and on a GPU the rewritten shader counts every lane still running. NXRT_TEST_SPV=<a translated .spv>
-   checks that file too and NXRT_TEST_SPV_OUT=<path> writes the result (the game's shaders are made from the player's dump and are never in the repository).
+/* vkspv_ballot_per_lane (#12, #21, #22, D-1): the warp-aggregated counter of shader d2c50cca6e386abc after an early return gets a per-lane ballot, and so
+   does 2cb5df5cb96b324e's, whose result each lane takes from the leader by a shuffle plus its rank; the same counter with its result read otherwise keeps
+   its ballot. On a GPU the rewritten shaders count every lane still running and hand each of them its own slot. NXRT_TEST_SPV=<a translated .spv> checks
+   that file too and NXRT_TEST_SPV_OUT=<path> writes the result (the game's shaders are made from the player's dump and are never in the repository).
    The GPU part is skipped without a device. */
 #include "vk_test.h"
 #include "vk_shader.h"
 #include "test_ballot_comp.h"
 #include "test_ballot_used_comp.h"
+#include "test_ballot_slot_comp.h"
+#include "test_ballot_slot4_comp.h"
+#include "test_ballot_rank_comp.h"
 
 NXRT_EARLY_RESERVE()
 
 static int count_op(const uint32_t *w, size_t n, uint32_t op) { int c = 0; for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) c += (w[i] & 0xffff) == op; return c; }
 static uint32_t *copy_words(const uint32_t *w, size_t n) { uint32_t *c = malloc(n * 4); memcpy(c, w, n * 4); return c; }
 
-// One dispatch of groups x 64 lanes; every third lane returns early. The counter after it, or ~0 when it could not run
-static uint32_t run(const uint32_t *words, size_t n, uint32_t groups, uint32_t *expect) {
+// One dispatch of groups x 64 lanes; every third lane returns early. The counter after it, or ~0 when it could not run; slots (when given) the data after it
+static uint32_t run(const uint32_t *words, size_t n, uint32_t groups, uint32_t *expect, uint32_t *slots) {
     uint32_t lanes = groups * 64, got = ~0u;
     VkBuffer buf[2] = {0}; vk_alloc mem[2] = {0}; VkDeviceSize size[2] = {4, (VkDeviceSize)lanes * 4};
     for (int k = 0; k < 2; k++) {
@@ -50,7 +54,7 @@ static uint32_t run(const uint32_t *words, size_t n, uint32_t groups, uint32_t *
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &ds, 0, NULL);
     vkCmdDispatch(cb, groups, 1, 1);
     vk_mem_barrier(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
-    if (!vk_once_end(cb)) got = *(uint32_t *)mem[0].map;
+    if (!vk_once_end(cb)) { got = *(uint32_t *)mem[0].map; if (slots) memcpy(slots, data, (size_t)lanes * 4); }
     vkDestroyPipeline(g_vk.dev, p, NULL); vkDestroyShaderModule(g_vk.dev, m, NULL); vkDestroyDescriptorPool(g_vk.dev, dp, NULL);
     vkDestroyPipelineLayout(g_vk.dev, pl, NULL); vkDestroyDescriptorSetLayout(g_vk.dev, dsl, NULL);
     for (int k = 0; k < 2; k++) { vkDestroyBuffer(g_vk.dev, buf[k], NULL); vk_free_mem(&mem[k]); }
@@ -68,8 +72,22 @@ int main(void) {
     CHECK(count_op(w, rn, OP_ATOMIC_IADD) == 1 && w[3] > test_ballot_comp_spv[3], "the add stays, the id bound grows (%u -> %u)", test_ballot_comp_spv[3], w[3]);
     // the add's result read: left alone
     size_t un = sizeof test_ballot_used_comp_spv / 4; uint32_t *u = copy_words(test_ballot_used_comp_spv, un); int ub = -1;
-    CHECK(vkspv_ballot_per_lane(&u, un, &ub) == un && ub == 0 && !memcmp(u, test_ballot_used_comp_spv, un * 4), "a counter whose result is read keeps its ballot");
+    CHECK(vkspv_ballot_per_lane(&u, un, &ub) == un && ub == 0 && !memcmp(u, test_ballot_used_comp_spv, un * 4), "a counter whose result is read otherwise keeps its ballot");
     free(u);
+    // the shape of 2cb5df5cb96b324e's counter: the result handed out by a shuffle from the leader plus the rank: rewritten, the shuffle stays
+    enum { OP_SHUFFLE = 345 };
+    size_t sn = sizeof test_ballot_slot_comp_spv / 4; uint32_t *sw = copy_words(test_ballot_slot_comp_spv, sn); int sb = -1;
+    size_t srn = vkspv_ballot_per_lane(&sw, sn, &sb);
+    CHECK(sb == 1 && count_op(sw, srn, OP_BALLOT) == 0 && count_op(sw, srn, OP_SHUFFLE) == 1 && count_op(sw, srn, OP_ATOMIC_IADD) == 1,
+          "a counter handed out from the leader made per lane (%d rewritten, %zu -> %zu words)", sb, sn, srn);
+    // the same with entries of 4 units (7f1a413b3fe36690's count << 2): rewritten
+    size_t s4n = sizeof test_ballot_slot4_comp_spv / 4; uint32_t *s4 = copy_words(test_ballot_slot4_comp_spv, s4n); int s4b = -1;
+    size_t s4rn = vkspv_ballot_per_lane(&s4, s4n, &s4b);
+    CHECK(s4b == 1 && count_op(s4, s4rn, OP_BALLOT) == 0, "a counter of 4-unit entries made per lane (%d rewritten)", s4b);
+    // the rank also compared (the warp's first lane): left alone, as every lane would be first
+    size_t kn = sizeof test_ballot_rank_comp_spv / 4; uint32_t *kw = copy_words(test_ballot_rank_comp_spv, kn); int kb = -1;
+    CHECK(vkspv_ballot_per_lane(&kw, kn, &kb) == kn && kb == 0, "a counter whose rank is compared keeps its ballot");
+    free(kw);
     // a translated shader given on the command line's environment (d2c50cca6e386abc from a build folder's shader cache)
     const char *tp = getenv("NXRT_TEST_SPV");
     if (tp && *tp) {
@@ -104,18 +122,34 @@ int main(void) {
     // on a GPU: the rewritten shader counts every lane that did not return (the translated one counts the same with 32-lane subgroups)
     int rc = vt_up(0, 1);
     if (!rc) {
-        uint32_t expect = 0, got = run(w, rn, 64, &expect);
+        uint32_t expect = 0, got = run(w, rn, 64, &expect, NULL);
         printf("GPU (subgroups of %u): the rewritten counter %u, lanes still running %u\n", g_vk.has.subgroup_size, got, expect);
         CHECK(got == expect, "the rewritten counter counts every running lane (%u of %u)", got, expect);
         if (g_vk.has.subgroup_size == 32) {
-            uint32_t e2 = 0, orig = run(test_ballot_comp_spv, n, 64, &e2);
+            uint32_t e2 = 0, orig = run(test_ballot_comp_spv, n, 64, &e2, NULL);
             CHECK(orig == e2, "the original counts the same with 32-lane subgroups (%u of %u)", orig, e2);
+        }
+        // the slots: every running lane one of its own, 1..count, the returned lanes none; the original the same with 32-lane subgroups
+        enum { LANES = 64 * 64 };
+        static uint32_t slots[LANES]; static uint8_t seen[LANES + 1];
+        for (int v = 0; v < 4; v++) {   // the rewritten counter, the original, the same with 4-unit entries
+            const uint32_t *code = v == 0 ? sw : v == 1 ? test_ballot_slot_comp_spv : v == 2 ? s4 : test_ballot_slot4_comp_spv;
+            size_t cn = v == 0 ? srn : v == 1 ? sn : v == 2 ? s4rn : s4n;
+            if ((v & 1) && g_vk.has.subgroup_size != 32) continue;
+            uint32_t es = 0, gs = run(code, cn, 64, &es, slots), good = gs == (v >= 2 ? 4 * es : es), mine = 0;
+            memset(seen, 0, sizeof seen);
+            for (uint32_t i = 0; i < LANES; i++) {
+                if (i % 3 == 0) { good &= slots[i] == 0; continue; }
+                good &= slots[i] >= 1 && slots[i] <= es && !seen[slots[i]]; if (slots[i] >= 1 && slots[i] <= es) seen[slots[i]] = 1; mine++;
+            }
+            CHECK(good && mine == es, "%s%s hands every running lane a slot of its own (%u lanes, counter %u)", v & 1 ? "the original" : "the rewritten counter",
+                  v >= 2 ? " of 4-unit entries" : "", mine, gs);
         }
         uint32_t verr = atomic_load(&g_vk.val_errors);
         vt_down(0);
         CHECK(verr == 0, "no validation errors (%u)", verr);
     }
-    free(w);
+    free(w); free(sw); free(s4);
     if (rc == 77) printf("GPU part skipped (no device)\n");
     printf("%s: %d checks, %d failed\n", g_fail ? "FAIL" : "ok", g_checks, g_fail);
     return g_fail ? 1 : 0;

@@ -1,12 +1,13 @@
 # This folder is a snapshot
 
-The Windows port's source, copied from its private development repository at commit `6bbb3eccf23f` (plus the changes not committed there yet) by `tools/snapshot_windows.py`, without the history. 435 files. Fixes applied for publishing (docs/M7-PUBLISHING-AUDIT.md):
+The Windows port's source, copied from its private development repository at commit `432544e2575b` (plus the changes not committed there yet) by `tools/snapshot_windows.py`, without the history. 455 files. Fixes applied for publishing (docs/M7-PUBLISHING-AUDIT.md):
 
 - `README.md`: the "local and private" lines
 - `docs/M7-REPORT.md`: this PC's work folder (1)
 - `docs/PROVENANCE.md`: this PC's work folder (1)
 - `docs/coop-step1b.md`: this PC's dump path (1)
 - `docs/coop-step1c.md`: this PC's work folder (5), this PC's work folder (1)
+- `docs/cpu-work.md`: this PC's work folder (1)
 - `docs/m3-runtime.md`: this PC's dump path (1)
 - `docs/m5-record-shaders.md`: this PC's work folder (2)
 - `docs/m5-vulkan.md`: this PC's work folder (1)

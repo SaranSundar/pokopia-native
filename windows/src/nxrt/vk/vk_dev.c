@@ -281,6 +281,16 @@ int vk_mem_type(uint32_t bits, VkMemoryPropertyFlags want, VkMemoryPropertyFlags
     return -1;
 }
 
+// The largest device-local heap: the GPU's own memory (0 before a device is open); NXRT_VK_VRAM_MB pretends another size (tests)
+uint64_t vk_vram_bytes(void) {
+    uint64_t m = 0;
+    if (!g_vk.dev) return 0;
+    const char *e = getenv("NXRT_VK_VRAM_MB"); if (e && *e) return (uint64_t)strtoull(e, NULL, 10) << 20;
+    for (uint32_t i = 0; i < g_vk.memp.memoryHeapCount; i++)
+        if ((g_vk.memp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && g_vk.memp.memoryHeaps[i].size > m) m = g_vk.memp.memoryHeaps[i].size;
+    return m;
+}
+
 int vk_budget(uint64_t *budget, uint64_t *usage) {
     *budget = *usage = 0;
     if (!g_vk.has.memory_budget) return 0;

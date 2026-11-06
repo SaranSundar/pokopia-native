@@ -1,0 +1,20 @@
+#version 450
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+// vkspv_ballot_per_lane's test (t_vk_ballot.c): test_ballot_slot.comp's counter whose rank is also compared (the warp's first lane marks its slot): with a
+// per-lane ballot every lane would be first, so it keeps its ballot
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) buffer Count { uint count; };
+layout(set = 0, binding = 1) buffer Data { uint data[]; };
+int from_lane(int v, int lane) { return subgroupShuffle(v, uint(lane)); }
+void main() {
+    if (data[gl_GlobalInvocationID.x] == 0u) return;
+    uint mask = subgroupBallot(true).x;
+    int leader = findMSB(mask);
+    int n = bitCount(mask);
+    int base = n;
+    if (gl_SubgroupInvocationID == uint(leader)) base = int(atomicAdd(count, uint(n)));
+    int rank = bitCount(gl_SubgroupLtMask.x & mask);
+    int slot = from_lane(base, leader) + rank;
+    data[gl_GlobalInvocationID.x] = uint(slot) + (rank == 0 ? 0x10000u : 1u);
+}

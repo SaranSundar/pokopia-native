@@ -1,0 +1,19 @@
+#version 450
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+// vkspv_ballot_per_lane's test (t_vk_ballot.c): test_ballot_slot.comp's counter with entries of 4 units, as 7f1a413b3fe36690 adds count << 2: the leader
+// adds 4 per lane, each lane takes the leader's result plus 4 times its rank, and writes its entry's number (1-based; 0 = returned)
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) buffer Count { uint count; };
+layout(set = 0, binding = 1) buffer Data { uint data[]; };
+int from_lane(int v, int lane) { return subgroupShuffle(v, uint(lane)); }
+void main() {
+    if (data[gl_GlobalInvocationID.x] == 0u) return;
+    uint mask = subgroupBallot(true).x;
+    int leader = findMSB(mask);
+    int n = bitCount(mask);
+    int base = n;
+    if (gl_SubgroupInvocationID == uint(leader)) base = int(atomicAdd(count, uint(n << 2)));
+    int slot = from_lane(base, leader) + (bitCount(gl_SubgroupLtMask.x & mask) << 2);
+    data[gl_GlobalInvocationID.x] = uint(slot) / 4u + 1u;
+}

@@ -13,11 +13,12 @@ Idempotent, with exact anchors; refuses a tree it does not recognise. What it do
 - hle_misc.c: parental controls answer "allowed" only while co-op is on;
 - dm/games/settings.tsv: the launcher's Link Play switch (DM_COOP auto / off, off by default), on the iPhone and the Mac; under it, a host to join
   by address (DM_COOP_JOIN), internet play (DM_COOP_INTERNET, off), the room code (DM_COOP_ROOM) and the relay address (DM_COOP_RELAY), the three
-  texts empty by default (step 1d), and "Interact everywhere" (DM_COOP_INTERACT, off);
+  texts empty by default (step 1d), "Interact everywhere" (DM_COOP_INTERACT, off) and "Story co-op" (DM_COOP_STORY, off);
 - the launcher's text kind for those three (launcher.json schema 2): dm/games/settings.py, docs/launcher.schema.json, docs/frontends.md, the shared
   settings row and model (dm/ios/Sources/LauncherRow.swift, LauncherSettings.swift), the Mac launcher's saved-choice check (dm/mac/launcher.c,
   pack_app.py's DMSettings) and dm/tools/tests/test_launcher_settings.py;
-- docs/env_switches.tsv: rows for DM_COOP, DM_COOP_DISCOVERY, DM_COOP_INTERACT, DM_COOP_INTERNET, DM_COOP_JOIN, DM_COOP_RELAY, DM_COOP_ROOM, DM_COOP_TCP and DM_UID;
+- docs/env_switches.tsv: rows for DM_COOP, DM_COOP_DISCOVERY, DM_COOP_INTERACT, DM_COOP_INTERNET, DM_COOP_JOIN, DM_COOP_RELAY, DM_COOP_ROOM, DM_COOP_STORY,
+  DM_COOP_TCP and DM_UID;
 - dm/ios/project.yml and dm/mac/pack_app.py: NSLocalNetworkUsageDescription and NSBonjourServices (_pokopia-ldn._udp)."""
 import pathlib, sys
 
@@ -172,7 +173,9 @@ rows = ['DM_COOP\ttoggle\tauto/off\t0\talways\tGame\tLink Play on this network\t
         'DM_COOP_RELAY\ttext\t21\t\talways\tGame\tRelay address\t'
         "A relay you trust, as IPv4[:port]. Empty: visitors connect to the host's address.\tneeds=DM_COOP_INTERNET=1",
         'DM_COOP_INTERACT\ttoggle\t-\t0\talways\tGame\tInteract everywhere\t'
-        "Experimental: in every town, not only Palette Town, visitors can use moves and items and build. Every player needs it on.\tneeds=DM_COOP=auto"]
+        "Experimental: in every town, not only Palette Town, visitors can use moves and items and build. Every player needs it on.\tneeds=DM_COOP=auto",
+        'DM_COOP_STORY\ttoggle\t-\t0\talways\tGame\tStory co-op\t'
+        "Experimental, with Interact everywhere: visitors can talk to the town's story characters. Story requests still count only for the host. Every player needs it on.\tneeds=DM_COOP=auto"]
 mine = {r.split('\t', 1)[0] for r in rows}
 lines = [l for l in text(st).split('\n') if l.split('\t', 1)[0] not in mine]   # an earlier version's rows are replaced
 at = next((i for i, l in enumerate(lines) if l.startswith('DM_SHOW_FPS\t')), None)
@@ -292,7 +295,12 @@ INTERACT = ("\n    def test_interact_everywhere_row(self):   # an experimental s
             "        self.assertEqual((rows['DM_COOP_INTERACT']['kind'], rows['DM_COOP_INTERACT']['default'], rows['DM_COOP_INTERACT']['needs']), ('toggle', '0', 'DM_COOP=auto'))\n"
             "        envs = list(rows)\n"
             "        self.assertEqual(envs.index('DM_COOP_INTERACT'), envs.index('DM_COOP_RELAY') + 1)\n")
-edit(tl, "        self.assertEqual(conforms({'schema': 1, 'game': BOTW, 'settings': [row]}, schema, schema), [])\n"
+STORY = ("\n    def test_story_coop_row(self):   # Story co-op, an experimental switch after Interact everywhere\n"
+         "        rows = build(BOTW, 'nvn')\n"
+         "        self.assertEqual((rows['DM_COOP_STORY']['kind'], rows['DM_COOP_STORY']['default'], rows['DM_COOP_STORY']['needs']), ('toggle', '0', 'DM_COOP=auto'))\n"
+         "        envs = list(rows)\n"
+         "        self.assertEqual(envs.index('DM_COOP_STORY'), envs.index('DM_COOP_INTERACT') + 1)\n")
+edit(tl,"        self.assertEqual(conforms({'schema': 1, 'game': BOTW, 'settings': [row]}, schema, schema), [])\n"
          "        self.assertNotEqual(conforms({'schema': 1, 'game': BOTW, 'settings': [{**row, 'kind': 'slider'}]}, schema, schema), [])\n",
      "        self.assertEqual(conforms({'schema': settings.SCHEMA, 'game': BOTW, 'settings': [row]}, schema, schema), [])\n"
      "        self.assertNotEqual(conforms({'schema': settings.SCHEMA, 'game': BOTW, 'settings': [{**row, 'kind': 'slider'}]}, schema, schema), [])\n"
@@ -301,6 +309,7 @@ edit(tl, "        self.assertEqual(conforms({'schema': 1, 'game': BOTW, 'setting
      "        self.assertNotEqual(conforms({'schema': settings.SCHEMA, 'game': BOTW, 'settings': [text]}, schema, schema), [], 'a text row has a length')\n\n"
      + ROWS)
 if INTERACT not in text(tl): edit(tl, ROWS_LAST, ROWS_LAST + INTERACT)
+if STORY not in text(tl): edit(tl, INTERACT, INTERACT + STORY)
 edit(tl, "                         ('DM_X\\ttoggle\\ton\\t0\\talways\\tGame\\tX\\n', 'toggle values'), ('DM_X\\ttoggle\\t-\\t2\\talways\\tGame\\tX\\n', 'defaults to 0 or 1')]:\n",
      "                         ('DM_X\\ttoggle\\ton\\t0\\talways\\tGame\\tX\\n', 'toggle values'), ('DM_X\\ttoggle\\t-\\t2\\talways\\tGame\\tX\\n', 'defaults to 0 or 1'),\n"
      "                         ('DM_Z\\ttext\\t0\\t\\talways\\tGame\\tZ\\n', 'longest length'), ('DM_Z\\ttext\\t2\\tabc\\talways\\tGame\\tZ\\n', 'at most 2')]:\n")
@@ -322,6 +331,9 @@ SWITCHES = {
                      'tools/coop-relay): hosting opens the room there, scanning asks it for the room\'s host. The launcher\'s "Relay address"; empty by default',
     'DM_COOP_ROOM': 'player\tThe room code, `XXXX-XXXX-XXXX-XXXX` (16 letters and digits, 80 bits): with `DM_COOP_INTERNET=1` every link proves it. A visitor needs the '
                     'host\'s; a host without one gets a new one each session (in the log). The launcher\'s "Room code"; empty by default',
+    'DM_COOP_STORY': 'player\t`1` turns on "Story co-op" (the launcher\'s switch, experimental, windows-native docs/story-coop.md) and with it Interact everywhere: '
+                     'in Link Play a visitor talks to the town\'s story characters as the host does (hle_coop_interact.c, at an observation gate the profile '
+                     'places on 2.0.1). Story requests still count only for the host. Part of the mods fingerprint; off by default',
     'DM_COOP_TCP': 'switch\t`1` sends the game\'s Link Play datagrams over the control link instead of UDP (a TCP-only path such as an SSH tunnel)',
     'DM_UID': 'test\t`=<32 hex digits>`: the user ID Link Play announces for this instance while `DM_COOP` is set (its node\'s MAC address derives from it; '
               'two instances on one machine); unset, nxnative\'s constant. The account service keeps its own',

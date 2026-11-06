@@ -118,19 +118,20 @@ uint64_t nxrt_host_to_guest(uint64_t host, uint64_t *off) {
     return g_by_rva[lo].guest_va;
 }
 
-/* ---- Interpreted functions with site hooks: "Interact everywhere" (src/coop/coop_interact.c, DM_COOP_INTERACT=1). The translated function holding a site
-   jumps to the interpreter instead (its entry is overwritten: mov rax, va; mov [rcx + pc], rax; mov rax, nxw_interp_trampoline; jmp rax), and the
-   interpreter calls the shared callback right before the site's instruction, as nxnative's observation gate does ---- */
+/* ---- Interpreted functions with site hooks: "Interact everywhere" (src/coop/coop_interact.c, DM_COOP_INTERACT=1) and Story co-op (DM_COOP_STORY=1).
+   The translated function holding a site jumps to the interpreter instead (its entry is overwritten: mov rax, va; mov [rcx + pc], rax; mov rax,
+   nxw_interp_trampoline; jmp rax), and the interpreter calls the shared callback right before the site's instruction, as nxnative's observation gate does ---- */
 void nxw_interp_trampoline(NxwGuestCpu *cpu);   /* src/interp */
 typedef void (*NxwInterpSiteHook)(uint64_t pc, uint64_t *x);
 void nxw_interp_set_site_hook(NxwInterpSiteHook hook, uint64_t lo, uint64_t hi);
-static const coop_site *g_isite; static int g_nisite; static uint64_t g_isite_base;
+static coop_site g_isite[8]; static int g_nisite; static uint64_t g_isite_base;
 static void interact_hook(uint64_t pc, uint64_t *x) {
-    static _Atomic int said;
+    static _Atomic int said, said_talk;
     for (int i = 0; i < g_nisite; i++) {
         if (pc != g_isite_base + g_isite[i].off) continue;
-        uint64_t was = x[13]; coop_interact_site(g_isite[i].id, x);
-        if (x[13] != was && !atomic_exchange(&said, 1)) LOG("[coop] Interact everywhere: this story area's Link Play session has Palette Town's permissions");
+        uint64_t was13 = x[13], was0 = x[0]; coop_interact_site(g_isite[i].id, x);
+        if (x[13] != was13 && !atomic_exchange(&said, 1)) LOG("[coop] Interact everywhere: this story area's Link Play session has Palette Town's permissions");
+        if (g_isite[i].id == COOP_SITE_TALK && x[0] != was0 && !atomic_exchange(&said_talk, 1)) LOG("[coop] Story co-op: a visitor's talk takes the host's path");
     }
 }
 static int interpret_function(uint64_t va) {
@@ -154,8 +155,12 @@ static int interpret_function(uint64_t va) {
 static void interact_attach(void) {
     module_t *m = NULL;
     for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) m = &g_mod[i];
-    const coop_site *s; int n = m ? coop_interact_sites(m->build_id, &s) : 0;
-    if (!n) { LOG("[RED] DM_COOP_INTERACT: Interact everywhere has no sites for main %.16s: off", m ? m->build_id : "?"); return; }
+    const coop_site *si, *ss; int ni = m ? coop_interact_sites(m->build_id, &si) : 0, ns = m && coop_story_on() ? coop_story_sites(m->build_id, &ss) : 0;
+    if (!ni) { LOG("[RED] DM_COOP_INTERACT: Interact everywhere has no sites for main %.16s: off", m ? m->build_id : "?"); return; }
+    if (coop_story_on() && !ns) LOG("[RED] DM_COOP_STORY: Story co-op has no sites for main %.16s: off", m->build_id);
+    coop_site s[8]; int n = 0;
+    for (int k = 0; k < ni && n < 8; k++) s[n++] = si[k];
+    for (int k = 0; k < ns && n < 8; k++) s[n++] = ss[k];
     uint64_t base = (uint64_t)(uintptr_t)m->base, lo = UINT64_MAX, hi = 0;
     for (int k = 0; k < n; k++) {
         uint32_t w = *(const uint32_t *)(uintptr_t)(base + s[k].off);
@@ -167,9 +172,9 @@ static void interact_attach(void) {
         if (base + s[k].off + 4 > hi) hi = base + s[k].off + 4;
         LOG("DM_COOP_INTERACT: main+%#x (%s) runs in the interpreter with a hook at main+%#x", s[k].fn, s[k].what, s[k].off);
     }
-    g_isite = s; g_nisite = n; g_isite_base = base;
+    memcpy(g_isite, s, sizeof *s * n); g_nisite = n; g_isite_base = base;
     nxw_interp_set_site_hook(interact_hook, lo, hi);
-    LOG("Interact everywhere: on (%d site%s); every player in a session needs it", n, n == 1 ? "" : "s");
+    LOG("Interact everywhere: on (%d site%s)%s; every player in a session needs it", n, n == 1 ? "" : "s", ns ? ", Story co-op (experimental) too" : "");
 }
 
 /* The game DLL (the contract in rt_abi.h): its function list fills the table */

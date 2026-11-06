@@ -353,8 +353,10 @@ void hid_keys_init(void) {
 //   registered textures of that target (2 = 3D) with storage address and block-linear layout (nvn_mtl.m dm_gfx_texlist), "texraw <serial> <path>"
 //   saves a host texture's level 0 raw, every slice (a cube's six faces) (nvn_mtl.m dm_gfx_texraw), "drag <x0> <y0> <x1> <y1> [seconds=0.3]" moves one finger in a straight line between the two normalized picture
 //   points over that time and lifts it (the touch screen's pans and swipes, hle_touch.c gesture_sample), "dump" logs what each guest thread waits on and the graphics wait points
-//   (crash_dump_now, as the iOS app's DM_LOG_PORT dump; scripts/regress.py asks for it before stopping a hung game), "#…" is ignored.
+//   (crash_dump_now, as the iOS app's DM_LOG_PORT dump; scripts/regress.py asks for it before stopping a hung game), "menu <command>" drives the Windows in-game
+//   settings menu (front/menu.c menu_ctl), "#…" is ignored.
 //   Look at a screen, decide, press, look again: menus whose timing moves from run to run (loading) need no blind timed script
+void (*dm_ctl_menu)(const char *cmd);   // set by the in-game menu where there is one
 static void *ctl_main(void *arg) {
     const char *path = arg; long off = 0; char line[1100];
     for (;;) {
@@ -365,6 +367,7 @@ static void *ctl_main(void *arg) {
                 off += (long)n; line[--n] = 0; if (n && line[n - 1] == '\r') line[--n] = 0;
                 if (!n || line[0] == '#') continue;
                 if (!strcmp(line, "dump")) { crash_dump_now("DM_CTL dump"); continue; }
+                if (!strncmp(line, "menu ", 5)) { if (dm_ctl_menu) { LOG("DM_CTL: menu %s", line + 5); dm_ctl_menu(line + 5); } else LOG("[RED] DM_CTL menu: no in-game menu in this build"); continue; }
                 if (!strncmp(line, "prof", 4) && (!line[4] || line[4] == ' ')) { void nxrt_prof_start(double s); nxrt_prof_start(atof(line + 4)); continue; }   // Windows: host/prof.c
                 if (!strncmp(line, "shot ", 5)) { void dm_gfx_shot_at(const char *path); dm_gfx_shot_at(line + 5); continue; }
                 if (!strncmp(line, "texlist ", 8)) { void dm_gfx_texlist(int target); dm_gfx_texlist(atoi(line + 8)); continue; }

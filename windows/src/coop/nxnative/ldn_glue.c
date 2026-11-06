@@ -8,8 +8,8 @@ static void coop_hlog(void *u, const char *l) { (void)u; LOG("[coop] %s", l); }
 static void coop_hsleep(void *u, int64_t ns) { (void)u; void dm_guest_sleep_ns(int64_t ns); dm_guest_sleep_ns(ns); }
 static void coop_hstate(void *u, int st) { (void)u; (void)st; void *e = atomic_load(&g_ldn_attached); if (e) hle_signal_bound_system_event(e); }
 static const char *coop_hbuild(void *u) { (void)u; return dm_main_build(); }   // peers compare builds before a join
-// The cheats that are on (hle_cheats.c) and "Interact everywhere" (DM_COOP_INTERACT, hle_coop_interact.c) as one fingerprint: players meet only with the
-// same set, since either changes what happens in the host's town. Interact everywhere alone gives the Windows build's fingerprint
+// The cheats that are on (hle_cheats.c), "Interact everywhere" (DM_COOP_INTERACT, hle_coop_interact.c) and Story co-op (DM_COOP_STORY) as one fingerprint:
+// players meet only with the same set, since each changes what happens in the host's town. Without cheats it is the Windows build's fingerprint
 int dm_cheats_master(void); int dm_cheats_ncheats(void); int dm_cheat_on_at(int i); const char *dm_cheat_name_at(int i);
 static uint64_t coop_hmods(void *u, char *what, size_t n) {
     (void)u; uint64_t h = 0; int k = 0; const coop_site *s;
@@ -17,19 +17,22 @@ static uint64_t coop_hmods(void *u, char *what, size_t n) {
         if (!dm_cheat_on_at(i)) continue;
         h = coop_mods_add(h, dm_cheat_name_at(i)); k++;
     }
-    int ie = coop_interact_on() && coop_interact_sites(dm_main_build(), &s);
+    int ie = coop_interact_on() && coop_interact_sites(dm_main_build(), &s), st = ie && coop_story_on() && coop_story_sites(dm_main_build(), &s);
     if (ie) h = coop_mods_add(h, COOP_INTERACT_MOD);
-    if (k) snprintf(what, n, "%d cheat%s on%s", k, k == 1 ? "" : "s", ie ? ", " COOP_INTERACT_MOD : "");
-    else if (ie) snprintf(what, n, "%s", COOP_INTERACT_MOD);
+    if (st) h = coop_mods_add(h, COOP_STORY_MOD);
+    const char *mods = st ? COOP_INTERACT_MOD ", " COOP_STORY_MOD : ie ? COOP_INTERACT_MOD : "";
+    if (k) snprintf(what, n, "%d cheat%s on%s%s", k, k == 1 ? "" : "s", ie ? ", " : "", mods);
+    else if (ie) snprintf(what, n, "%s", mods);
     return h;
 }
-// "Interact everywhere": the profile's observation gate (patches.py, OBS_COOP_INTERACT with the site's id in the gate number's upper bits) calls the
-// shared callback while DM_COOP_INTERACT=1, read when the gate fires (the iPhone's launcher sets it after the host's constructors have run)
+// "Interact everywhere" and Story co-op: the profile's observation gates (patches.py, OBS_COOP_INTERACT with the site's id in the gate number's upper bits)
+// call the shared callback while the switch is on, read when a gate fires (the iPhone's launcher sets it after the host's constructors have run)
 static void coop_interact_gate(uint64_t *regs, int param) {
-    static _Atomic int said;
+    static _Atomic int said, said_talk;
     if (!coop_interact_on()) return;
-    uint64_t was = regs[13]; coop_interact_site(param, regs);
-    if (regs[13] != was && !atomic_exchange(&said, 1)) LOG("[coop] Interact everywhere: this story area's Link Play session has Palette Town's permissions");
+    uint64_t was13 = regs[13], was0 = regs[0]; coop_interact_site(param, regs);
+    if (regs[13] != was13 && !atomic_exchange(&said, 1)) LOG("[coop] Interact everywhere: this story area's Link Play session has Palette Town's permissions");
+    if (param == COOP_SITE_TALK && regs[0] != was0 && !atomic_exchange(&said_talk, 1)) LOG("[coop] Story co-op: a visitor's talk takes the host's path");
 }
 __attribute__((constructor)) static void coop_interact_attach(void) { gate_obs_set(OBS_COOP_INTERACT, coop_interact_gate); }
 coop_node *dm_coop(void) {   // the process's coop node when DM_COOP is set (and not off), else NULL (hle_net.c and hle_misc.c ask too)

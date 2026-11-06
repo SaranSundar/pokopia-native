@@ -22,12 +22,15 @@ HLE_FORCE("_ZN2nn5prepo28RequestImmediateTransmissionEv", "telemetry immediate u
 static void *_Atomic g_ldn_attached;   // the game's own state-change event (AttachStateChangeEvent; Pokopia attaches none and polls)
 static void coop_hlog(void *u, const char *l) { (void)u; LOG("[coop] %s", l); }
 static void coop_hsleep(void *u, int64_t ns) { (void)u; dm_guest_sleep_ns(ns); } static const char *coop_hbuild(void *u) { (void)u; return dm_main_build(); }   // peers compare builds before a join
-// nxrt has no cheats: its one gameplay mod is "Interact everywhere" (DM_COOP_INTERACT=1, attached by rt.c on a build it knows), which every player must share
+// nxrt has no cheats: its gameplay mods are "Interact everywhere" (DM_COOP_INTERACT=1, attached by rt.c on a build it knows) and Story co-op on top of it
+// (DM_COOP_STORY=1), which every player must share
 static uint64_t coop_hmods(void *u, char *what, size_t n) {
     (void)u; const coop_site *s;
     if (!coop_interact_on() || !coop_interact_sites(dm_main_build(), &s)) return 0;
+    uint64_t h = coop_mods_add(0, COOP_INTERACT_MOD);
+    if (coop_story_on() && coop_story_sites(dm_main_build(), &s)) { snprintf(what, n, "%s, %s", COOP_INTERACT_MOD, COOP_STORY_MOD); return coop_mods_add(h, COOP_STORY_MOD); }
     snprintf(what, n, "%s", COOP_INTERACT_MOD);
-    return coop_mods_add(0, COOP_INTERACT_MOD);
+    return h;
 }
 static void coop_hstate(void *u, int st) { (void)u; (void)st; void *e = atomic_load(&g_ldn_attached); if (e) hle_signal_bound_system_event(e); }
 coop_node *dm_coop(void) {   // the process's coop node when DM_COOP is set and valid, else NULL (hle_net.c, hle_misc.c and hle_account.c ask too)
