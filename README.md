@@ -346,8 +346,11 @@ opens.
 
 **Over the internet** (tested: a PC hosting at home, an iPhone visiting on mobile data)
 
-1. **The host's router** must let visitors in: forward port **47600, TCP and UDP**, to the computer that hosts (the
-   router's "Port forwarding", "NAT" or "NAT/Gaming" page; check it points at the right device).
+1. **The host's router** must let visitors in. On Windows the game asks the router to do it while you host (UPnP,
+   NAT-PMP or PCP), and F1 → Link Play says whether it worked and what to do if not (for example when your internet
+   provider shares one address among many homes, where only a VPN helps). Otherwise, or if your router doesn't do
+   that, forward port **47600, TCP and UDP**, to the computer that hosts (the router's "Port forwarding", "NAT" or
+   "NAT/Gaming" page; check it points at the right device).
 2. **The host** needs a room code, a 16-character password for the session:
    - **Windows:** pick **Host over the internet or a VPN** in the window before the game starts. The next window shows
      your room code with a **Copy** button, and so does the game itself: press **F1** and open the **Link Play** tab.
