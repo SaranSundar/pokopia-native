@@ -2,10 +2,35 @@
 # report.sh [build folder]: one archive with what a Pokopia Native for Linux tester sends back (docs/LINUX.md): the logs of the last runs and of the
 # build, and facts about this computer (CPU, GPU, driver, distribution, memory, display). It never takes saves, game files, shader files or the dump, and it
 # rewrites your home folder, user name and computer name out of everything it keeps. It shows you every file before it writes the archive.
-#   report.sh                     the game's logs (~/.cache/pokopia-native) and this computer's facts
-#   report.sh ~/Games/Pokopia_native   also that build folder's stage logs (logs/*.log, never anything else from it)
+#   report.sh                     the game's logs (~/.cache/pokopia-native), this computer's facts, and the build folder's stage logs if it finds the folder
+#                                 (the builder's last one, else a folder holding out/play-pokopia-*.sh in the usual places, SD cards included)
+#   report.sh ~/Games/Pokopia_native   that build folder's stage logs (logs/*.log, never anything else from it)
 set -uo pipefail
 BUILD=${1:-}
+# a folder typed with the guide's brackets or quotes kept ("<...>", "'...'") or a ~ the shell did not expand: what was meant
+BUILD=${BUILD#<}; BUILD=${BUILD%>}; BUILD=${BUILD#\"}; BUILD=${BUILD%\"}; BUILD=${BUILD#\'}; BUILD=${BUILD%\'}; BUILD=${BUILD/#\~/$HOME}; BUILD=${BUILD%/}
+is_build() { [ -d "$1" ] && { compgen -G "$1/out/play-pokopia-*.sh" > /dev/null || [ -d "$1/logs" ]; }; }
+FOUND=
+if [ -n "$BUILD" ] && ! is_build "$BUILD"; then echo "report.sh: \"$BUILD\" is not a build folder (none of out/play-pokopia-*.sh or logs/ in it); looking for yours instead"; BUILD=; fi
+[ -n "$BUILD" ] && FOUND="as given"
+if [ -z "$BUILD" ] && [ -f "$HOME/.nxs2_gui.json" ]; then   # the builder's last build folder, or the one it makes beside the dump
+  for k in out dump; do
+    v=$(grep -o "\"$k\": *\"[^\"]*\"" "$HOME/.nxs2_gui.json" | head -1 | sed -E 's/^"[a-z]+": *"(.*)"$/\1/'); [ -n "$v" ] || continue
+    [ $k = dump ] && { v=${v%/}; v="$(dirname "$v")/$(basename "${v%.[nN][uU][pP]}")_native"; }
+    is_build "$v" && { BUILD=$v; FOUND="the builder's last build folder"; break; }
+  done
+fi
+if [ -z "$BUILD" ]; then   # the newest out/play-pokopia-*.sh in the home folder and on this user's SD cards and USB drives
+  # 6 levels below a card: /run/media/deck/<card>/games/Pokopia/<build>/out/play-pokopia-2.0.1.sh; hidden folders and Steam's libraries are skipped,
+  # and the search gives up after 20 s (a network drive, a huge card)
+  ROOTS=("$HOME"); for m in "/run/media/$(id -un)" "/media/$(id -un)"; do [ -d "$m" ] && ROOTS+=("$m"); done
+  BUILD=$(timeout 20 find "${ROOTS[@]}" -maxdepth 7 \( -name '.*' -o -name steamapps -o -name compatdata -o -name shadercache \) -prune \
+            -o -path '*/out/play-pokopia-*.sh' -printf '%T@ %h\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- | sed 's#/out$##')
+  [ -n "$BUILD" ] && FOUND="found by looking for out/play-pokopia-*.sh"
+fi
+if [ -n "$BUILD" ]; then echo "Build folder: $BUILD ($FOUND); only its logs/ folder is read"
+else echo "No build folder found: the report has the game's logs and this computer's facts. To add the build's logs, name the folder:"
+     echo "  report.sh /path/to/your/build-folder      (type the path itself: no < > around it)"; fi
 STAMP=$(date +%Y%m%d-%H%M%S)
 OUT=${REPORT_DIR:-$HOME}/pokopia-report-$STAMP.tar.gz
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
@@ -71,6 +96,11 @@ echo "The report will hold these files (nothing else):"
 (cd "$T" && find . -type f -printf '  %P (%s bytes)\n' | sort)
 echo
 echo "Read them first if you like: $R"
-read -r -p "Write $OUT? [y/N] " ok
+if ! read -r -p "Write $OUT? [y/N] " ok; then echo; echo "nothing written: no answer (run report.sh in a terminal, e.g. Konsole on the Steam Deck)"; exit 1; fi
 case $ok in y|Y|yes) ;; *) echo "nothing written"; exit 0 ;; esac
-tar -czf "$OUT" -C "$T" "pokopia-report-$STAMP" && echo "written: $OUT  (send this file; it has no saves, no game files and no names)"
+if tar -czf "$OUT" -C "$T" "pokopia-report-$STAMP"; then
+  echo
+  echo "Done. Your report is: $OUT ($(du -h "$OUT" | cut -f1))"
+  echo "Attach that file to your GitHub issue, or post it in #linux-beta on Discord. It has no saves, no game files and no names."
+  [ "$(dirname "$OUT")" = "$HOME" ] && echo "(It is in your home folder: Home in Dolphin, the Steam Deck's file manager.)"
+else echo "report.sh: the archive could not be written to $OUT"; exit 1; fi

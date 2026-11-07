@@ -31,8 +31,8 @@ runtime, the Linux tools and nxnative): no terminal steps, no Python packages, n
    the one-screen view with every button.
 
 The game itself is still built on your computer from your own dump, into the build folder; the AppImage carries nothing of the game. To play from
-Steam (Game Mode), add the game's launcher `<build folder>/out/play-pokopia-<game version>.sh` as a non-Steam game, as below, not the AppImage.
-The report (the last section) is `~/Downloads/Pokopia-Native-Builder-*.AppImage report <build folder>` in a terminal. If the AppImage does not
+Steam (Game Mode), add the game's launcher (`out/play-pokopia-2.0.1.sh` in your build folder) as a non-Steam game, as below, not the AppImage.
+The report (the last section) is `~/Downloads/Pokopia-Native-Builder-*.AppImage report` in a terminal: it finds your build folder by itself. If the AppImage does not
 start at all, run it in a terminal with `--appimage-extract-and-run` after its name (a system without FUSE), and say so in the report.
 The window looks plain (one basic font): its own Tk draws with the X server's fonts. To remove the builder, delete the AppImage and
 `~/.local/share/pokopia-native/builder`; your builds and saves are elsewhere and stay.
@@ -165,14 +165,23 @@ Please keep recordings short (a few minutes each) and do not record anything per
 
 ## The report
 
-When you are done, or when something goes wrong:
+When you are done, or when something goes wrong, open a terminal (Konsole on the Steam Deck) and run the report. With the AppImage:
 
 ```bash
-~/pokopia-native-*/linux/report.sh ~/Games/Pokopia_native
+~/Downloads/Pokopia-Native-Builder-*.AppImage report
 ```
 
+With the zip:
+
+```bash
+~/pokopia-native-*/linux/report.sh
+```
+
+It finds your build folder by itself (the builder's last one, or one in your home folder or on an SD card) and says which one it took. To name
+another, put its path after the command as it is, without `<` `>` around it: `~/pokopia-native-*/linux/report.sh /run/media/deck/MyCard/Pokopia`.
+
 It collects the game's logs, the build's logs and facts about your computer (CPU, GPU, driver and Mesa version, SteamOS or distribution version,
-memory, display) into one `pokopia-report-<date>.tar.gz` in your home folder. **It never includes your save, the game's files, shader files or your
+memory, display) into one `pokopia-report-<date>.tar.gz` in your home folder, and its last line says where it is. **It never includes your save, the game's files, shader files or your
 dump**, and it replaces your home folder, user name and computer name with placeholders. It lists every file and asks before it writes the archive,
 so you can read them first.
 
