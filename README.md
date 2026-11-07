@@ -12,7 +12,7 @@ your Mac it builds a Mac app and an iPhone app. On a Windows PC it builds the ga
 PC, and the iPhone app too. Everything that comes from the game is created on your machine and stays in your build
 folder. Nothing from the game is in here.
 
-This works for both versions 1.0.5 (v327680) and 2.0.1 (v655360) as of 11/3/2026. The tool is version **1.3.0**.
+This works for both versions 1.0.5 (v327680) and 2.0.1 (v655360) as of 11/3/2026. The tool is version **1.3.2**.
 
 ## Which download do I need?
 
@@ -329,8 +329,9 @@ New in 1.1.0. The game's **Link Play → Local connection** works between our bu
 up to four players, at home or over the internet. It never touches Nintendo's servers. (**"Online connection"** in the
 same menu is Nintendo's own service: here it just goes back to the menu. Always pick **Local connection**.)
 
-Before you start: every device runs **the same pokopia-native version**, every player has **their own save**, and the
-host has reached the point in the game where Link Play opens.
+Before you start: every device runs **the same pokopia-native version** and **the same game version** (1.0.5 and 2.0.1
+can't play together), every player has **their own save**, and the host has reached the point in the game where Link Play
+opens.
 
 **On the same Wi-Fi**
 
@@ -348,8 +349,8 @@ host has reached the point in the game where Link Play opens.
 1. **The host's router** must let visitors in: forward port **47600, TCP and UDP**, to the computer that hosts (the
    router's "Port forwarding", "NAT" or "NAT/Gaming" page; check it points at the right device).
 2. **The host** needs a room code, a 16-character password for the session:
-   - **Windows:** pick **Host over the internet** in the window before the game starts. The next window shows your room
-     code with a **Copy** button.
+   - **Windows:** pick **Host over the internet or a VPN** in the window before the game starts. The next window shows
+     your room code with a **Copy** button.
    - **Mac:** in the launcher turn on Link Play on this network and **Internet play**, leave Room code empty and start the
      game once: the log (`~/Library/Logs/nxnative`) says "this session's room code is …". Type it into **Room code** to
      keep it.
@@ -357,8 +358,8 @@ host has reached the point in the game where Link Play opens.
 3. **The visitors:**
    - **iPhone and Mac:** turn on Link Play on this network, type the host's internet address into **Join address**, turn on
      **Internet play** and type the room code.
-   - **Windows:** pick **Visit a host over the internet** in the window before the game starts, and type the address and
-     the code.
+   - **Windows:** pick **Visit a host over the internet or a VPN** in the window before the game starts, and type the
+     address and the code.
 4. In the game: **Link Play → Local connection**, then look for towns.
 
 **Interact everywhere** (experimental, new in 1.2.0)
@@ -374,6 +375,7 @@ Spectator Mode off, so visitors can water, pick up and place things, and build a
   will be restricted. The session is not restricted.
 - As in any Link Play visit, the town and its progress (challenges, building) belong to the host, and what a visitor picks up
   goes home with them.
+- It works on game versions **2.0.1 and 1.0.5** (until pokopia-native 1.3.2 on 2.0.1 only: on 1.0.5 it did nothing).
 - It is experimental: keep a copy of your save before a long session.
 
 **Story co-op** (experimental, new)
@@ -390,6 +392,7 @@ story characters and hear the same story as the host, including the host's curre
 - Turn it on **on every device**: iPhone and Mac: the launcher's **Story co-op** (under Link Play); Windows: the
   **Story co-op (experimental)** box in the window before the game starts. It turns Interact everywhere on with it. A device
   with it on only sees hosts that have it on too.
+- It works on game versions **2.0.1 and 1.0.5** (pokopia-native 1.3.0 to 1.3.2: 2.0.1 only).
 - It is experimental: keep a copy of your save before a long session.
 
 Good to know:
@@ -401,10 +404,13 @@ Good to know:
   the app switcher) and open it again.
 - Every connection must prove the room code, and every message is protected against changes, but the traffic **is not
   encrypted**. Remove the port forward when you are done hosting.
-- **No access to the router?** An app like Tailscale (free for personal use, on Windows, Mac and iPhone) puts your
-  devices on one private network across the internet, encrypted, with no port forwarding: install it on both devices,
-  then use the host's Tailscale address (100.x.y.z) as the Join address, with Internet play and a room code. (Not tested
-  yet; tell me how it goes.)
+- **No access to the router, or playing through a VPN?** A VPN app like Tailscale (free for personal use, on Windows, Mac
+  and iPhone), Radmin VPN or Hamachi puts your devices on one network across the internet, with no port forwarding.
+  Pokopia Native counts a VPN's addresses (Tailscale's 100.x.y.z, Radmin VPN's 26.x.y.z, Hamachi's 25.x.y.z) as internet
+  addresses, so play **over the internet**: the host hosts with Internet play (Windows: **Host over the internet or a
+  VPN**), and the visitors use the host's VPN address as the Join address, with Internet play and the room code. **Link
+  Play on this network** doesn't reach through a VPN. On Windows, if the visitors can't get in, set the VPN's network to
+  Private as well (Settings → Network & internet). (Not tested yet; tell me how it goes.)
 - Something not working? The logs say what happened, in the lines about `coop` (Windows: the folder its console window
   names; Mac: `~/Library/Logs/nxnative`; iPhone: the Files app → On My iPhone → the app → `log.txt`).
 

@@ -34,7 +34,7 @@ void vkm_budget_take(uint64_t n);
 typedef struct {
     uint64_t pools, pool_bytes, bound_bytes, sparse_pools;
     uint64_t up_bytes, up_pages, up_runs, up_ns, sync_calls;   // cumulative
-    uint64_t staging_bytes, staging_overflow, staging_waits;
+    uint64_t staging_bytes, staging_overflow, staging_overflow_buffers, staging_waits;   // overflow: allocations past the ring, and the host buffers they went into
     uint64_t hot_pages, writeback_bytes, uncommitted_pages;   // uncommitted: pages stepped over (never touched by the game)
     uint64_t faults, fault_ns, preps;
 } vkm_stats_t;

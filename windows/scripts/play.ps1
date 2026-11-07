@@ -13,8 +13,9 @@
 # run-time shaders -ShaderTool <nxshader.py> with -Python, -Installer <the installer's lowering steps> and -SpirvTools <folder> (NXRT_SHADER_TOOL, NXSHADER_TOOLS);
 # -Fonts <folder> (DM_FONT_DIR), -PipelineSeed <list> (NXRT_VK_PIPELINE_SEED).
 # Link Play "Local connection" between our builds (docs/coop-step1c.md, docs/coop-step1d.md): -LinkPlay hosts and finds hosts on this network; -Join <IPv4>[:<port>]
-# visits one host by address instead; -Internet plays across the internet: every player gives the host's room code (-Room), and a host without one gets a new
-# code shown in this window; -Relay <IPv4>[:<port>] goes through a relay you trust. "ask" for -Join or -Room asks in this window. For tests on one PC:
+# visits one host by address instead (a home-network address; a VPN's, such as Radmin VPN's 26.x, needs -Internet); -Internet plays across the internet:
+# every player gives the host's room code (-Room), and a host without one gets a new code shown in this window; -Relay <IPv4>[:<port>] goes through a relay
+# you trust. "ask" for -Join or -Room asks in this window. For tests on one PC:
 # -CoopHost <port> hosts on 127.0.0.1:<port>, -CoopJoin 127.0.0.1:<port> joins it; -CoopTcp sends the game's datagrams over the TCP link (through a tunnel).
 # Each player needs a save of their own (the game refuses a second copy of the host's save). A second instance on one PC needs its own -Save and -Work.
 # -Interact turns on "Interact everywhere" (experimental, docs/coop-interact.md): in every town, not only Palette Town, Link Play visitors can use moves and
@@ -112,6 +113,14 @@ if ($newSave -and -not (Test-Path -LiteralPath $Save) -and -not $DryRun) { New-I
 $must = @($ExeFS, $Dll, $RomFS, $Exe); if (-not ($newSave -and $DryRun)) { $must += $Save }   # a dry run does not make the new save folder
 foreach ($p in $must) { if (-not (Test-Path -LiteralPath $p)) { Write-Error "not found: $p"; exit 2 } }
 foreach ($m in @("main", "sdk")) { if (-not (Test-Path -LiteralPath (Join-Path $ExeFS $m))) { Write-Error "$ExeFS has no '$m': give the game's ExeFS folder"; exit 2 } }
+# Interact everywhere and Story co-op have sites in these game versions only (src/coop/coop_interact.c; ctest coop.play_builds keeps the lists alike). Main's
+# build ID is the module ID in its NSO header
+$CoopBuilds = [ordered]@{ '76a489f3bd3642fa5e18bd83d32c98ba' = '2.0.1'; '816c5358e8178d802fcec4a7ce5a741a' = '1.0.5' }
+$mainBuild = ""
+try { $fs = [System.IO.File]::OpenRead((Join-Path $ExeFS "main")); $b = New-Object byte[] 16; $fs.Position = 0x40; if ($fs.Read($b, 0, 16) -eq 16) { $mainBuild = -join ($b | ForEach-Object { $_.ToString("x2") }) }; $fs.Close() } catch {}
+$coopOk = $CoopBuilds.Contains($mainBuild)
+$coopNeeds = "Pokopia $($CoopBuilds.Values -join ' or ')"
+$coopGame = $(if ($mainBuild) { "main $($mainBuild.Substring(0, 16))" } else { "main unreadable" })
 $noSave = -not (Get-ChildItem -LiteralPath $Save -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^[BGS]00$' })
 if ($noSave) {
     Write-Warning "$Save holds no B00 / G00 / S00 folders: the game will start a new save there"
@@ -239,7 +248,7 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     }
     $flow.Controls.Add((New-Label "How do you want to play?"))
     $modes = [ordered]@{ alone = "Play alone"; lan = "Link Play with players on this network (the same Wi-Fi)";
-                        host = "Host over the internet (your router forwards port 47600 to this PC)"; visit = "Visit a host over the internet" }
+                        host = "Host over the internet or a VPN (without a VPN, your router forwards port 47600 to this PC)"; visit = "Visit a host over the internet or a VPN" }
     $radio = @{}
     $keep = New-Object System.Windows.Forms.CheckBox; $keep.AutoSize = $true; $keep.Margin = New-Object System.Windows.Forms.Padding(34, 2, 0, 0)
     $keep.Text = "Keep my room code from last time ($($pref.host_room))"; $keep.Checked = [bool]$pref.keep_room; $keep.Visible = [bool]$pref.host_room
@@ -263,6 +272,12 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $sc.Text = "Story co-op (experimental)"; $sc.Checked = [bool]$pref.story; $flow.Controls.Add($sc)
     $scNote = New-Label "With Interact everywhere: visitors can talk to the town's story characters. Story requests still count only for the host. Every player needs it on." 450
     $scNote.ForeColor = [System.Drawing.SystemColors]::GrayText; $scNote.Margin = New-Object System.Windows.Forms.Padding(20, 0, 0, 0); $flow.Controls.Add($scNote)
+    $coop = $script:coopOk
+    if (-not $coop) {   # another game version: both stay off (the game would log it, nobody reads that)
+        $ie.Checked = $false; $sc.Checked = $false
+        $cn = New-Label "Interact everywhere and Story co-op need $script:coopNeeds. This game is another version ($script:coopGame), so they stay off." 450
+        $cn.ForeColor = [System.Drawing.Color]::DarkRed; $cn.Margin = New-Object System.Windows.Forms.Padding(20, 4, 0, 0); $flow.Controls.Add($cn)
+    }
     $sc.Add_CheckedChanged({ if ($sc.Checked) { $ie.Checked = $true } }.GetNewClosure())   # Story co-op needs Interact everywhere
     $ie.Add_CheckedChanged({ if (-not $ie.Checked) { $sc.Checked = $false } }.GetNewClosure())
     $hint = New-Label "In the game: Link Play, then Local connection (not Online connection). Every player needs their own save and the same pokopia-native version."
@@ -386,7 +401,7 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $again.Text = "Don't ask again (Pokopia Settings, or Shift held while starting, shows this window)"; $again.Checked = -not $pref.ask
     $outer.Controls.Add($again)
     $row, $btn = New-Buttons $f @('Play', 'Cancel'); $row.Width = $w; $outer.Controls.Add($row)
-    $sync = { $grid.Enabled = $radio['visit'].Checked; $keep.Enabled = $radio['host'].Checked; $ie.Enabled = -not $radio['alone'].Checked; $sc.Enabled = $ie.Enabled }.GetNewClosure()
+    $sync = { $grid.Enabled = $radio['visit'].Checked; $keep.Enabled = $radio['host'].Checked; $ie.Enabled = $coop -and -not $radio['alone'].Checked; $sc.Enabled = $ie.Enabled }.GetNewClosure()
     foreach ($r in $radio.Values) { $r.Add_CheckedChanged($sync) }
     & $sync
     $btn['Play'].Add_Click({
@@ -402,6 +417,7 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $mode = ($radio.Keys | Where-Object { $radio[$_].Checked } | Select-Object -First 1)
     $new = @{} + $pref
     $new.mode = $mode; $new.ask = -not $again.Checked; $new.keep_room = $keep.Checked; $new.interact = $ie.Checked; $new.story = $sc.Checked
+    if (-not $coop) { $new.interact = $pref.interact; $new.story = $pref.story }   # kept for a game version that has them
     if ($mode -eq 'visit') { $new.join = $addr.Text.Trim(); $new.room = $code.Text.Trim().ToUpper() }
     $new.controls = $st.map
     $new.display = [ordered]@{ console = $(if ($cm.SelectedIndex -eq 1) { 0 } else { 1 })
@@ -487,6 +503,15 @@ if ($LinkPlay -and ($CoopHost -or $CoopJoin)) { Write-Error "-LinkPlay / -Join /
 if ($LinkPlay) {
     if ($Join -eq "ask") { $Join = (Read-Host "The host's address (for example 203.0.113.7, or 192.168.1.20:47600)").Trim(); if (-not $Join) { Write-Error "no address given"; exit 2 } }
     if ($Join -and $Join -notmatch $ipPort) { Write-Error "-Join wants the host's IPv4 address, for example 203.0.113.7 or 192.168.1.20:47600 (got '$Join')"; exit 2 }
+    if ($Join -and -not $Internet) {   # outside internet play the game refuses any other address (coop_ldn.c): say so before it starts
+        $o = [int[]](($Join -split ':')[0] -split '\.')
+        $lanAddr = $o[0] -eq 127 -or $o[0] -eq 10 -or ($o[0] -eq 172 -and $o[1] -ge 16 -and $o[1] -le 31) -or ($o[0] -eq 192 -and $o[1] -eq 168) -or ($o[0] -eq 169 -and $o[1] -eq 254)
+        if (-not $lanAddr) {
+            $vpn = if ($o[0] -eq 26) { " (Radmin VPN's range)" } elseif ($o[0] -eq 25) { " (Hamachi's range)" } elseif ($o[0] -eq 100 -and $o[1] -ge 64 -and $o[1] -le 127) { " (carrier NAT, or Tailscale's range)" } else { "" }
+            Write-Error ("$Join$vpn is not a home-network address. Through a VPN or the internet, play over the internet: the host chooses `"Host over the internet or a VPN`" " +
+                         "and gives you the room code, and you visit with -Internet -Join $Join -Room <code> (or `"Visit a host over the internet or a VPN`" in the Link Play window)"); exit 2
+        }
+    }
     if ($Room -eq "ask") { $Room = (Read-Host "The host's room code (XXXX-XXXX-XXXX-XXXX)").Trim(); if (-not $Room) { Write-Error "no room code given"; exit 2 } }
     if ($Room -and (($Room -replace '[-\s]', '') -notmatch '^[0-9A-TV-Za-tv-z]{16}$')) { Write-Error "-Room wants 16 letters and digits, XXXX-XXXX-XXXX-XXXX (got '$Room')"; exit 2 }
     if ($Relay -and -not $Internet) { Write-Error "-Relay goes with -Internet"; exit 2 }
@@ -527,8 +552,12 @@ if ($Story) { $Interact = $true }
 if ($Interact) {
     if (-not $env:DM_COOP) { Write-Error "-Interact$(if ($Story) { ' (and -Story)' }) goes with Link Play (-LinkPlay, -Join, -Internet, -CoopHost or -CoopJoin)"; exit 2 }
     $env:DM_COOP_INTERACT = "1"
-    Write-Host "Interact everywhere: on (experimental). Every player needs it on; a session refuses a player whose setting differs."
-    if ($Story) { $env:DM_COOP_STORY = "1"; Write-Host "Story co-op: on (experimental). Every player needs it on as well." }
+    if ($Story) { $env:DM_COOP_STORY = "1" }
+    if (-not $coopOk) { Write-Warning "Interact everywhere$(if ($Story) { ' and Story co-op' }) need $coopNeeds; this game is another version ($coopGame), so they stay off" }
+    else {
+        Write-Host "Interact everywhere: on (experimental). Every player needs it on; a session refuses a player whose setting differs."
+        if ($Story) { Write-Host "Story co-op: on (experimental). Every player needs it on as well." }
+    }
 }
 if ($env:DM_COOP -and -not $LinkPlay) { Write-Host "Link Play: DM_COOP=$env:DM_COOP$(if ($env:DM_COOP_TCP) { ', datagrams over TCP' })" }
 $cache = Join-Path $Work "cache"; $temp = Join-Path $Work "temp"; $logs = Join-Path $Work "logs"

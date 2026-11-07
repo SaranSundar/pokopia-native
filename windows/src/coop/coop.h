@@ -104,6 +104,8 @@ enum { COOP_ADDR_PUBLIC, COOP_ADDR_LOOPBACK, COOP_ADDR_PRIVATE, COOP_ADDR_LINKLO
 int coop_addr4_class(uint32_t ip);
 int coop_addr6_class(const uint8_t ip[16]);
 int coop_addr_allowed(int scope, int cls);
+// " (Radmin VPN's range)" and the like for the public ranges VPNs hand their players (25/8, 26/8, 100.64/10), else "": named where such an address is refused
+const char *coop_addr4_vpn(uint32_t ip);
 
 // ---------- nn::ldn. Results are nn::Result values (module 203), 0 on success. Structs are the SDK's: NetworkConfig 0x20, SecurityConfig 0x44,
 // UserConfig 0x30, NetworkInfo 0x480, ScanFilter 0x60, SecurityParameter 0x20. IPv4 addresses are host-order u32, as nn::ldn keeps them ----------

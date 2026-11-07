@@ -74,6 +74,8 @@ void dm_pad_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry
 // a 16-bit lock word (no turning while lock & mask: the game's own stick turning is off then); one such entry per game build, ';' between them, the matching
 // one taken. Pokopia: the game applies a write in the same frame, with no smoothing.
 // The stick path stays for another build, before the camera exists and while it is locked. DM_LOOK_DIRECT=0 turns direct look off.
+// While the character moves sideways, Pokopia's follow camera sets the yaw itself and a written turn is lost (#31: left / right did nothing while walking
+// diagonally), but a right-stick turn wins: so while the left stick is held left or right the stick path turns the camera. DM_LOOK_STRAFE=0 writes then too.
 static struct { int state; uint8_t *slot; unsigned pitch, yaw, pmax, pmin, lock, mask, span; uint64_t seen; } g_lc;   // state 0 = not resolved yet, 1 = on, -1 = off
 static int g_look_direct;   // the last frame wrote the camera (dm_look_add then gathers without the stick path's LOOK_LAG limit)
 static uint8_t *look_cam(void) {
@@ -168,7 +170,7 @@ void dm_look_add_at(float right_deg, float up_deg, double age) {
     pthread_mutex_unlock(&g_look_mu);
 }
 void dm_look_add(float right_deg, float up_deg) { dm_look_add_at(right_deg, up_deg, 0); }
-static void look_apply(int32_t *rx, int32_t *ry) {   // player 1's read: this frame's look (the camera written directly, or a tilt that wins over a resting right stick)
+static void look_apply(int32_t *rx, int32_t *ry, int32_t lx) {   // player 1's read: this frame's look (the camera written directly, or a tilt that wins over a resting right stick)
     if (!dm_look_on()) return;
     pthread_mutex_lock(&g_look_mu);
     uint64_t f = dm_guest_frame();
@@ -176,7 +178,9 @@ static void look_apply(int32_t *rx, int32_t *ry) {   // player 1's read: this fr
         double now = look_now(), dt = g_look_t > 0 ? now - g_look_t : 1.0 / 60;
         g_look_frame = f; g_look_t = now; look_stats_frame(f, now);
         g_look_axes[0] = g_look_axes[1] = 0;
-        uint8_t *cam = look_cam(); g_look_direct = cam != NULL;
+        static int strafe = -1; if (strafe < 0) { const char *e = getenv("DM_LOOK_STRAFE"); strafe = !(e && *e && !atoi(e)); }
+        uint8_t *cam = look_cam(); if (strafe && abs(lx) > DM_STICK_MAX / 5) cam = NULL;   // moving sideways: the stick path (above)
+        g_look_direct = cam != NULL;
         if (cam) {   // direct: the pointer's movement up to a steady delay before this read (look_pos_at), in this frame's camera update
             double mx, my; look_pos_at(now - fmin(g_lr_gap + 0.004, 0.04), &mx, &my);
             double dx = mx - g_lr_ax, dy = my - g_lr_ay; g_lr_ax = mx; g_lr_ay = my; g_look_acc[0] = g_look_acc[1] = 0;
@@ -585,7 +589,7 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
         if (atomic_load_explicit(&g_rec_on, memory_order_relaxed)) rec_read((b & 0xffffull) | ((atomic_load(&g_btn) | atomic_load(&g_pad_btn[0])) & DM_BTN_SHAKE), a);
         b |= atomic_load(&g_sc_btn) | atomic_exchange(&g_sc_latch, 0);
         uint64_t c = atomic_load(&g_sc_axes); for (int i = 0; i < 4; i++) a[i] = pick(a[i], ax(c, i));
-        if (abs(a[2]) < DM_STICK_MAX / 5 && abs(a[3]) < DM_STICK_MAX / 5) look_apply(&a[2], &a[3]);   // pointer look, unless a right stick is in use
+        if (abs(a[2]) < DM_STICK_MAX / 5 && abs(a[3]) < DM_STICK_MAX / 5) look_apply(&a[2], &a[3], a[0]);   // pointer look, unless a right stick is in use
     }
     s->lx = a[0]; s->ly = a[1]; s->rx = a[2]; s->ry = a[3];
     b &= 0xffffull;

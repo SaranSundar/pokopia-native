@@ -74,6 +74,12 @@ for p in "$EXEFS" "$GAME" "$ROMFS" "$EXE"; do [ -e "$p" ] || die "not found: $p"
 [ -n "$NEWSAVE" ] && [ -n "$DRYRUN" ] || [ -d "$SAVE" ] || die "not found: $SAVE"
 for m in main sdk; do [ -f "$EXEFS/$m" ] || die "$EXEFS has no '$m': give the game's ExeFS folder"; done
 ls -d "$SAVE"/[BGS]00 >/dev/null 2>&1 || { NOSAVE=1; echo "play.sh: $SAVE holds no B00 / G00 / S00 folders: the game will start a new save there" >&2; }
+# Interact everywhere and Story co-op have sites in these game versions only (src/coop/coop_interact.c, as play.ps1): main's build ID is the module
+# ID in its NSO header
+COOP_BUILDS="76a489f3bd3642fa5e18bd83d32c98ba=2.0.1 816c5358e8178d802fcec4a7ce5a741a=1.0.5" COOP_NEEDS="Pokopia 2.0.1 or 1.0.5" COOP_OK=
+MAIN_BUILD=$(od -An -tx1 -j 64 -N 16 "$EXEFS/main" 2>/dev/null | tr -d ' \n' || true)
+for b in $COOP_BUILDS; do [ "${b%%=*}" = "$MAIN_BUILD" ] && COOP_OK=1; done
+COOP_GAME=$([ -n "$MAIN_BUILD" ] && echo "main ${MAIN_BUILD:0:16}" || echo "main unreadable")
 
 IPPORT='^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])(:[0-9]{1,5})?$'
 ROOMRX='^[0-9A-TV-Za-tv-z]{16}$'   # after dashes and spaces are taken out: Crockford's base32
@@ -135,12 +141,14 @@ if { [ -n "$CONFIG" ] || [ -n "$ASK" ]; } && [ -z "$LINKPLAY$JOIN$INTERNET$ROOM$
       ROOM=$(ask_text "Pokopia - Link Play" "The host's room code (XXXX-XXXX-XXXX-XXXX)" "$(pref_get room)"); [ -n "$ROOM" ] || { echo "cancelled"; exit 0; }
       pref_put "room=$ROOM"
     fi
-    if [ "$mode" != alone ] && [ -z "$INTERACT" ]; then
+    if [ "$mode" != alone ] && [ -z "$COOP_OK" ]; then   # another game version: neither is asked for (the choices stay remembered for one that has them)
+      echo "Interact everywhere and Story co-op need $COOP_NEEDS. This game is another version ($COOP_GAME), so they stay off."
+    elif [ "$mode" != alone ] && [ -z "$INTERACT" ]; then
       ie=$(ask_yes "Pokopia - Link Play" "Interact everywhere (experimental)? Visitors can use moves and items and build in every town, not only Palette Town. Every player needs it on." \
         "$([ "$(pref_get interact)" = true ] && echo yes || echo no)")
       pref_put "interact=$([ "$ie" = yes ] && echo true || echo false)"; [ "$ie" = yes ] && INTERACT=1
     fi
-    if [ -n "$INTERACT" ] && [ -z "$STORY" ]; then
+    if [ -n "$COOP_OK" ] && [ -n "$INTERACT" ] && [ -z "$STORY" ]; then
       sc=$(ask_yes "Pokopia - Link Play" "Story co-op (experimental)? Visitors can talk to the town's story characters. Story requests still count only for the host. Every player needs it on." \
         "$([ "$(pref_get story)" = true ] && echo yes || echo no)")
       pref_put "story=$([ "$sc" = yes ] && echo true || echo false)"; [ "$sc" = yes ] && STORY=1
@@ -177,8 +185,14 @@ if [ -n "$LINKPLAY" ]; then
   [ -n "$INTERNET" ] && export DM_COOP_INTERNET=1 DM_COOP_ROOM=${ROOM^^}
   [ -n "$RELAY" ] && export DM_COOP_RELAY=$RELAY
   echo
-  [ -n "$INTERACT" ] && export DM_COOP_INTERACT=1 && echo "Interact everywhere: on (experimental). Every player needs it on; a session refuses a player whose setting differs."
-  [ -n "$STORY" ] && export DM_COOP_STORY=1 && echo "Story co-op: on (experimental). Every player needs it on as well."
+  [ -n "$INTERACT" ] && export DM_COOP_INTERACT=1
+  [ -n "$STORY" ] && export DM_COOP_STORY=1
+  if [ -n "$INTERACT" ] && [ -z "$COOP_OK" ]; then
+    echo "play.sh: Interact everywhere$([ -n "$STORY" ] && echo ' and Story co-op') need $COOP_NEEDS; this game is another version ($COOP_GAME), so they stay off" >&2
+  elif [ -n "$INTERACT" ]; then
+    echo "Interact everywhere: on (experimental). Every player needs it on; a session refuses a player whose setting differs."
+    [ -n "$STORY" ] && echo "Story co-op: on (experimental). Every player needs it on as well."
+  fi
   if [ -n "$JOIN" ]; then echo "Link Play: visiting $JOIN. In the game: Link Play, Local connection, then look for a town."
   else echo "Link Play: on. In the game: Link Play, Local connection, to host. Other players join this computer's address (ip -4 addr shows it)."; fi
   if [ -n "$INTERNET" ]; then

@@ -5,6 +5,7 @@
 // storage mirror of storage-backed textures, counters (occlusion queries summed from reset to report). The Vulkan side is ours: dynamic rendering, one
 // descriptor set per stage, extended dynamic state, the pool mirrors of vk_mem.c and the images of vk_tex.c, GENERAL as the resting layout of GPU images.
 #include "vk_replay.h"
+#include <ctype.h>
 #include "vk_submit.h"
 #include "vk_mem.h"
 #include "vk_tex.h"
@@ -978,6 +979,56 @@ static int quad_args(uint64_t ind, VkBuffer *ab, VkDeviceSize *ao) {
     RED_ONCE(57, "indirect quads: their arguments are turned into an indexed draw on the GPU (at most 65536 quads and instances)");
     return 1;
 }
+
+// ---------- NXRT_VK_SKIP=<key>[,<key>...]: draws with any of these shaders in any stage, and dispatches of them, are left out (diagnosis: a tester on another GPU
+// switches suspects off one at a time, D-7). Read again at each frame when its value has changed (DM_CTL "env" sets it in a running game); each key's first skip is logged.
+// Two lists, the one in use published by index, so the replay never reads one being rewritten ----------
+enum { SKIP_MAX = 16 };
+static struct { char key[SKIP_MAX][17]; int n; } g_skip[2]; static _Atomic int g_skip_cur;
+static _Atomic uint32_t g_skip_said;   // keys whose first skip was logged (by their place in the list)
+int vkr_skip_set(const char *list) {
+    int nx = !atomic_load(&g_skip_cur), n = 0, bad = 0;
+    const char *p = list ? list : "";
+    while (*p) {
+        while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        const char *q = p; while (*q && *q != ',' && *q != ';' && *q != ' ' && *q != '\t') q++;
+        int ok = q - p == 16; for (const char *c = p; ok && c < q; c++) ok = isxdigit((unsigned char)*c) != 0;
+        if (ok && n < SKIP_MAX) { for (int i = 0; i < 16; i++) g_skip[nx].key[n][i] = (char)tolower((unsigned char)p[i]); g_skip[nx].key[n][16] = 0; n++; }
+        else bad = 1;
+        p = q;
+    }
+    g_skip[nx].n = n;
+    atomic_store(&g_skip_said, 0); atomic_store(&g_skip_cur, nx);
+    return bad ? -1 : n;
+}
+static int skip_index(const char *key) {   // its place in the list in use, -1 when not there
+    int c = atomic_load(&g_skip_cur);
+    for (int i = 0; key && i < g_skip[c].n; i++) if (!strcmp(g_skip[c].key[i], key)) return i;
+    return -1;
+}
+int vkr_skip_has(const char *key) { return skip_index(key) >= 0; }
+static int skip_these(const vks_shader *const *sh, int n) {   // one of these shaders is on the list: logged once per key
+    if (!g_skip[atomic_load(&g_skip_cur)].n) return 0;
+    for (int s = 0; s < n; s++) {
+        int i = sh[s] ? skip_index(sh[s]->key) : -1;
+        if (i < 0) continue;
+        if (!(atomic_fetch_or(&g_skip_said, 1u << i) & 1u << i)) VKLOG("NXRT_VK_SKIP: the draws and dispatches of shader %s are left out", sh[s]->key);
+        g_st.skip_named++;
+        return 1;
+    }
+    return 0;
+}
+static void skip_poll(void) {   // at each frame: the variable as it is now
+    static char last[512]; const char *e = getenv("NXRT_VK_SKIP"); if (!e) e = "";
+    if (!strncmp(last, e, sizeof last - 1)) return;
+    snprintf(last, sizeof last, "%s", e);
+    int n = vkr_skip_set(e);
+    if (n < 0) VKRED("NXRT_VK_SKIP=%s: only shader keys of 16 hex digits are taken (%d kept)", e, g_skip[atomic_load(&g_skip_cur)].n);
+    else if (n) VKLOG("NXRT_VK_SKIP: draws and dispatches of %d shader%s left out (%s)", n, n > 1 ? "s" : "", e);
+    else VKLOG("NXRT_VK_SKIP: nothing left out");
+}
+
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (S->render_skip) { g_st.draws_skipped++; return; }
     int prim = dw ? dw->prim : di->prim, expand;
@@ -990,6 +1041,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     const vks_shader *sh[5] = {0};
     for (int s = 0; s < 5; s++) if (S->bst[s]) sh[s] = prog_stage(S->bst[s], s);
     if (!sh[0] || (S->bst[1] && !sh[1] && !S->rast_discard)) { g_st.skip_no_shader++; g_st.draws_skipped++; return; }
+    if (skip_these(sh, 5)) { g_st.draws_skipped++; return; }
     sh[0] = vin_shader(sh[0]);
     if (S->rast_discard) sh[1] = NULL;
     VkBuffer qab = VK_NULL_HANDLE; VkDeviceSize qao = 0;   // indirect quads: the indexed draw's arguments, made on the GPU before the pass opens
@@ -1162,7 +1214,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (S->vis_on && P.query < 0) { int q = q_alloc(); if (q >= 0) { vkCmdBeginQuery(cb, R0.qp, (uint32_t)q, 0); P.query = q; g_st.queries++; } }
     // the draw
     uint32_t inst = (uint32_t)((dw ? dw->instances : di->instances) > 0 ? (dw ? dw->instances : di->instances) : 1);
-    vk_checkpoint(cb, 'd', sh[1] ? sh[1]->key : sh[0]->key, inst, 0, 0, ind != 0);
+    vk_checkpoint(cb, 'd', sh[1] ? sh[1]->key : sh[0]->key, inst, 0, 0, ind != 0, NULL);
     if (dw) {
         if (ind && expand == VKP_EXPAND_QUADS) { vkCmdBindIndexBuffer(cb, R0.quads, 0, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexedIndirect(cb, qab, qao, 1, 20); }   // quad_args
         else if (ind) { VkBuffer b; VkDeviceSize o;
@@ -1203,6 +1255,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
 static void dispatch(const p_dispatch *dp) {
     const vks_shader *cs = S->cprog ? prog_stage(S->cprog, VKS_CS) : NULL;
     if (!cs) { g_st.skip_no_shader++; return; }
+    if (skip_these(&cs, 1)) return;
     VkPipelineLayout layout; VkPipeline pipe = vkp_compute(cs, &layout);
     if (!pipe) return;
     pass_end();
@@ -1224,7 +1277,10 @@ static void dispatch(const p_dispatch *dp) {
             else if (bb->kind == VKB_DRV) PD("  b%u drv c%d read %d (s2 %d ssbo %u tex %u n %u)", bb->binding, bb->bank, cs->drv_read[bb->bank], cs->s2cs, cs->s2_ssbo_base, cs->s2_tex_base, cs->s2_ntex);
         }
     }
-    vk_checkpoint(cb, 'c', cs->key, g_dispatch_dim[0], g_dispatch_dim[1], g_dispatch_dim[2], dp->ind != 0);
+    uint32_t ckw[16], *ckp = NULL;   // a lost device's report shows the dispatch's first constants as recorded (loop counts: D-1's word 0, D-11's words 12 and 13)
+    if (g_vk.has.checkpoints) for (int i = 0; i < cs->nb && !ckp; i++) { const p_bind_buf *u = cs->b[i].kind == VKB_CBUF && cs->b[i].reg >= 0 && cs->b[i].reg < 16 ? &S->ubo[5][cs->b[i].reg] : NULL;
+        if (u && u->addr && u->size >= 32) { memset(ckw, 0, sizeof ckw); memcpy(ckw, (const void *)(uintptr_t)u->addr, u->size < sizeof ckw ? (size_t)u->size : sizeof ckw); ckp = ckw; } }
+    vk_checkpoint(cb, 'c', cs->key, g_dispatch_dim[0], g_dispatch_dim[1], g_dispatch_dim[2], dp->ind != 0, ckp);
     if (dp->ind) { VkBuffer b; VkDeviceSize o; if (!vkm_use(dp->ind, 12, &b, &o)) { RED_ONCE(70, "indirect dispatch arguments are in no memory pool"); return; } vkCmdDispatchIndirect(cb, b, o); }
     else if (dp->x > 0 && dp->y > 0 && dp->z > 0) vkCmdDispatch(cb, (uint32_t)dp->x, (uint32_t)dp->y, (uint32_t)dp->z);
     g_st.dispatches++;
@@ -1699,6 +1755,7 @@ void vkr_passdump_next(long n) { atomic_store(&g_pd_req, n > 0 ? n : 1); }
 void vkr_texdump_next(void) { atomic_store(&g_td_req, 1); }
 void vkr_frame(uint64_t frame) {
     static vkr_stats_t prev; static uint64_t pf;
+    skip_poll();
     long pr = atomic_exchange(&g_pd_req, 0); if (pr > 0) { g_pd_frame = frame; g_pd_last = frame + (uint64_t)pr - 1; }   // DM_CTL passdump / texdump: from this frame on
     if (atomic_exchange(&g_td_req, 0)) g_td_frame = frame;
     g_pd = g_pd_frame && frame >= g_pd_frame && frame <= g_pd_last;
@@ -1728,10 +1785,10 @@ void vkr_frame(uint64_t frame) {
                         (unsigned long long)frame, (gn - pgn) / 1e6 / (double)(frame - pf), (gn - pgn) / 1e6 / (double)(gs - pgs), (double)(gs - pgs) / (double)(frame - pf));
     pgn = gn; pgs = gs;
     vkr_stats_t s = g_st; uint64_t df = frame - pf; vkp_stats_t ps; vkp_stats(&ps); uint64_t shl, shf; vksh_stats(&shl, &shf);
-    VKLOG("replay up to frame %llu, per frame: %.1f draws (%.1f skipped: no shader %llu, no pipeline %llu, no target %llu in all), %.1f passes, %.1f dispatches, %.1f clears, "
+    VKLOG("replay up to frame %llu, per frame: %.1f draws (%.1f skipped: no shader %llu, no pipeline %llu, no target %llu, NXRT_VK_SKIP %llu in all), %.1f passes, %.1f dispatches, %.1f clears, "
           "%.1f texture copies, %.1f buffer copies / updates / fills, %.1f descriptor sets (%.1f with render scales, %.1f more reused), %.1f write-backs; %llu graphics + %llu compute pipelines (%.1f ms creating, worst %.1f ms), %llu shaders (%llu unusable)",
           (unsigned long long)frame, (double)(s.draws - prev.draws) / df, (double)(s.draws_skipped - prev.draws_skipped) / df, (unsigned long long)s.skip_no_shader,
-          (unsigned long long)s.skip_no_pipeline, (unsigned long long)s.skip_no_target, (double)(s.passes - prev.passes) / df, (double)(s.dispatches - prev.dispatches) / df,
+          (unsigned long long)s.skip_no_pipeline, (unsigned long long)s.skip_no_target, (unsigned long long)s.skip_named, (double)(s.passes - prev.passes) / df, (double)(s.dispatches - prev.dispatches) / df,
           (double)(s.clears - prev.clears) / df, (double)(s.tex_copies - prev.tex_copies) / df, (double)(s.copies + s.updates + s.fills - prev.copies - prev.updates - prev.fills) / df,
           (double)(s.desc_sets - prev.desc_sets) / df, (double)(s.scaled_sets - prev.scaled_sets) / df, (double)(s.sets_reused - prev.sets_reused) / df, (double)(s.writebacks - prev.writebacks) / df, (unsigned long long)ps.graphics, (unsigned long long)ps.compute,
           ps.create_ns / 1e6, ps.max_ns / 1e6, (unsigned long long)shl, (unsigned long long)shf);

@@ -9,7 +9,8 @@ and every player in a session must have it on: a session refuses a player whose 
 | Windows | built and tested: two instances on this PC (loopback), host and visitor in Withered Wasteland |
 | Mac | built by pokopia-native's builder with the new patch and gate; tested with Windows both ways ([the Mac](#the-mac)) |
 | iPhone | an unsigned IPA from the same build (154 of 154 run-time shaders), for the user to sign and test |
-| 1.0.5 | not supported: the setting does nothing there and does not enter the fingerprint |
+| 1.0.5 | ported 2026-11-06: the mask builder (`main+0xa61e0`) is 2.0.1's instruction for instruction, the site `main+0xa62b0`; Windows: attaches on 1.0.5 and the game plays normally with the function in the interpreter (one player, 2026-11-06); the site's effect is untested: the only 1.0.5 save hasn't unlocked Link Play, and 1.0.5 can't load 2.0.1 saves. 1.0.5 and 2.0.1 never share a session (peers compare main's build) |
+| other versions | no sites: the setting does nothing and does not enter the fingerprint. The Windows Link Play window greys the box out and says which versions have it (`play.ps1` reads main's build ID; `ctest coop.play_builds` keeps its list and the site tables alike) |
 
 ## What the game does
 
@@ -37,7 +38,8 @@ the host's settings show it locked On, and the join notice says everyone will be
 
 ## The change: one site
 
-- **Where:** in the mask builder's story-area online block, the instruction `movk x13, #1, lsl #32` (`main+0xb1030`, 2.0.1). There x13
+- **Where:** in the mask builder's story-area online block, the instruction `movk x13, #1, lsl #32` (`main+0xb1030`, 2.0.1; `main+0xa62b0`,
+  1.0.5, in a builder that matches 2.0.1's instruction for instruction). There x13
   holds bits 0–31 of the pattern, the movk adds bit 32 (online), and x22 is the session's Spectator flag.
 - **What:** while the setting is on and the flag is clear, x13 becomes the normal pattern (`0x5ffffffe`). The mask is then exactly
   Palette Town's with Spectator Mode Off (measured: `fe ff ff 5f 03` for the host, `fe ff ff 5f 05` for a visitor).
@@ -54,7 +56,7 @@ attaching), the callback `coop_interact_site(id, x0..x30)`, `coop_interact_on()`
   `game.dll` is unchanged. The function runs only on session starts and town loads. nxrt checks main's build and the instruction word
   first, and logs `DM_COOP_INTERACT: … runs in the interpreter with a hook at main+0xb1030`.
 - **Mac and iPhone (nxnative):** an observation gate, which changes no instruction: pokopia-native's profile gains a `patches.py`
-  (`OBS = {2.0.1 main: [(0xb1030, 27 | 1 << 8, 'f2c0002d', …)]}`), the rewriter moves the instruction into a stub that first calls the
+  (`OBS = {2.0.1 main: [(0xb1030, 27 | 1 << 8, 'f2c0002d', …)], 1.0.5 main: [(0xa62b0, …)]}`), the rewriter moves the instruction into a stub that first calls the
   host, and the co-op patch adds `OBS_COOP_INTERACT = 27` to `dm.h` and attaches the callback (`ldn_glue.c`, a constructor). The
   gate is built in at build time and decided at run time, so it works on the iPhone, whose code pages are signed and never written.
   The callback reads `DM_COOP_INTERACT` when it fires (the iPhone's launcher sets its variables after the host's constructors run).

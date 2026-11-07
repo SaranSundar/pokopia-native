@@ -48,6 +48,14 @@ if (-not ($out | Where-Object { $_ -like "*-Interact goes with Link Play*" })) {
 # Story co-op: -Story brings Interact everywhere with it
 $out = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$play' $a -LinkPlay -Story" 2>&1
 if (-not ($out | Where-Object { $_ -like "*DM_COOP=auto DM_COOP_INTERACT=1 DM_COOP_STORY=1*" })) { Write-Host "FAIL: -LinkPlay -Story`n$($out -join "`n")"; $fail++ } else { Write-Host "ok: -LinkPlay -Story" }
+# Another game version (the stand-in main has no build ID): a warning that both stay off; a main with 2.0.1's build ID: none
+if (-not ($out | Where-Object { $_ -like "*Interact everywhere and Story co-op need Pokopia 2.0.1 or 1.0.5*another version*" })) { Write-Host "FAIL: no warning for another version`n$($out -join "`n")"; $fail++ } else { Write-Host "ok: another version is warned about" }
+$hdr = New-Object byte[] 0x50; [System.Text.Encoding]::ASCII.GetBytes("NSO0").CopyTo($hdr, 0)
+for ($k = 0; $k -lt 16; $k++) { $hdr[0x40 + $k] = [Convert]::ToByte("76a489f3bd3642fa5e18bd83d32c98ba".Substring(2 * $k, 2), 16) }
+[System.IO.File]::WriteAllBytes("$t\ExeFS\main", $hdr)
+$out = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$play' $a -LinkPlay -Story" 2>&1
+if ($out | Where-Object { $_ -like "*another version*" }) { Write-Host "FAIL: 2.0.1 warned about`n$($out -join "`n")"; $fail++ } else { Write-Host "ok: 2.0.1 is not warned about" }
+Set-Content -Path "$t\ExeFS\main" -Value "stand-in"
 # The keyboard map: a DM_KEYMAP given from outside reaches the game unchanged
 $env:DM_KEYMAP = "$t\controls.json"
 $out = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$play' $a" 2>&1
