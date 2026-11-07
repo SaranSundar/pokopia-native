@@ -203,6 +203,7 @@ static void mark_open(range_t *r, uintptr_t k0, uintptr_t k1) { for (uintptr_t k
 // Windows refused a run: part of it is not committed (the heap commits 1 MB chunks lazily, and a texture's storage can span one the game has not touched; #27: three
 // 4 MB textures with a 2 MB hole each). Its committed regions are protected one by one and only the rest stays writable and counts as always written: a write there
 // commits its chunk first, unseen, so it must count as written, and a later protect tracks it from then on. The whole run used to count as always written
+#ifdef _WIN32
 static void protect_parts(range_t *r, uintptr_t k0, uintptr_t k1) {
     for (uintptr_t k = k0; k < k1; ) {
         uintptr_t a = r->base + (k << g_shift), stop = k + 1; MEMORY_BASIC_INFORMATION mi;
@@ -213,6 +214,34 @@ static void protect_parts(range_t *r, uintptr_t k0, uintptr_t k1) {
         k = stop;
     }
 }
+// Windows can refuse (uncommitted pages): those stay writable and untracked, so they count as always written (UINT64_MAX) rather than silently clean;
+// once a later protect takes, such a page counts as written now and is tracked from there
+static void protect_run(range_t *r, uintptr_t k0, uintptr_t k1) {
+    if (!mp_(r->base + (k0 << g_shift), (k1 - k0) << g_shift, PROT_READ, 1)) mark_prot(r, k0, k1);
+    else protect_parts(r, k0, k1);
+}
+#else
+int dm_guest_readable_run(uint64_t a, uint64_t *end);   // host/hle_svc.c: the guest heap's and the alias's commit bitmaps, else a probe
+// Linux: a read-only protect succeeds on pages the guest heap has not committed too (committing is a protection change there). The first write would then be
+// the tracker's fault, not the heap's, so the chunk would never count as committed and its uploads would be stepped over. Only the committed parts are
+// protected; the rest stays as it is and counts as always written, as protect_parts does on Windows (#27). Pages alike are merged into one mprotect
+static void protect_run(range_t *r, uintptr_t k0, uintptr_t k1) {
+    for (uintptr_t k = k0; k < k1; ) {
+        uint64_t e = 0; int ok = dm_guest_readable_run(r->base + (k << g_shift), &e);
+        uintptr_t stop = k + 1;
+        for (;;) {   // as far as the pages are alike: a bitmap answers a whole run at once, a probe one page
+            uintptr_t ke = e > r->base ? (uintptr_t)((e - r->base) >> g_shift) : 0;
+            if (ke > stop) stop = ke;
+            if (stop >= k1) { stop = k1; break; }
+            if (dm_guest_readable_run(r->base + (stop << g_shift), &e) != ok) break;
+            stop++;
+        }
+        if (ok && !mp_(r->base + (k << g_shift), (stop - k) << g_shift, PROT_READ, 1)) mark_prot(r, k, stop);
+        else mark_open(r, k, stop);
+        k = stop;
+    }
+}
+#endif
 // Set read-only: mark the pages BUSY first and mark them PROT only after mprotect has landed (for the order and the invariant see the state notes at the top of the file)
 void nvn_dirty_protect(const void *addr, size_t len) {
     // Keep this descriptor live through the last mprotect. Retirement restores
@@ -230,13 +259,7 @@ void nvn_dirty_protect(const void *addr, size_t len) {
         uint8_t st = PG_NONE;
         int took = i <= q && atomic_compare_exchange_strong(&r->state[i], &st, PG_BUSY);
         if (took && !open) { run = i; open = 1; }
-        if (!took && open) {
-            // Windows can refuse (uncommitted pages): those stay writable and untracked, so they count as always written (UINT64_MAX) rather than silently clean;
-            // once a later protect takes, such a page counts as written now and is tracked from there
-            if (!mp_(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ, 1)) mark_prot(r, run, i);
-            else protect_parts(r, run, i);
-            open = 0;
-        }
+        if (!took && open) { protect_run(r, run, i); open = 0; }
         if (!took && i <= q && st == PG_BUSY && busy_wait(r, i)) i--;   // this page again
     }
     pthread_mutex_unlock(&g_slot_mu);
