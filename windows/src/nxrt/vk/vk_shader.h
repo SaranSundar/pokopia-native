@@ -89,6 +89,9 @@ int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env);
 // A loop over a texel table's items whose count is count_var's first word (634565ab77c61463, D-1): its integer comparisons get min(count, the items tex_var holds,
 // stride texels each). The new word count (*words replaced) and *limited comparisons, nwords when nothing changed
 size_t vkspv_limit_count(uint32_t **words, size_t nwords, const char *count_var, const char *tex_var, uint32_t stride, int *limited);
+// Whether that guard applies: NVIDIA's GPUs only, where the hang was seen (AMD's Windows driver crashed making the guarded pipeline on 1.3.1); env,
+// NXRT_VK_LOOP_GUARD, decides when given: 0 off, anything else on
+int vkspv_loop_guard_wanted(uint32_t vendor, const char *env);
 
 #ifdef __cplusplus
 }

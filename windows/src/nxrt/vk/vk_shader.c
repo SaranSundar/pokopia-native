@@ -314,6 +314,7 @@ size_t vkspv_ballot_per_lane(uint32_t **pw, size_t n, int *rewritten) {
 }
 
 int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env) { return env ? *env != '0' : vendor == 0x10de; }
+int vkspv_loop_guard_wanted(uint32_t vendor, const char *env) { return env ? *env != '0' : vendor == 0x10de; }
 
 // A loop over the items of a table whose count is a constant buffer's first word (shader 634565ab77c61463: D-1's hang on 1.3.0, a count that was not the
 // game's runs the loop for seconds): in integer comparisons, count_var's [0][0].x read as an integer becomes min(count, the items tex_var holds). The table is
@@ -813,8 +814,13 @@ vks_shader *vksh_make(const char *key, const uint8_t *spv, size_t spv_size, cons
         int nb = 0; size_t bn = vkspv_ballot_per_lane(&w, nw, &nb);
         if (nb) { nw = bn; VKLOG("shader %s: %d subgroup ballot%s for a counter made per lane (NVIDIA hang after early returns: #12, D-1)", key, nb, nb > 1 ? "s" : ""); }
     }
-    static int loop_guard = -1;   // NXRT_VK_LOOP_GUARD=0 leaves the loop as translated
-    if (loop_guard < 0) { const char *e = getenv("NXRT_VK_LOOP_GUARD"); loop_guard = !(e && *e == '0'); }
+    static int loop_guard = -1;   // decided at the first shader, as the ballot rewrite
+    if (loop_guard < 0) {
+        const char *e = getenv("NXRT_VK_LOOP_GUARD");
+        loop_guard = vkspv_loop_guard_wanted(g_vk.props.vendorID, e);
+        if (e) VKLOG("634565ab's item loop guard %s (NXRT_VK_LOOP_GUARD=%s)", loop_guard ? "on" : "off", e);
+        else if (!loop_guard) VKLOG("634565ab's item loop left as translated: its guard is for NVIDIA's GPUs (AMD's Windows driver crashed making it; NXRT_VK_LOOP_GUARD=1 makes it anyway)");
+    }
     if (loop_guard && !strcmp(key, "634565ab77c61463")) {   // D-1's hang on 1.3.0: a nearest-item search whose count is a constant buffer word (8 items in play)
         int nl = 0; size_t ln = vkspv_limit_count(&w, nw, "cp_c3", "cp_t_tcb_10", 5, &nl);
         if (nl) { nw = ln; VKLOG("shader %s: its item loop kept to the items its table holds (%d comparison%s; a GPU hang on D-1's RTX 3050)", key, nl, nl > 1 ? "s" : ""); }

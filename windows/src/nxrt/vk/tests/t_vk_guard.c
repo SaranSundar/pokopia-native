@@ -96,6 +96,9 @@ int main(void) {
     uint32_t *o = copy_words(test_guard_comp_spv, n); int ol = -1;
     CHECK(vkspv_limit_count(&o, n, "cp_c4", "cp_t_tcb_10", 5, &ol) == n && ol == 0 && !memcmp(o, test_guard_comp_spv, n * 4), "another constant buffer's name: left alone");
     free(o);
+    CHECK(vkspv_loop_guard_wanted(0x10de, NULL) && !vkspv_loop_guard_wanted(0x1002, NULL) && !vkspv_loop_guard_wanted(0x8086, NULL) && !vkspv_loop_guard_wanted(0x10005, NULL),
+          "the guard by default: NVIDIA only (AMD's Windows driver crashed making it)");
+    CHECK(vkspv_loop_guard_wanted(0x1002, "1") && !vkspv_loop_guard_wanted(0x10de, "0") && !vkspv_loop_guard_wanted(0x1002, "0"), "NXRT_VK_LOOP_GUARD: 1 on, 0 off, on any GPU");
     int rc = vt_up(0, 1);
     if (!rc) {
         CHECK(walk(test_guard_comp_spv, n, 3, 40, 1) == 3, "the original walks 3 items of 3");
