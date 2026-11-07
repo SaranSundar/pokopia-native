@@ -119,30 +119,32 @@ folder: Windows saves load on the Mac and the iPhone.
 
 Link Play → **Local connection** in the game works with the Mac and iPhone apps and other Windows PCs (the README's
 [Playing together](../README.md#playing-together-link-play) has the whole picture). Every device needs **the same
-pokopia-native version**, and **each player needs their own save** (the game refuses a second copy of the host's save, so
+pokopia-native version** and **the same game version** (1.0.5 or 2.0.1), and **each player needs their own save** (the game refuses a second copy of the host's save, so
 a save copied from one device to another cannot join itself).
 
 **Before the game starts, a small window asks how you want to play:**
 
 - **Play alone**;
 - **Link Play with players on this network** (the same Wi-Fi): host, or find the other players' towns;
-- **Host over the internet**: your router forwards port **47600, TCP and UDP**, to this PC. A second window shows your
-  **room code** with a **Copy** button; give it to the visitors with this PC's internet address. "Keep my room code from
-  last time" saves them typing a new one;
-- **Visit a host over the internet**: type the host's address and room code.
+- **Host over the internet or a VPN**: without a VPN, your router forwards port **47600, TCP and UDP**, to this PC. A
+  second window shows your **room code** with a **Copy** button; give it to the visitors with this PC's internet address
+  (through a VPN such as Radmin VPN, Hamachi or Tailscale: its address in the VPN). "Keep my room code from last time"
+  saves them typing a new one;
+- **Visit a host over the internet or a VPN**: type the host's address and room code.
 
 Under them, **Interact everywhere (experimental)** lets Link Play players use moves and items and build in every town, not only
 Palette Town (the README's [Playing together](../README.md#playing-together-link-play) explains it). Every player needs it on,
 the iPhone and Mac in their launcher. **Story co-op (experimental)** goes one step further: visitors can also talk to the
 town's story characters (it turns Interact everywhere on with it). Story requests still count only for the host; the README
-says what does and doesn't count. Every player needs it on too.
+says what does and doesn't count. Every player needs it on too. Both work on game versions 2.0.1 and 1.0.5 (until 1.3.2 on
+2.0.1 only).
 
 It remembers your choice. **Don't ask again** starts the same way every time; **`Pokopia Settings <version>.cmd`**, beside
 the Play launcher in `<build folder>\out`, shows the window again (so does holding **Shift** while starting the game). The
 settings live in `%APPDATA%\Pokopia Native\linkplay.json`.
 
 From a terminal, switches after the launcher's name skip the window: `-LinkPlay`; `-Join <address>[:<port>]` visits one
-host by address; `-Internet` with `-Room <code>` (a host without one gets a new code); `-Relay <address>[:<port>]` goes
+host by its home-network address (a VPN's address, such as Radmin VPN's 26.x, needs `-Internet` and `-Room` too); `-Internet` with `-Room <code>` (a host without one gets a new code); `-Relay <address>[:<port>]` goes
 through a relay you trust; `-Interact` turns on Interact everywhere; `-Story` turns on Story co-op (and Interact everywhere).
 
 - **The first time**, Windows Firewall asks whether the game may use networks: allow **Private networks**. Your network

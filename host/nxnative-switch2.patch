@@ -3885,10 +3885,10 @@ index 54afe1a..21162d4 100644
  .PHONY: clean
 diff --git a/dm/host/coop.h b/dm/host/coop.h
 new file mode 100644
-index 0000000..9204cd4
+index 0000000..171a7e2
 --- /dev/null
 +++ b/dm/host/coop.h
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,209 @@
 +// coop: Pokopia's Link Play "Local Connection" between our native builds (research/06 §5, docs/coop-step1.md, docs/coop-step1c.md). MIT, our own code.
 +// One portable C11 module every port's HLE layer calls: `ldn` (the nn::ldn state machine and the 0x480 NetworkInfo), `vnet` (the game's UDP
 +// sockets on a virtual 169.254.S.0/24), `mpnet` (the real transport: a star of TCP control links around the host plus UDP for game datagrams)
@@ -3995,6 +3995,8 @@ index 0000000..9204cd4
 +int coop_addr4_class(uint32_t ip);
 +int coop_addr6_class(const uint8_t ip[16]);
 +int coop_addr_allowed(int scope, int cls);
++// " (Radmin VPN's range)" and the like for the public ranges VPNs hand their players (25/8, 26/8, 100.64/10), else "": named where such an address is refused
++const char *coop_addr4_vpn(uint32_t ip);
 +
 +// ---------- nn::ldn. Results are nn::Result values (module 203), 0 on success. Structs are the SDK's: NetworkConfig 0x20, SecurityConfig 0x44,
 +// UserConfig 0x30, NetworkInfo 0x480, ScanFilter 0x60, SecurityParameter 0x20. IPv4 addresses are host-order u32, as nn::ldn keeps them ----------
@@ -5317,10 +5319,10 @@ index 0000000..62401bf
 +#endif
 diff --git a/dm/host/hle_coop_interact.c b/dm/host/hle_coop_interact.c
 new file mode 100644
-index 0000000..23682e6
+index 0000000..0b4a121
 --- /dev/null
 +++ b/dm/host/hle_coop_interact.c
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,61 @@
 +// coop_interact: "Interact everywhere" (docs/coop-interact.md), an experimental opt-in for Link Play outside Palette Town, and "Story co-op"
 +// (docs/story-coop.md), the experimental step after it. MIT, our own code.
 +// The game keeps a session's permissions in a 36-bit mask (GameMgr+0x8c; its top bits are the online / host / visitor bits at +0x90) and rebuilds it
@@ -5333,18 +5335,21 @@ index 0000000..23682e6
 +#include <stdlib.h>
 +#include <string.h>
 +
-+// Pokopia 2.0.1 main (76a489f3…): the mask builder's story-area online block. At the site (movk x13, #1, lsl #32) x13 holds the pattern's bits 0-31
-+// (Spectator: bits 23-26 and 31) and the movk adds bit 32 (online); x22 is the session's Spectator flag, 0 in every story area. The normal online
-+// pattern sets bits 1-28 and 30
++// The mask builder's story-area online block. At the site (movk x13, #1, lsl #32) x13 holds the pattern's bits 0-31 (Spectator: bits 23-26 and 31)
++// and the movk adds bit 32 (online); x22 is the session's Spectator flag, 0 in every story area. The normal online pattern sets bits 1-28 and 30.
++// 2.0.1 main (76a489f3…); 1.0.5 main (816c5358…), where the builder is the same instruction for instruction
 +static const coop_site g_sites[] = {
 +    {"76a489f3bd3642fa5e18bd83d32c98ba", 0xb0f60, 0xb1030, 0xf2c0002du, COOP_SITE_MASK, "permission mask: story areas get Palette Town's Spectator-Off pattern"},
++    {"816c5358e8178d802fcec4a7ce5a741a", 0xa61e0, 0xa62b0, 0xf2c0002du, COOP_SITE_MASK, "permission mask: story areas get Palette Town's Spectator-Off pattern"},
 +};
 +
-+// Story co-op, 2.0.1 main. The A button asks a chain of handlers (main+0x4c3ec8) what it does; the talk handler (main+0x4c024c) gives an online
++// Story co-op. The A button asks a chain of handlers (2.0.1 main+0x4c3ec8) what it does; the talk handler (2.0.1 main+0x4c024c) gives an online
 +// player who is not the host a visitor's reply (kinds 0xa/0xb, no conversation) unless the NPC is one of three every visitor may talk to. At the site
-+// (orr w8, w25, w0) w0 is IsHost's answer, so a visitor takes the host's path: the NPC's own conversation
++// (orr w8, w25, w0) w0 is IsHost's answer, so a visitor takes the host's path: the NPC's own conversation. 1.0.5's handler has the same site at the
++// same offset, between the same calls (stage == 0x11, IsHost); its other differences are struct offsets
 +static const coop_site g_story[] = {
 +    {"76a489f3bd3642fa5e18bd83d32c98ba", 0x4c024c, 0x4c06d8, 0x2a000328u, COOP_SITE_TALK, "talk: a visitor gets the NPC's conversation, as the host"},
++    {"816c5358e8178d802fcec4a7ce5a741a", 0x469424, 0x4698b0, 0x2a000328u, COOP_SITE_TALK, "talk: a visitor gets the NPC's conversation, as the host"},
 +};
 +
 +static int sites_of(const coop_site *t, size_t nt, const char *main_build, const coop_site **out) {
@@ -5381,10 +5386,10 @@ index 0000000..23682e6
 +}
 diff --git a/dm/host/hle_coop_ldn.c b/dm/host/hle_coop_ldn.c
 new file mode 100644
-index 0000000..6d10595
+index 0000000..9ce1049
 --- /dev/null
 +++ b/dm/host/hle_coop_ldn.c
-@@ -0,0 +1,601 @@
+@@ -0,0 +1,608 @@
 +// coop ldn (MIT, our own code): the nn::ldn state machine (None 0, Initialized 1, AccessPoint 2, AccessPointCreated 3, Station 4,
 +// StationConnected 5), the 0x480 NetworkInfo the host builds, scan and connect over the transport, configuration and address classes. Layouts and
 +// result codes follow switchbrew and research/06 §3.1, §4. The host is node 0 at 169.254.S.1; a station with node id k is 169.254.S.(k+1).
@@ -5450,6 +5455,12 @@ index 0000000..6d10595
 +    if ((ip >> 24) == 10 || (ip >> 20) == 0xAC1 || (ip >> 16) == 0xC0A8) return COOP_ADDR_PRIVATE;   // 10/8, 172.16/12, 192.168/16 (RFC 1918)
 +    if ((ip >> 16) == 0xA9FE) return COOP_ADDR_LINKLOCAL;                                           // 169.254/16
 +    return COOP_ADDR_PUBLIC;   // everything else, 100.64/10 (carrier NAT) included
++}
++const char *coop_addr4_vpn(uint32_t ip) {
++    if ((ip >> 24) == 26) return " (Radmin VPN's range)";
++    if ((ip >> 24) == 25) return " (Hamachi's range)";
++    if ((ip >> 22) == 0x191) return " (carrier NAT, or Tailscale's range)";   // 100.64/10
++    return "";
 +}
 +int coop_addr6_class(const uint8_t a[16]) {
 +    static const uint8_t lo[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, zero[16] = {0};
@@ -5523,8 +5534,9 @@ index 0000000..6d10595
 +        int cls = coop_addr4_class(c->addr);
 +        if (!coop_addr_allowed(inet ? COOP_SCOPE_INTERNET : COOP_SCOPE_LAN, cls)) {
 +            if (inet) snprintf(err, errn, "DM_COOP=%s: %u.%u.%u.%u is not an address a host can have", coop, c->addr >> 24, c->addr >> 16 & 0xFF, c->addr >> 8 & 0xFF, c->addr & 0xFF);
-+            else snprintf(err, errn, "DM_COOP=%s: %u.%u.%u.%u is not a loopback, private (RFC 1918) or link-local address; internet play is a separate opt-in "
-+                          "(DM_COOP_INTERNET=1 and the host's DM_COOP_ROOM code, docs/coop-step1d.md)", coop, c->addr >> 24, c->addr >> 16 & 0xFF, c->addr >> 8 & 0xFF, c->addr & 0xFF);
++            else snprintf(err, errn, "DM_COOP=%s: %u.%u.%u.%u%s is not a loopback, private or link-local address; through a VPN or the internet, every player "
++                          "turns on internet play (DM_COOP_INTERNET=1, the host's room code)", coop, c->addr >> 24, c->addr >> 16 & 0xFF, c->addr >> 8 & 0xFF, c->addr & 0xFF,
++                          coop_addr4_vpn(c->addr));
 +            return -1;
 +        }
 +        c->role = COOP_ROLE_JOIN; c->scope = cls == COOP_ADDR_LOOPBACK ? COOP_SCOPE_LOOPBACK : inet ? COOP_SCOPE_INTERNET : COOP_SCOPE_LAN; c->port = (uint16_t)port;
@@ -5558,7 +5570,7 @@ index 0000000..6d10595
 +    cplat_lock(&once);
 +    if (!done) {
 +        done = 1;
-+        coop_cfg c; char err[240] = "", jm[96], msg[300];
++        coop_cfg c; char err[320] = "", jm[96], msg[360];
 +        const char *mode = getenv("DM_COOP"), *inet = getenv("DM_COOP_INTERNET"), *room = getenv("DM_COOP_ROOM"), *relay = getenv("DM_COOP_RELAY");
 +        const char *join = getenv("DM_COOP_JOIN");   // the launcher's "Join address" under its Link Play switch: auto becomes join:<it>
 +        int joined = join && *join && mode && !strcmp(mode, "auto") && strlen(join) < 64;
@@ -5988,10 +6000,10 @@ index 0000000..6d10595
 +}
 diff --git a/dm/host/hle_coop_mpnet.c b/dm/host/hle_coop_mpnet.c
 new file mode 100644
-index 0000000..2c46413
+index 0000000..8aaaa9a
 --- /dev/null
 +++ b/dm/host/hle_coop_mpnet.c
-@@ -0,0 +1,1090 @@
+@@ -0,0 +1,1092 @@
 +// coop mpnet (MIT, our own code): the real transport, a star around the host (the LDN access point).
 +// - Control: one TCP link per station and host, framed messages (u32 length, u8 type, body): HELLO / WELCOME (the coop protocol; the host's build and
 +//   mods fingerprint), SCAN_REQ / SCAN_RESP (the host's NetworkInfo and identity), JOIN / ACCEPT / REFUSE (the host checks the network, passphrase,
@@ -6143,8 +6155,10 @@ index 0000000..2c46413
 +    n->refused_src++;
 +    if (n->refused_src <= 4 || now - n->log_src_at >= LOG_GAP_MS) {
 +        char a[16]; ipstr(a, ip);
-+        coop_logf(n, "mp: refused %s: not a %s address (%llu refused so far)", a, n->cfg.scope == COOP_SCOPE_LOOPBACK ? "loopback" :
-+                  n->cfg.scope == COOP_SCOPE_INTERNET ? "valid unicast" : "loopback, private or link-local", (unsigned long long)n->refused_src);
++        const char *vpn = n->cfg.scope == COOP_SCOPE_LAN ? coop_addr4_vpn(ip) : "";
++        coop_logf(n, "mp: refused %s%s: not a %s address (%llu refused so far)%s", a, vpn, n->cfg.scope == COOP_SCOPE_LOOPBACK ? "loopback" :
++                  n->cfg.scope == COOP_SCOPE_INTERNET ? "valid unicast" : "loopback, private or link-local", (unsigned long long)n->refused_src,
++                  *vpn ? "; through a VPN, every player turns on internet play" : "");
 +        n->log_src_at = now;
 +    }
 +    return 0;
