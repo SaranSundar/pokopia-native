@@ -1,6 +1,6 @@
 # This folder is a snapshot
 
-The Windows port's source, copied from its private development repository at commit `d9035f44766b` (plus the changes not committed there yet) by `tools/snapshot_windows.py`, without the history. 459 files. Fixes applied for publishing (docs/M7-PUBLISHING-AUDIT.md):
+The Windows port's source, copied from its private development repository at commit `d667293ff504` (plus the changes not committed there yet) by `tools/snapshot_windows.py`, without the history. 461 files. Fixes applied for publishing (docs/M7-PUBLISHING-AUDIT.md):
 
 - `README.md`: the "local and private" lines
 - `docs/M7-REPORT.md`: this PC's work folder (1)

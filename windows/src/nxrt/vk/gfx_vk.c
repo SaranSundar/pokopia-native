@@ -14,11 +14,40 @@
 #include "vk_astc.h"
 #include "vk_replay.h"
 #include "vk_shot.h"
+
+#include <stdio.h>
+
+const char *nxrt_log_path(void);
+// No usable Vulkan 1.3 GPU (D-12: a laptop whose NVIDIA card had no driver left only Intel's built-in graphics, Vulkan 1.2, and the game closed
+// with nothing on screen): before the exit the player is told what was found and what to do, in a message box (not when headless)
+static void nogpu_message(const char *hint) {
+    char found[640], msg[1600]; int why = vk_dev_fail(found, sizeof found, "\n    ");
+    if (why == 1)
+        snprintf(msg, sizeof msg, "Pokopia Native found no graphics card it can use: Vulkan, which the game draws with, reports none.\n\n"
+                 "Install or update your graphics card's driver: NVIDIA's GeForce Game Ready driver (nvidia.com), AMD's Adrenalin (amd.com) or "
+                 "Intel's driver (intel.com). Then restart the PC and start the game again.");
+    else if (why == 2)
+        snprintf(msg, sizeof msg, "Pokopia Native needs a graphics card with Vulkan 1.3, and found only:\n    %s\n\n"
+                 "If your PC also has an NVIDIA or AMD graphics card (most gaming laptops do), it isn't listed because its driver is missing or broken: "
+                 "install the newest driver from nvidia.com or amd.com, restart the PC, and start the game again.\n\n"
+                 "A card listed with Vulkan 1.2 or older may get Vulkan 1.3 from a newer driver. The graphics built into older processors "
+                 "can't run the game.", found);
+    else if (why == 4)
+        snprintf(msg, sizeof msg, "NXRT_VK_DEVICE=%s matches none of the graphics cards with Vulkan 1.3:\n    %s\n\n"
+                 "Remove that setting (or give a name or number from the list) and start the game again.", hint ? hint : "", found);
+    else
+        snprintf(msg, sizeof msg, "Pokopia Native could not start the graphics card%s%s\n\nThe game's log says why:\n    %s\n\n"
+                 "Please send it on the Discord (#install-help) or in a GitHub issue.", *found ? ":\n    " : ".", found, nxrt_log_path());
+    vkw_close();
+    vkw_message("Pokopia Native: no usable graphics card", msg);
+}
 #include "ctl_gfx.h"
 #include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <stdio.h>
 
 const char *nxrt_log_path(void);
 _Noreturn void nxrt_die(const char *fmt, ...);
@@ -60,7 +89,11 @@ static BOOL CALLBACK start(PINIT_ONCE o, PVOID p, PVOID *c) {
         g_window = 1;
     }
     vk_dev_opts dopt = {validation, headless, getenv("NXRT_VK_DEVICE")};
-    if (vk_dev_open(&dopt, ex, nx)) nxrt_die("--gfx vulkan: no usable Vulkan 1.3 device (see the log)");
+    if (vk_dev_open(&dopt, ex, nx)) {
+        char found[640]; int why = vk_dev_fail(found, sizeof found, "; ");
+        if (g_window) nogpu_message(dopt.device_hint);
+        nxrt_die("--gfx vulkan: no usable Vulkan 1.3 device (%s%s; see the log)", why == 1 ? "no graphics card at all" : "found: ", why == 1 ? "" : found);
+    }
     vkf_init(); vkf_log_table();
     if (vks_init() || vkpc_init() || vkm_init() || vkt_init() || vka_init(NULL) || vkr_init()) nxrt_die("--gfx vulkan: the backend could not start (see the log)");
     if (g_window && vkp_init(mode)) nxrt_die("--gfx vulkan: no swapchain on the window (see the log)");
@@ -163,7 +196,9 @@ uint64_t gfx_present(const tex_t *t, double period_s, const int crop[4]) {
     up(); frame_tick();
     if (t && t->serial) vkt_resolve(t);   // a texture presented without being drawn into this run still has an image to show
     vks_shot_present(t, g_frame, crop);
-    return vkp_enqueue(t ? t->serial : 0, period_s, atomic_load(&g_vk.tl_assigned), crop, g_origin_ll);
+    if (t && t->serial) vkr_note_presented(t->serial);   // the wide view squeezes the 2D drawn into the textures the game presents
+    int bars = t && vkr_wide_bars(t->serial);
+    return vkp_enqueue(t ? t->serial : 0, period_s, atomic_load(&g_vk.tl_assigned), crop, (g_origin_ll ? VKP_FLIP : 0) | (bars ? VKP_BARS : 0));
 }
 uint64_t gfx_present_ext(uint64_t serial, double period, void *ev, uint64_t ev_val, const int crop[4]) {
     (void)ev; (void)ev_val;   // external producers (nxnative's Vulkan / GL layers for other games) draw on our queue: its timeline orders them

@@ -14,7 +14,7 @@ sizes, a plain-words line about the picture and the window, Upscaling and Sharpn
 the Close button closes it. While it is open the game gets no input (what was held is let go, the mouse is freed from mouse look; key-ups still go
 through, so nothing stays held), and it keeps running behind the panel. Two tabs:
 
-- **Graphics**: Resolution, Display mode, Window size, Console mode, Upscaling, Sharpness, Frame rate, Vsync, FPS counter: the launcher's Display tab.
+- **Graphics**: Resolution, Display mode, Window size, Console mode, Upscaling, Sharpness, Frame rate, Vsync, FPS counter, Wide view: the launcher's Display tab.
 - **Controls**: the keyboard's key for each of the 21 actions (the launcher's Controls tab): choose an action, press its key; Reset to defaults.
 
 Every change takes effect at once, without a restart, except **Console mode**, which the menu saves for the next start and says so (switched live,
@@ -80,6 +80,7 @@ screen) and its Resolution.
 | Frame rate | 60 fps, 30 fps | from the next frame (docs/frame-rate-30.md); the game keeps its speed |
 | Vsync | On, Off | the swapchain is made again with FIFO or mailbox |
 | FPS counter | Off, Corner, Detailed | at once: a small white pill at the top left with the frames per second; Detailed adds the frame time and the size the game draws at ("60 fps \| 16.7 ms \| 3840x2160"). `display.json` "fps_counter", `NXRT_FPS_COUNTER` |
+| Wide view | Off, On (experimental) | from the next start: on a screen wider than 16:9 the view fills it, the 2D stays in the middle 16:9 (docs/wide-view.md). `display.json` "wide_view", `NXRT_VK_WIDE` |
 
 ## Using it
 
@@ -130,6 +131,6 @@ Not checked by script: real F1, keyboard, mouse and controller input (a script w
 - What it calls: `vkt_request_scale` (resolution), `vkw_request_fullscreen` / `vkw_request_size`, `vkp_set_upscale`, `vkp_set_mode` (vsync),
   `vk_set_fps_target` (frame rate), `front_sdl_keymap_set` (keys, under their own lock).
 - Tests: `DM_CTL` lines `menu open|close|tab <0|1>|set <row> <choice>|list <row>|key <action> <scancode>|reset` (rows: resolution, display, window,
-  console, upscale, sharpness, fps, vsync, counter; choices count from 0 in the menu's order, the Resolution list's for the running mode; `list`
+  console, upscale, sharpness, fps, vsync, counter, wide; choices count from 0 in the menu's order, the Resolution list's for the running mode; `list`
   opens a row's list as Enter would). `NXRT_VK_SHOT_WINDOW=1` makes each `shot` save the window as well (`.window.png`), menu included.
   `nxrt.pad_sdl` drives the menu with real SDL events; `scripts.play_defaults` checks the launcher's side.

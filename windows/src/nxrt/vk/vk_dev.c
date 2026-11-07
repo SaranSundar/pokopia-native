@@ -35,10 +35,18 @@ typedef struct { VkStructureType sType; void *pNext; VkBool32 b[64]; } feat_any;
 
 static int count_true(const feat_any *f, size_t size) { int n = 0; size_t k = (size - offsetof(feat_any, b)) / sizeof(VkBool32); for (size_t i = 0; i < k; i++) n += f->b[i] != 0; return n; }
 
+static struct { int why, n; char name[6][96]; uint32_t api[6]; } g_fail;   // what the last vk_dev_open found when it failed (vk_dev_fail)
+int vk_dev_fail(char *found, size_t n, const char *sep) {
+    size_t o = 0; if (n) found[0] = 0;
+    for (int i = 0; i < g_fail.n && o < n; i++)
+        o += (size_t)snprintf(found + o, n - o, "%s%s (Vulkan %u.%u)", i ? sep : "", g_fail.name[i], VK_API_VERSION_MAJOR(g_fail.api[i]), VK_API_VERSION_MINOR(g_fail.api[i]));
+    return g_fail.why;
+}
 int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_inst_exts) {
     if (g_vk.up) return 0;
+    g_fail.why = 3; g_fail.n = 0;
     InitializeSRWLock(&g_vk.qlock);
-    if (vkf_load_global()) { VKRED("no Vulkan loader (vulkan-1.dll): the Vulkan renderer cannot start"); return -1; }
+    if (vkf_load_global()) { VKRED("no Vulkan loader (vulkan-1.dll): the Vulkan renderer cannot start"); g_fail.why = 1; return -1; }
     uint32_t iv = VK_API_VERSION_1_0; if (vkEnumerateInstanceVersion) vkEnumerateInstanceVersion(&iv);
     if (iv < VK_API_VERSION_1_3) { VKRED("the Vulkan loader is version %u.%u, 1.3 is needed", VK_API_VERSION_MAJOR(iv), VK_API_VERSION_MINOR(iv)); return -1; }
 
@@ -65,7 +73,7 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
         VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT, on_debug, NULL};
     VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, g_vk.validation && g_vk.has.debug_utils ? &dci : NULL, 0, &app, nl, layers, ne, exts};
     VkResult r = vkCreateInstance(&ici, NULL, &g_vk.inst);
-    if (r != VK_SUCCESS) { VKRED("vkCreateInstance failed (%d)", r); return -1; }
+    if (r != VK_SUCCESS) { VKRED("vkCreateInstance failed (%d)", r); g_fail.why = 1; return -1; }
     if (vkf_load_instance(g_vk.inst)) { VKRED("the Vulkan instance lacks core entry points"); return -1; }
     if (g_vk.validation && vkCreateDebugUtilsMessengerEXT) vkCreateDebugUtilsMessengerEXT(g_vk.inst, &dci, NULL, &g_vk.dbg);
 
@@ -73,11 +81,14 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
     uint32_t npd = 0; vkEnumeratePhysicalDevices(g_vk.inst, &npd, NULL);
     VkPhysicalDevice *pds = calloc(npd + 1, sizeof *pds); vkEnumeratePhysicalDevices(g_vk.inst, &npd, pds);
     int pick = -1, pick_discrete = 0;
+    uint32_t need = VK_API_VERSION_1_3; const char *req = getenv("NXRT_VK_REQUIRE");   // NXRT_VK_REQUIRE=1.4 etc.: a higher version, to test the no-GPU path
+    if (req && *req) { unsigned ma = 1, mi = 3; if (sscanf(req, "%u.%u", &ma, &mi) == 2) need = VK_MAKE_API_VERSION(0, ma, mi, 0); }
     for (uint32_t i = 0; i < npd; i++) {
         VkPhysicalDeviceProperties p; vkGetPhysicalDeviceProperties(pds[i], &p);
         VKLOG("GPU %u: %s (%s, Vulkan %u.%u.%u, driver %#x, type %d)", i, p.deviceName, vk_vendor_name(p.vendorID), VK_API_VERSION_MAJOR(p.apiVersion),
               VK_API_VERSION_MINOR(p.apiVersion), VK_API_VERSION_PATCH(p.apiVersion), p.driverVersion, p.deviceType);
-        if (p.apiVersion < VK_API_VERSION_1_3) continue;
+        if (g_fail.n < 6) { snprintf(g_fail.name[g_fail.n], sizeof g_fail.name[0], "%s", p.deviceName); g_fail.api[g_fail.n++] = p.apiVersion; }
+        if (p.apiVersion < need) continue;
         if (o->device_hint && *o->device_hint) {
             char *end; long k = strtol(o->device_hint, &end, 10);
             if ((!*end && k == (long)i) || (*end && strstr(p.deviceName, o->device_hint))) { pick = (int)i; pick_discrete = 2; }
@@ -86,7 +97,10 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
         int disc = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
         if (pick < 0 || (disc && !pick_discrete)) { pick = (int)i; pick_discrete = disc; }
     }
-    if (pick < 0) { VKRED("no Vulkan 1.3 GPU%s%s", o->device_hint ? " matching NXRT_VK_DEVICE=" : "", o->device_hint ? o->device_hint : ""); free(pds); return -1; }
+    if (pick < 0) {
+        VKRED("no Vulkan 1.3 GPU%s%s", o->device_hint ? " matching NXRT_VK_DEVICE=" : "", o->device_hint ? o->device_hint : "");
+        g_fail.why = !npd ? 1 : o->device_hint && *o->device_hint ? 4 : 2; free(pds); return -1;
+    }
     g_vk.pd = pds[pick]; free(pds);
     vkGetPhysicalDeviceProperties(g_vk.pd, &g_vk.props);
     vkGetPhysicalDeviceMemoryProperties(g_vk.pd, &g_vk.memp);

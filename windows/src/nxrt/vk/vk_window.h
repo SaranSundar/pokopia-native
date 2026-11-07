@@ -9,6 +9,7 @@ extern "C" {
 
 int vkw_open(const char *title, int width, int height, int hidden);   // starts the window thread; 0 = the window exists, -1 = no SDL / no display (logged)
 void vkw_close(void);
+void vkw_message(const char *title, const char *text);   // an error box the player has to close (blocks until then)
 int vkw_is_open(void);
 const char *const *vkw_instance_exts(uint32_t *n);       // what the Vulkan instance needs for this window system
 int vkw_create_surface(VkInstance inst, VkSurfaceKHR *out);

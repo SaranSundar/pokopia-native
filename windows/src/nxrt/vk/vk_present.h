@@ -19,8 +19,10 @@ void vkp_set_resolver(vkp_resolve_fn fn);
 void vkp_set_upscale(int sharp, float sharpness);   // the in-game menu: Sharp (1) or Standard (0), sharpness 0..1
 void vkp_set_mode(int mode);                       // the in-game menu: VKP_FIFO (vsync) / VKP_MAILBOX, the swapchain made again
 // Enqueue one present; returns its ticket at once. serial 0 = nothing to show (the test pattern); wait_value: GPU timeline value the frame's work signals;
-// period: the least time the previous image stays on screen (s, 0 = none); crop: x, y, w, h in the texture (NULL = all of it); flip: GL's lower-left origin
-uint64_t vkp_enqueue(uint64_t serial, double period, uint64_t wait_value, const int crop[4], int flip);
+// period: the least time the previous image stays on screen (s, 0 = none); crop: x, y, w, h in the texture (NULL = all of it); flags: VKP_FLIP (GL's
+// lower-left origin), VKP_BARS (the wide view shows only the middle 16:9 of the picture: nothing full screen was drawn into it)
+enum { VKP_FLIP = 1, VKP_BARS = 2 };
+uint64_t vkp_enqueue(uint64_t serial, double period, uint64_t wait_value, const int crop[4], int flags);
 void vkp_wait(uint64_t ticket);             // until that present has been handed to the GPU (or dropped)
 void vkp_flush(void);                       // until every enqueued present has
 uint64_t vkp_count(void);                   // presents handed to the GPU so far

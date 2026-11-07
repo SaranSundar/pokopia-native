@@ -110,6 +110,7 @@ void vkw_close(void) {
 }
 
 int vkw_is_open(void) { return atomic_load(&g_w.open); }
+void vkw_message(const char *title, const char *text) { if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, text, NULL)) VKLOG("the message box could not be shown: %s", SDL_GetError()); }
 const char *const *vkw_instance_exts(uint32_t *n) { Uint32 c = 0; const char *const *e = SDL_Vulkan_GetInstanceExtensions(&c); *n = c; return e; }
 int vkw_create_surface(VkInstance inst, VkSurfaceKHR *out) {
     if (!SDL_Vulkan_CreateSurface(g_w.win, inst, NULL, out)) { VKRED("SDL_Vulkan_CreateSurface failed: %s", SDL_GetError()); return -1; }

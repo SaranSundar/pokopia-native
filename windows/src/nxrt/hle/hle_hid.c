@@ -75,9 +75,10 @@ void dm_pad_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry
 // one taken. Pokopia: the game applies a write in the same frame, with no smoothing.
 // The stick path stays for another build, before the camera exists and while it is locked. DM_LOOK_DIRECT=0 turns direct look off.
 // While the character moves sideways, Pokopia's follow camera sets the yaw itself and a written turn is lost (#31: left / right did nothing while walking
-// diagonally), but a right-stick turn wins: so while the left stick is held left or right the stick path turns the camera. DM_LOOK_STRAFE=0 writes then too.
+// diagonally), but a right-stick turn wins: so while the left stick is held left or right the stick path turns the camera, and what a full tilt can't turn
+// that frame is written into the camera, which the stick's turn keeps (1.3.3 dropped it: the camera turned slower while moving sideways). DM_LOOK_STRAFE=0 writes then too.
 static struct { int state; uint8_t *slot; unsigned pitch, yaw, pmax, pmin, lock, mask, span; uint64_t seen; } g_lc;   // state 0 = not resolved yet, 1 = on, -1 = off
-static int g_look_direct;   // the last frame wrote the camera (dm_look_add then gathers without the stick path's LOOK_LAG limit)
+static int g_look_direct;   // the last frame could write the camera (dm_look_add then gathers without the stick path's LOOK_LAG limit)
 static uint8_t *look_cam(void) {
     if (!g_lc.state) {
         const char *e = getenv("DM_LOOK_DIRECT"); g_lc.state = -1;
@@ -170,6 +171,13 @@ void dm_look_add_at(float right_deg, float up_deg, double age) {
     pthread_mutex_unlock(&g_look_mu);
 }
 void dm_look_add(float right_deg, float up_deg) { dm_look_add_at(right_deg, up_deg, 0); }
+static void look_write(uint8_t *cam, double dx, double dy) {   // turn the camera by dx degrees right and dy up, the pitch kept within its limits
+    float *py = (float *)(cam + g_lc.yaw), *pp = (float *)(cam + g_lc.pitch), a = *(float *)(cam + g_lc.pmax), b = *(float *)(cam + g_lc.pmin);
+    double y = fmod(*py - dx * (M_PI / 180), 2 * M_PI), p = fmin(fmax(*pp - dy * (M_PI / 180), fmin(a, b)), fmax(a, b));
+    if (y < 0) y += 2 * M_PI;
+    dm_guest_write_prepare(py, sizeof *py); *py = (float)y;
+    dm_guest_write_prepare(pp, sizeof *pp); *pp = (float)p;
+}
 static void look_apply(int32_t *rx, int32_t *ry, int32_t lx) {   // player 1's read: this frame's look (the camera written directly, or a tilt that wins over a resting right stick)
     if (!dm_look_on()) return;
     pthread_mutex_lock(&g_look_mu);
@@ -179,18 +187,13 @@ static void look_apply(int32_t *rx, int32_t *ry, int32_t lx) {   // player 1's r
         g_look_frame = f; g_look_t = now; look_stats_frame(f, now);
         g_look_axes[0] = g_look_axes[1] = 0;
         static int strafe = -1; if (strafe < 0) { const char *e = getenv("DM_LOOK_STRAFE"); strafe = !(e && *e && !atoi(e)); }
-        uint8_t *cam = look_cam(); if (strafe && abs(lx) > DM_STICK_MAX / 5) cam = NULL;   // moving sideways: the stick path (above)
-        g_look_direct = cam != NULL;
+        uint8_t *cam = look_cam(), *side = NULL;
+        if (cam && strafe && abs(lx) > DM_STICK_MAX / 5) { side = cam; cam = NULL; }   // moving sideways: the stick path, its overflow written (above)
+        g_look_direct = cam != NULL || side != NULL;
         if (cam) {   // direct: the pointer's movement up to a steady delay before this read (look_pos_at), in this frame's camera update
             double mx, my; look_pos_at(now - fmin(g_lr_gap + 0.004, 0.04), &mx, &my);
             double dx = mx - g_lr_ax, dy = my - g_lr_ay; g_lr_ax = mx; g_lr_ay = my; g_look_acc[0] = g_look_acc[1] = 0;
-            if (dx || dy) {
-                float *py = (float *)(cam + g_lc.yaw), *pp = (float *)(cam + g_lc.pitch), a = *(float *)(cam + g_lc.pmax), b = *(float *)(cam + g_lc.pmin);
-                double y = fmod(*py - dx * (M_PI / 180), 2 * M_PI), p = fmin(fmax(*pp - dy * (M_PI / 180), fmin(a, b)), fmax(a, b));
-                if (y < 0) y += 2 * M_PI;
-                dm_guest_write_prepare(py, sizeof *py); *py = (float)y;
-                dm_guest_write_prepare(pp, sizeof *pp); *pp = (float)p;
-            }
+            if (dx || dy) look_write(cam, dx, dy);
         } else {
         g_lr_ax = g_lr_x; g_lr_ay = g_lr_y;   // the stick path takes the movement from g_look_acc
         dt = fmax(1.0, round(dt * 60.0)) / 60.0;   // the game steps its camera by whole 1/60 s ticks (measured: exactly 1.833 degrees a frame at full tilt at 60 fps, while frames took 16.85 ms)
@@ -200,6 +203,7 @@ static void look_apply(int32_t *rx, int32_t *ry, int32_t lx) {   // player 1's r
             double m = fmin(need / cap, 1.0), ux = ax / need, uy = ay / need;
             g_look_axes[0] = (int32_t)lrint(ux * m * DM_STICK_MAX); g_look_axes[1] = (int32_t)lrint(uy * m * DM_STICK_MAX);
             g_look_acc[0] -= ux * m * cap; g_look_acc[1] -= uy * m * cap;
+            if (side && m >= 1.0) { look_write(side, g_look_acc[0], g_look_acc[1]); g_look_acc[0] = g_look_acc[1] = 0; }   // faster than a full tilt turns
         } else if (need > 0 && now - g_look_last > 0.06) {   // the movement has stopped with less than one step left: rounded to the nearest step (one at the deadzone's tilt, or none)
             if (need >= 0.5 * look_dead() * cap) { double m = look_dead() + 0.005; g_look_axes[0] = (int32_t)lrint(ax / need * m * DM_STICK_MAX); g_look_axes[1] = (int32_t)lrint(ay / need * m * DM_STICK_MAX); }
             g_look_acc[0] = g_look_acc[1] = 0;

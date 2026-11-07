@@ -1019,6 +1019,55 @@ static void skip_poll(void) {   // at each frame: the variable as it is now
     else VKLOG("NXRT_VK_SKIP: nothing left out");
 }
 
+// ---------- Wide view (NXRT_VK_WIDE=1, experimental): the 2D drawn into a presented texture is squeezed into its middle 16:9 ----------
+// The present fills a wider window with the game's 16:9 picture (vk_present.c), whose 3D a wider camera drew (host/rt.c); what the game draws into the
+// texture it presents, after its 3D, is its 2D (HUD, menus, text, markers), laid out for 16:9: squeezed toward the middle by f = 16:9 / the window's aspect,
+// the stretch undoes it. Full-screen draws without vertex inputs (the 3D composite, fades) keep the whole width. Markers over 3D objects near the sides
+// drift toward the middle (the game places them for 16:9); its own UI widened to the window is the follow-up
+float g_vkr_wide_squeeze = 1.0f;   // vk_present.c: f, 1 = off
+static _Atomic uint64_t g_pres[4]; static _Atomic int g_full[4]; static _Atomic unsigned g_npres;   // g_full: a full-screen draw went into it since its last present
+void vkr_note_presented(uint64_t serial) {   // gfx_vk.c: the textures the game presents (its window's, two or three)
+    if (!serial) return;
+    for (int i = 0; i < 4; i++) if (atomic_load(&g_pres[i]) == serial) return;
+    unsigned k = atomic_fetch_add(&g_npres, 1) % 4;
+    atomic_store(&g_full[k], 1); atomic_store(&g_pres[k], serial);   // its draws so far were not looked at: no bars
+}
+static int pres_slot(uint64_t serial) {
+    for (int i = 0; serial && i < 4; i++) if (atomic_load(&g_pres[i]) == serial) return i;
+    return -1;
+}
+static void wide_squeeze(const vks_shader *vs, uint64_t count, VkViewport *vp, VkRect2D *sc) {
+    float f = g_vkr_wide_squeeze;
+    int k = f < 0.999f && P.any && P.ncolor && P.ci[0] ? pres_slot(P.ci[0]->serial) : -1;
+    if (k < 0) return;
+    float cx = P.pw * 0.5f;
+    if (vs && !vs->nin && count <= 6 && vp->x <= 0.5f && vp->x + vp->width >= P.pw - 0.5f) {   // the composite or a fade
+        if (sc->offset.x <= 0 && (float)sc->offset.x + (float)sc->extent.width >= P.pw - 0.5f) atomic_store(&g_full[k], 1);   // (menus draw a corner of it)
+        return;
+    }
+    vp->x = cx + (vp->x - cx) * f; vp->width *= f;
+    float x0 = cx + ((float)sc->offset.x - cx) * f, x1 = cx + ((float)sc->offset.x + (float)sc->extent.width - cx) * f;
+    sc->offset.x = (int32_t)floorf(x0); sc->extent.width = (uint32_t)(ceilf(x1) - floorf(x0));
+}
+// A frame with no full-screen draw (a menu over the whole screen, no 3D behind it) leaves the sides of the texture with older pictures: shown with bars
+int vkr_wide_bars(uint64_t serial) {
+    int k = pres_slot(serial);
+    return k >= 0 && !atomic_exchange(&g_full[k], 0) && g_vkr_wide_squeeze < 0.999f;
+}
+// A copy of a whole 16:9 picture of a target drawn larger, out to the CPU or into a texture at the game's size, is what the game keeps of what its camera
+// saw (a photo, its thumbnail): the picture holds the wider view squeezed into 16:9, so the copy takes its middle 16:9 part, stretched. Copies between
+// targets drawn larger (history, refraction) keep the whole view. The source's x range in its own pixels, or 0 when the copy stays as it is
+static int wide_unsqueeze(const vkt_image *im, unsigned level, const NVNcopyRegion *r, int32_t *x0, int32_t *x1) {
+    float f = g_vkr_wide_squeeze;
+    if (!(f < 0.999f) || !scaled_im(im) || level >= im->levels) return 0;
+    uint32_t w = mipd(im->w, level), h = mipd(im->h, level);
+    if (r->xoffset || r->yoffset || (uint32_t)r->width != w || (uint32_t)r->height != h || fabsf((float)w / (float)h - 16.0f / 9.0f) > 0.01f) return 0;
+    float vw = (float)vkt_vlw(im, level);
+    *x0 = (int32_t)floorf(vw * (1 - f) * 0.5f + 0.5f); *x1 = (int32_t)floorf(vw * (1 + f) * 0.5f + 0.5f);
+    static int n; if (n++ < 8) VKLOG("wide view: a copy of the whole picture of ser=%llu (%ux%u) takes its middle 16:9 part (pixels %d to %d of %.0f)", (unsigned long long)im->serial, w, h, *x0, *x1, vw);
+    return 1;
+}
+
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (S->render_skip) { g_st.draws_skipped++; return; }
     int prim = dw ? dw->prim : di->prim, expand;
@@ -1046,6 +1095,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         vp.x *= P.rx; vp.y *= P.ry; vp.width *= P.rx; vp.height *= P.ry;
         sc = px_rect(P.ref, P.ref_lv, sc, P.pw, P.ph);
     }
+    wide_squeeze(sh[0], dw ? (uint64_t)dw->count : (uint64_t)di->count, &vp, &sc);
     int flip = !g_origin_ll;
     { uint32_t sw; memcpy(&sw, S->vp_sw[0], 4);
       if (sw == 0x100) flip = !flip;   // NEGATIVE_Y: clip y negated, the viewport flipped about its centre
@@ -1417,6 +1467,7 @@ static void copy_b2t(const p_copy_b2t *c) {
 }
 static void copy_t2b(const p_copy_b2t *c) {
     const tex_t *t = snap(c->tex); if (!t) return;
+    PD("copy ser%llu %dx%d at %d,%d -> buffer %#llx", (unsigned long long)t->serial, c->r.width, c->r.height, c->r.xoffset, c->r.yoffset, (unsigned long long)c->src);
     vkt_image *im = vkt_resolve(t); if (!im) return;
     g_st.tex_copies++;
     if (im->fi->conv != VKF_COPY) { RED_ONCE(84, "texture→buffer copy from a format the device stores converted (%s): not copied", im->fi->name); return; }
@@ -1435,9 +1486,11 @@ static void copy_t2b(const p_copy_b2t *c) {
         VkImageAspectFlags a = copy_aspect(im);
         vk_image_barrier(cb, tmp, im->aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
         VkBufferImageCopy rg[64]; VkImageBlit bl[64]; int n = 0;
+        int32_t ux0, ux1; int un = wide_unsqueeze(im, level, &c->r, &ux0, &ux1);
         for (int z = 0; z < nz; z++) {
             bl[n] = (VkImageBlit){{a, level, layer0 + c->r.zoffset + z, 1}, {px_at(im, level, c->r.xoffset, c->r.yoffset, 0), px_at(im, level, (int64_t)c->r.xoffset + c->r.width, (int64_t)c->r.yoffset + c->r.height, 1)},
                                   {a, 0, (uint32_t)z, 1}, {{0, 0, 0}, {c->r.width, c->r.height, 1}}};
+            if (un) { bl[n].srcOffsets[0].x = ux0; bl[n].srcOffsets[1].x = ux1; }
             rg[n++] = (VkBufferImageCopy){o + (VkDeviceSize)z * img, rt, ir, {a, 0, (uint32_t)z, 1}, {0, 0, 0}, {(uint32_t)c->r.width, (uint32_t)c->r.height, 1}};
         }
         VkImageLayout l = xfer_in(cb, im, 0);
@@ -1510,7 +1563,9 @@ static void copy_t2t(const p_copy_t2t *c) {
     // F-5: both rectangles in their image's own pixels (as they are when neither is drawn larger); a copy whose two sides differ there becomes a blit
     VkOffset3D s0 = px_at(s, sl, c->sr.xoffset, c->sr.yoffset, 0), s1 = px_at(s, sl, (int64_t)c->sr.xoffset + c->sr.width, (int64_t)c->sr.yoffset + c->sr.height, 1);
     VkOffset3D d0 = px_at(d, dl, c->dr.xoffset, c->dr.yoffset, 0), d1 = px_at(d, dl, (int64_t)c->dr.xoffset + c->dr.width, (int64_t)c->dr.yoffset + c->dr.height, 1);
-    int fits = s1.x - s0.x == d1.x - d0.x && s1.y - s0.y == d1.y - d0.y;
+    int32_t ux0, ux1;
+    if (!s3 && !d3 && !scaled_im(d) && wide_unsqueeze(s, sl, &c->sr, &ux0, &ux1)) { s0.x = ux0; s1.x = ux1; }   // a blit below
+    int fits =s1.x - s0.x == d1.x - d0.x && s1.y - s0.y == d1.y - d0.y;
     if ((c->flags & DM_COPY_RESOLVE) && s->samples > 1 && d->samples == 1 && s->fi->vk == d->fi->vk && !(s->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
         uint32_t rw = vkt_vlw(s, sl) < vkt_vlw(d, dl) ? vkt_vlw(s, sl) : vkt_vlw(d, dl), rh = vkt_vlh(s, sl) < vkt_vlh(d, dl) ? vkt_vlh(s, sl) : vkt_vlh(d, dl);
         VkImageResolve r = {{sa, sl, sz0, 1}, {0, 0, 0}, {da, dl, dz0, 1}, {0, 0, 0}, {rw, rh, 1}};

@@ -35,13 +35,14 @@ static const int res_list_h[4] = {720, 1080, 1440, 2160};   // the Resolution li
 static const char *const win_sizes[5] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"};
 typedef struct {
     char res[24];                                                         // "default" or "<w>x<h>" as saved (an older size keeps its string: it means that size)
-    int fullscreen, win, console, sharp, sharpness, fps30, vsync, counter;   // indexes and switches; sharpness 0..10; counter 0 off, 1 corner, 2 detailed
+    int fullscreen, win, console, sharp, sharpness, fps30, vsync, counter, wide;   // indexes and switches; sharpness 0..10; counter 0 off, 1 corner, 2 detailed
     front_keymap keys;
 } settings;
 static struct {
     SDL_Mutex *mu; int ready;
     settings s;
     int open, tab, sel, dd, dd_sel, capture;   // dd: the open dropdown's row (-1 none); capture: the action whose key is awaited (-1 none)
+    int wide_now;                              // the wide view this run started with (a change takes effect at the next start)
     float mx, my; int mouse_moved;
     struct { int kind, a; float x, y; } q[64]; int nq;   // input for the next build: navigation and clicks
     int pad_back, pad_start; float stick_y, stick_x; uint64_t stick_t;
@@ -113,8 +114,8 @@ static void save_display(void) {
     static const char *const cnt[3] = {"off", "corner", "detailed"};
     const settings *s = &M.s;
     fprintf(f, "{\n    \"console\":  %d,\n    \"resolution\":  \"%s\",\n    \"fullscreen\":  %s,\n    \"window\":  \"%s\",\n    \"upscale\":  \"%s\",\n    \"sharpness\":  %d,\n"
-               "    \"fps\":  %d,\n    \"vsync\":  %s,\n    \"fps_counter\":  \"%s\"\n}\n", s->console, s->res, s->fullscreen ? "true" : "false", win_sizes[s->win],
-            s->sharp ? "sharp" : "standard", s->sharpness, s->fps30 ? 30 : 60, s->vsync ? "true" : "false", cnt[s->counter]);
+               "    \"fps\":  %d,\n    \"vsync\":  %s,\n    \"fps_counter\":  \"%s\",\n    \"wide_view\":  %s\n}\n", s->console, s->res, s->fullscreen ? "true" : "false",
+            win_sizes[s->win], s->sharp ? "sharp" : "standard", s->sharpness, s->fps30 ? 30 : 60, s->vsync ? "true" : "false", cnt[s->counter], s->wide ? "true" : "false");
     fclose(f);
 }
 static void save_controls(void) {
@@ -128,8 +129,9 @@ static void save_controls(void) {
 static void status(const char *t) { snprintf(M.status, sizeof M.status, "%s", t); M.status_t = SDL_GetTicksNS(); }
 
 // ---------- The rows of the Graphics tab ----------
-enum { G_RES, G_DISPLAY, G_WIN, G_CONSOLE, G_UPSCALE, G_SHARP, G_FPS, G_VSYNC, G_COUNTER, G_N };
-static const char *const g_label[G_N] = {"Resolution", "Display mode", "Window size", "Console mode", "Upscaling", "Sharpness", "Frame rate", "Vsync", "FPS counter"};
+enum { G_RES, G_DISPLAY, G_WIN, G_CONSOLE, G_UPSCALE, G_SHARP, G_FPS, G_VSYNC, G_COUNTER, G_WIDE, G_N };
+static const char *const g_label[G_N] = {"Resolution", "Display mode", "Window size", "Console mode", "Upscaling", "Sharpness", "Frame rate", "Vsync", "FPS counter",
+                                         "Wide view"};
 static const char *const g_hint[G_N] = {
     "The size the game draws its picture at. Bigger looks sharper but works your graphics card harder. Default matches your monitor.",
     "A window, or the whole screen (F11 and Alt+Enter switch too).",
@@ -139,13 +141,14 @@ static const char *const g_hint[G_N] = {
     "How strong Sharp upscaling is.",
     "60, or 30 to spare the computer (the game keeps its speed).",
     "On: no tearing. Off: a little less delay, may tear.",
-    "Shows frames per second in a corner. Detailed adds frame time and the resolution."};
+    "Shows frames per second in a corner. Detailed adds frame time and the resolution.",
+    "Experimental. On a screen wider than 16:9, the game's view fills it instead of bars; menus and the HUD stay in the middle. Changes at the next start."};
 static int g_count(int row) { return row == G_RES ? res_count() : row == G_WIN ? 5 : row == G_SHARP ? 11 : row == G_COUNTER ? 3 : 2; }
 static int g_value(int row) {
     const settings *s = &M.s;
     switch (row) { case G_RES: return res_place(s->res); case G_DISPLAY: return s->fullscreen; case G_WIN: return s->win; case G_CONSOLE: return !s->console;
                    case G_UPSCALE: return !s->sharp; case G_SHARP: return s->sharpness; case G_FPS: return s->fps30; case G_VSYNC: return !s->vsync;
-                   default: return s->counter; }
+                   case G_WIDE: return s->wide; default: return s->counter; }
 }
 static void g_text(int row, int v, char *out, size_t n) {
     switch (row) {
@@ -157,6 +160,7 @@ static void g_text(int row, int v, char *out, size_t n) {
     case G_SHARP: snprintf(out, n, "%d", v); break;
     case G_FPS: snprintf(out, n, v ? "30 fps" : "60 fps"); break;
     case G_VSYNC: snprintf(out, n, v ? "Off" : "On"); break;
+    case G_WIDE: snprintf(out, n, "%s%s", v ? "On (experimental)" : "Off", v != M.wide_now ? " from the next start" : ""); break;
     default: snprintf(out, n, v == 2 ? "Detailed" : v ? "Corner" : "Off"); break;
     }
 }
@@ -172,6 +176,7 @@ static void g_set(int row, int v) {
     case G_SHARP: s->sharpness = v; vkp_set_upscale(s->sharp, s->sharpness / 10.0f); break;
     case G_FPS: s->fps30 = v; vk_set_fps_target(v ? 30 : 60); break;
     case G_VSYNC: s->vsync = !v; vkp_set_mode(s->vsync ? 0 : 1); break;   // VKP_FIFO / VKP_MAILBOX
+    case G_WIDE: s->wide = v; break;   // at the next start: the camera hook is set up as the game starts (host/rt.c)
     default: s->counter = v; M.fps_t0 = 0; break;
     }
     save_display();
@@ -218,6 +223,7 @@ void menu_init(void) {
     e = getenv("NXRT_VK_SHARPNESS"); s->sharpness = e && *e ? (int)(atof(e) * 10 + 0.5) : 5; if (s->sharpness < 0 || s->sharpness > 10) s->sharpness = 5;
     e = getenv("DM_FPS"); s->fps30 = e && atoi(e) == 30;
     e = getenv("NXRT_VK_PRESENT"); s->vsync = !(e && (!strcmp(e, "mailbox") || !strcmp(e, "immediate")));
+    e = getenv("NXRT_VK_WIDE"); s->wide = M.wide_now = e && *e == '1';
     front_sdl_keymap_get(&s->keys);
     dm_ctl_menu = menu_ctl;
     M.ready = 1;
@@ -364,7 +370,7 @@ void menu_build(mn_list *out, int W, int H) {
     int ww, wh, fitk = picture_fit(&ww, &wh);
     float u = H / 1080.0f; if (u < 0.6f) u = 0.6f;
     float pw = fminf(W * 0.9f, 1240 * u), ph = fminf(H * 0.9f, 920 * u), px = (W - pw) / 2, py = (H - ph) / 2;
-    float row_h = 58 * u, fs = 26 * u, x_lab = px + 48 * u, val_w = fminf(560 * u, pw * 0.5f), x_val = px + pw - 48 * u - val_w, y_rows = py + 168 * u;
+    float row_h = 54 * u, fs = 26 * u, x_lab = px + 48 * u, val_w = fminf(560 * u, pw * 0.5f), x_val = px + pw - 48 * u - val_w, y_rows = py + 168 * u;
     int nrows = M.tab == 0 ? G_N : C_N;
     // the controls in two columns
     int ccol = (C_N + 1) / 2; float c_row = 48 * u, c_colw = (pw - 96 * u - 32 * u) / 2;
@@ -496,7 +502,7 @@ void menu_build(mn_list *out, int W, int H) {
 // scancode, reset ----------
 void menu_ctl(const char *cmd) {
     if (!M.ready || !M.mu) return;
-    static const char *const names[G_N] = {"resolution", "display", "window", "console", "upscale", "sharpness", "fps", "vsync", "counter"};
+    static const char *const names[G_N] = {"resolution", "display", "window", "console", "upscale", "sharpness", "fps", "vsync", "counter", "wide"};
     while (*cmd == ' ') cmd++;
     SDL_LockMutex(M.mu);
     char name[32]; int a = -1, b = -1;

@@ -31,7 +31,7 @@
 # Its Display tab sets the picture (%APPDATA%\Pokopia Native\display.json; with -Ask or -Config at every start, switches from outside winning): console mode
 # (DM_OPMODE), the size the game draws its picture at (NXRT_VK_RESOLUTION: "default" = the monitor's height, or <w>x<h>, never below the game's own;
 # NXRT_VK_SCALE, a factor, wins), window or full screen and the window size, upscaling (NXRT_VK_UPSCALE) and its sharpness (NXRT_VK_SHARPNESS), 30 fps
-# (DM_FPS), vsync off (NXRT_VK_PRESENT=mailbox), the FPS counter (NXRT_FPS_COUNTER). In the game, F1 (or a controller's Minus + Plus) opens the same settings and changes them at once; it saves to the same files
+# (DM_FPS), vsync off (NXRT_VK_PRESENT=mailbox), the FPS counter (NXRT_FPS_COUNTER), the wide view (NXRT_VK_WIDE=1, experimental). In the game, F1 (or a controller's Minus + Plus) opens the same settings and changes them at once; it saves to the same files
 # (NXRT_SETTINGS_DIR, docs/in-game-menu.md). POKOPIA_SETTINGS_DIR puts linkplay.json, controls.json and display.json in another folder (tests).
 param(
     [string]$ExeFS = "",
@@ -198,7 +198,7 @@ function Read-Controls([string]$file) {
 # The picture (the window's Display tab, %APPDATA%\Pokopia Native\display.json), applied at every start through the switches and variables below; a switch
 # or variable given from outside wins. The Mac's launcher has the same names (Console mode, Display mode, Upscaling); the in-game menu (F1) the same choices
 $DisplayDefault = [ordered]@{ console = 1; resolution = "default"; fullscreen = $false; window = "1280x720"; upscale = "sharp"; sharpness = 5; fps = 60; vsync = $true
-                              fps_counter = "off" }
+                              fps_counter = "off"; wide_view = $false }
 $DisplayCounters = @("off", "corner", "detailed")
 $DisplaySizes = @("1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160")
 # The tallest Default the game draws: 1440 on a graphics card with 4 GB of its own memory or less, as nxrt picks it (front/menu.c monitor_h). The
@@ -365,6 +365,7 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $vs = New-Object System.Windows.Forms.CheckBox; $vs.Text = "On (off: less delay, may tear)"; $vs.AutoSize = $true; $vs.Checked = [bool]$disp.vsync; $vs.Margin = New-Object System.Windows.Forms.Padding(3, 6, 0, 0); & $addRow "Vsync:" $vs
     $cnItems = @("Off", "Corner", "Detailed")
     $cn = & $combo $cnItems $cnItems[[math]::Max(0, [array]::IndexOf($dcnt, [string]$disp.fps_counter))]; & $addRow "FPS counter:" $cn
+    $wv = New-Object System.Windows.Forms.CheckBox; $wv.Text = "On (experimental: fills a screen wider than 16:9)"; $wv.AutoSize = $true; $wv.Checked = [bool]$disp.wide_view; $wv.Margin = New-Object System.Windows.Forms.Padding(3, 6, 0, 0); & $addRow "Wide view:" $wv
     $df.Controls.Add($dg)
     $fitNote = New-Label ""; $fitNote.Margin = New-Object System.Windows.Forms.Padding(0, 6, 0, 0); $df.Controls.Add($fitNote)
     $dnote = New-Label ("Resolution is the size the game draws its picture at: bigger looks sharper but works your graphics card harder; Default matches your monitor. " +
@@ -391,7 +392,7 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     & $dsync
     $dreset.Add_Click({
         $cm.SelectedIndex = 0; & $resFill "default"; $dm.SelectedIndex = 0; $ws.SelectedIndex = [math]::Max(0, $ws.Items.IndexOf($ddef.window)); $up.SelectedIndex = 0
-        $sh.Value = $ddef.sharpness; $fp.SelectedIndex = 0; $vs.Checked = $ddef.vsync; $cn.SelectedIndex = 0; & $dsync
+        $sh.Value = $ddef.sharpness; $fp.SelectedIndex = 0; $vs.Checked = $ddef.vsync; $cn.SelectedIndex = 0; $wv.Checked = $ddef.wide_view; & $dsync
     }.GetNewClosure())
     $outer.Controls.Add($tabs)   # first: the pages measure their wrapped labels in the window's font
     $w = ($pages.Values | ForEach-Object { $_.PreferredSize.Width } | Measure-Object -Maximum).Maximum + 16
@@ -424,7 +425,7 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
                                resolution = $(if ($rs.SelectedIndex -eq $rst.origIdx -and $cm.SelectedIndex -eq $rst.cmIdx) { $rst.orig } else { [string]$rst.vals[$rs.SelectedIndex] })   # untouched: as saved
                                fullscreen = ($dm.SelectedIndex -eq 1); window = [string]$ws.SelectedItem
                                upscale = $(if ($up.SelectedIndex -eq 1) { "standard" } else { "sharp" }); sharpness = $sh.Value; fps = $(if ($fp.SelectedIndex -eq 1) { 30 } else { 60 }); vsync = $vs.Checked
-                               fps_counter = $dcnt[$cn.SelectedIndex] }
+                               fps_counter = $dcnt[$cn.SelectedIndex]; wide_view = $wv.Checked }
     return $new
 }
 # A host's room code, big, with a Copy button: the players who visit need it (and this PC's internet address)
@@ -574,6 +575,7 @@ if ($Config -or $Ask) {   # the Display tab's settings, saved for this PC; a swi
     if (-not $env:DM_FPS -and [int]$disp.fps -eq 30) { $env:DM_FPS = "30" }
     if (-not $env:NXRT_VK_PRESENT -and -not $disp.vsync) { $env:NXRT_VK_PRESENT = "mailbox" }
     if (-not $env:NXRT_FPS_COUNTER -and $disp.fps_counter -ne "off") { $env:NXRT_FPS_COUNTER = [string]$disp.fps_counter }
+    if (-not $env:NXRT_VK_WIDE -and $disp.wide_view -eq $true) { $env:NXRT_VK_WIDE = "1" }
 }
 if ($Window) { $env:NXRT_VK_WINDOW = $Window }
 if ($Fullscreen) { $env:NXRT_VK_FULLSCREEN = "1" }
@@ -608,7 +610,7 @@ if ($DryRun) {
     if ($Fonts -or $PipelineSeed) { Write-Host "fonts: $env:DM_FONT_DIR; pipeline seed: $env:NXRT_VK_PIPELINE_SEED" }
     if ($env:DM_COOP) { Write-Host "link play: DM_COOP=$env:DM_COOP DM_COOP_INTERACT=$env:DM_COOP_INTERACT DM_COOP_STORY=$env:DM_COOP_STORY" }
     if ($env:DM_KEYMAP) { Write-Host "keys: DM_KEYMAP=$env:DM_KEYMAP" }
-    Write-Host "display: DM_OPMODE=$env:DM_OPMODE NXRT_VK_SCALE=$env:NXRT_VK_SCALE NXRT_VK_RESOLUTION=$env:NXRT_VK_RESOLUTION NXRT_VK_WINDOW=$env:NXRT_VK_WINDOW NXRT_VK_FULLSCREEN=$env:NXRT_VK_FULLSCREEN NXRT_VK_UPSCALE=$env:NXRT_VK_UPSCALE NXRT_VK_SHARPNESS=$env:NXRT_VK_SHARPNESS DM_FPS=$env:DM_FPS NXRT_VK_PRESENT=$env:NXRT_VK_PRESENT NXRT_FPS_COUNTER=$env:NXRT_FPS_COUNTER"
+    Write-Host "display: DM_OPMODE=$env:DM_OPMODE NXRT_VK_SCALE=$env:NXRT_VK_SCALE NXRT_VK_RESOLUTION=$env:NXRT_VK_RESOLUTION NXRT_VK_WINDOW=$env:NXRT_VK_WINDOW NXRT_VK_FULLSCREEN=$env:NXRT_VK_FULLSCREEN NXRT_VK_UPSCALE=$env:NXRT_VK_UPSCALE NXRT_VK_SHARPNESS=$env:NXRT_VK_SHARPNESS DM_FPS=$env:DM_FPS NXRT_VK_PRESENT=$env:NXRT_VK_PRESENT NXRT_FPS_COUNTER=$env:NXRT_FPS_COUNTER NXRT_VK_WIDE=$env:NXRT_VK_WIDE"
     exit 0
 }
 Write-Host "Pokopia: keyboard WASD move, mouse look (click the picture; Esc releases the mouse), J/K/U/I = A/B/X/Y, Return = +, Tab = -, F11 fullscreen."

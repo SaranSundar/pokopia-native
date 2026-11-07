@@ -66,6 +66,9 @@ extern vk_device g_vk;
 
 typedef struct { int validation; int headless; const char *device_hint; } vk_dev_opts;
 int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_inst_exts);   // 0 = up; -1 = no usable Vulkan 1.3 device (logged)
+// After a failed vk_dev_open: why (1 no Vulkan driver or no GPU at all, 2 no GPU with Vulkan 1.3, 3 a later step failed, 4 none matching
+// NXRT_VK_DEVICE); found = the GPUs Vulkan listed, "<name> (Vulkan <major>.<minor>)", joined by sep
+int vk_dev_fail(char *found, size_t n, const char *sep);
 void vk_dev_close(void);
 const char *vk_vendor_name(uint32_t vendor);
 int vk_mem_type(uint32_t bits, VkMemoryPropertyFlags want, VkMemoryPropertyFlags avoid);   // -1 = none
