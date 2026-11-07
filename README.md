@@ -399,7 +399,9 @@ Good to know:
 
 - **On Windows, F1 → Link Play shows what's going on**: how you're playing, the addresses to give your friends, the room
   code with **Copy** and **Copy invite** (a line with your address and the code, ready to paste in a chat), and who is
-  connected.
+  connected. **Change how you play** there switches the way to play, the host's address and the room code without the
+  launcher's window (at once while the game's Link Play is closed). Turning Link Play on or off, Interact everywhere and
+  Story co-op take effect the next time the game starts. The launcher remembers the choice.
 - **Internet play must match on every device.** With Internet play on, a device only sees hosts that have it on too
   (with the same room code). For players on the same Wi-Fi, turn **Internet play off** everywhere; otherwise the game
   says the destination cannot be found.
