@@ -350,7 +350,7 @@ opens.
    router's "Port forwarding", "NAT" or "NAT/Gaming" page; check it points at the right device).
 2. **The host** needs a room code, a 16-character password for the session:
    - **Windows:** pick **Host over the internet or a VPN** in the window before the game starts. The next window shows
-     your room code with a **Copy** button.
+     your room code with a **Copy** button, and so does the game itself: press **F1** and open the **Link Play** tab.
    - **Mac:** in the launcher turn on Link Play on this network and **Internet play**, leave Room code empty and start the
      game once: the log (`~/Library/Logs/nxnative`) says "this session's room code is …". Type it into **Room code** to
      keep it.
@@ -397,6 +397,9 @@ story characters and hear the same story as the host, including the host's curre
 
 Good to know:
 
+- **On Windows, F1 → Link Play shows what's going on**: how you're playing, the addresses to give your friends, the room
+  code with **Copy** and **Copy invite** (a line with your address and the code, ready to paste in a chat), and who is
+  connected.
 - **Internet play must match on every device.** With Internet play on, a device only sees hosts that have it on too
   (with the same room code). For players on the same Wi-Fi, turn **Internet play off** everywhere; otherwise the game
   says the destination cannot be found.
