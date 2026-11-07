@@ -61,7 +61,7 @@ Please do not share build folders, `game.so`, shader files or saves.
 
 In WSL (Ubuntu 22.04) with Mesa's software renderer: Linux's own tests pass, among them the one that caught a problem in bringing 1.3.3's
 upload rework to Linux (fixed before this beta). The game starts and draws with Ubuntu's Vulkan library and with one built the way Fedora builds
-it. The sound, with SDL's test driver asking for it the way PipeWire does, is as good as beta 3's: beta 3 and beta 4 back to back found at most
+it. The AppImage opens its builder window and builds the game from a dump. The sound, with SDL's test driver asking for it the way PipeWire does, is as good as beta 3's: beta 3 and beta 4 back to back found at most
 a few of 6,000 sound requests with nothing ready, on a test system working flat out. **Not checked:** the frame rate gains (Mesa's software
 renderer runs the game at about 2 frames a second, too slowly to reach the field), the 32-lane test mode (that renderer has only 8 lanes and
 can't be asked for 32; the log says so), real PipeWire, a real Steam Deck, any real graphics card, and Link Play from Linux. If beta 4 runs
