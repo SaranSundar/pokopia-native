@@ -218,3 +218,14 @@ nxrt's variable, and nxrt called into its own .bss (`execute nxrt+0xf2f270`). Ub
 Now the executables export only what game.so imports, `rt_*` and `adapter_*` (`plat/linux/nxrt.dynlist`, 1,783 symbols instead of 8,689;
 `ENABLE_EXPORTS` only on Windows), and `nxrt.exports` fails if anything else is exported. Reproduced in WSL with the LunarG SDK's loader (upstream
 flags: 270 GOT relocations against its own vk* names, Ubuntu's 0): the shipped nxrt crashed at the same address, the rebuilt one runs on both.
+
+### Crackling on PipeWire (2026-11-07, Quantumenis: CachyOS, PipeWire 1.6.9)
+
+SDL's PipeWire driver asks for a whole period at once (1024 frames, 21.3 ms; more with `SDL_AUDIO_DEVICE_SAMPLE_FRAMES`), and Pokopia's FMOD keeps
+only 3 blocks of 320 frames (960) queued: every request ran the queue dry 64 frames short and was padded with silence ("999 underruns" in 2000
+pulls, 1333 ms padded; 1500 at 2048 frames, 1750 at 4096: a bigger buffer made it worse). It is the game's queue, not the runtime's: a block comes
+back only once played, and only then does the game mix the next. `front/audio_sdl.c` now keeps a reserve when a device's period is longer than a
+pull (512 frames): a feeder thread keeps one period (or the largest request seen) queued in SDL's stream from the blocks the game has ready
+(`audio_ready_fn`, never padding), after each callback and every 2 ms, under the stream's lock; the callback pulls only a shortfall. WASAPI's 480
+frames keep the direct pull. `NXRT_AUDIO_RESERVE=0` turns it off. `nxrt.audio_sdl` reproduces the case with SDL's dummy driver at 1024 frames:
+95 of 192 pulls ran dry without the reserve, 0 of 290 with it, at 48,680 frames a second.

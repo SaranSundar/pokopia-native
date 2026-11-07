@@ -190,3 +190,6 @@ the archive directly.
 - **The game closes by itself, or the picture breaks up, when a new place loads**: start it once with the driver's bounds checks on and say in the
   report whether that helped: `NXRT_VK_ROBUST=1 ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`
 - **The build stops with "shorter than its own header says"**: the dump's `exefs` was copied in text mode; copy it again in binary mode.
+- **The sound crackles**: start the game once with SDL's PulseAudio driver (PipeWire answers it too, through pipewire-pulse) and say in the
+  report whether that helped: `SDL_AUDIO_DRIVER=pulseaudio ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`. The log's `audio #0 device
+  callbacks` lines count the underruns.
