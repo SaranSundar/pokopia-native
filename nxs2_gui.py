@@ -726,7 +726,12 @@ class App(tk.Tk):
                 tk.Label(grid, text='✓  ' + n, font=F(11), fg=C['ok'], bg=r.fill, anchor='w').grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 24), pady=2)
             grid.columnconfigure(0, weight=1); grid.columnconfigure(1, weight=1)
         for nice, (st, hints) in rows.items():
-            fix = ' '.join(hints)
+            pips, other = [], []
+            for h in hints:
+                m = re.match(r'^(.+?) -m pip install (".+")$', h)
+                if m: pips.append(m)
+                else: other.append(h)
+            fix = '\n'.join(([f'{pips[0].group(1)} -m pip install ' + ' '.join(m.group(2) for m in pips)] if pips else []) + other)
             if st != 'ok': self.row(box, nice, st, hint=f'To fix: {fix}' if fix else '', copy=fix if fix else None)
         for w in warns: self.row(box, 'Heads-up', 'warn', 'worth reading', hint=w)
         if not rows: self.row(box, f'Your {PC}', 'bad', 'the check did not run', hint='\n'.join(self.lines[-6:]))
