@@ -150,7 +150,8 @@ In the game: Link Play, then **Local connection** (not Online connection). Every
 
 **Interact everywhere** (visitors use moves and items and build in every town) and **Story co-op** (on top of it: visitors talk to the story
 characters too) are experimental, and every player needs the same choice: the Link Play choice asks for both, or give `--interact` or `--story`
-after the launcher's name. With both off, Linux plays with 1.2.x as well.
+after the launcher's name. With both off, Linux plays with 1.2.x as well. They work on game versions 2.0.1 and 1.0.5; on 1.0.5 every
+player needs pokopia-native 1.3.3 or newer.
 
 ## Recording (for the beta)
 
@@ -189,7 +190,14 @@ the archive directly.
 - **`doctor` says the CPU lacks AVX2**: the recompiled game needs it; that CPU cannot run it.
 - **The game closes by itself, or the picture breaks up, when a new place loads**: start it once with the driver's bounds checks on and say in the
   report whether that helped: `NXRT_VK_ROBUST=1 ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`
+- **AMD or Intel graphics: bright sparkles on edges, or the game freezes (often in conversations)**: the game's graphics programs were written
+  for groups of 32 (NVIDIA's); AMD runs 64 and Intel 8 to 32. Start the game once in the 32-lane test mode and say in the report whether it
+  helped (a screenshot of the same place with and without helps most): `NXRT_VK_SUBGROUP32=1 ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`.
+  The log then says "made with 32 lanes" and for which stages.
 - **The build stops with "shorter than its own header says"**: the dump's `exefs` was copied in text mode; copy it again in binary mode.
+- **The frame rate swings (30 to 45 fps on a Steam Deck) and it feels laggy**: in the game, **F1 → Frame rate → 30 fps** gives a steady 30
+  instead. The Deck runs the game close to its processor's limit, so the frame rate does not change with the Resolution setting. A report after
+  5 minutes in your town (below) shows us where the time goes.
 - **The sound crackles**: start the game once with SDL's PulseAudio driver (PipeWire answers it too, through pipewire-pulse) and say in the
   report whether that helped: `SDL_AUDIO_DRIVER=pulseaudio ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`. The log's `audio #0 device
   callbacks` lines count the underruns.

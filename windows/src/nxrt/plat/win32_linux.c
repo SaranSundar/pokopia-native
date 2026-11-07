@@ -224,7 +224,7 @@ BOOL SetThreadPriority(HANDLE h, int prio) {
     if (prio >= 0) return TRUE;
     uint32_t tid = h == CURRENT_THREAD ? plat_thread_id() : ((obj_t *)h)->type == OBJ_THREAD ? ((obj_t *)h)->tid : 0;
     if (!tid) return FALSE;
-    int base = getpriority(PRIO_PROCESS, 0), nice = base + (prio <= THREAD_PRIORITY_IDLE ? 19 : prio <= THREAD_PRIORITY_LOWEST ? 4 : 2);
+    int base = getpriority(PRIO_PROCESS, 0), nice = base + (prio <= THREAD_PRIORITY_IDLE ? 19 : prio <= THREAD_PRIORITY_LOWEST ? 10 : 2);
     return setpriority(PRIO_PROCESS, tid, nice > 19 ? 19 : nice) == 0;
 }
 

@@ -65,6 +65,10 @@ present is taken, to the path written in it, and the file is deleted), `NXRT_VK_
 **Diagnostics.** `NXRT_VK_PASSDUMP=<a>[-<b>]` logs every pass, clear, draw (state, raw blend words, bindings with texture serials, the first
 vertex's attribute bytes, the first 8 constants) and dispatch of those frames; `NXRT_VK_TEXDUMP=<n>` writes every image frame n drew into or
 sampled (PNG; compressed ones as DDS). The replay logs per-300-frame statistics and the GPU time (timestamps around each submission).
+`NXRT_VK_SKIP=<key>[,<key>…]` leaves out every draw with one of those shaders in any stage, and every dispatch of one (keys of 16 hex digits,
+any case, separated by commas, semicolons or spaces); each key's first skip is logged, and the replay line counts them. It is read again at
+each frame when it changes, so DM_CTL's `env NXRT_VK_SKIP=…` switches suspects while the game runs (D-7: a tester on another GPU finds the
+draw that goes wrong). Leaving out a full-screen pass freezes what it writes, not the picture's other parts.
 
 ## 2. The title screen against the Mac
 

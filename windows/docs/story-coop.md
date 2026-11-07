@@ -8,7 +8,7 @@ progressing **not feasible** inside the game.
 
 ## In short: "Story co-op (experimental)"
 
-An opt-in switch on top of Interact everywhere, for Pokopia 2.0.1 on Windows, Mac and iPhone. Turn it on with the Windows launcher's
+An opt-in switch on top of Interact everywhere, for Pokopia 2.0.1 and 1.0.5 on Windows, Mac and iPhone (1.0.5 from 2026-11-06, below). Turn it on with the Windows launcher's
 "Story co-op (experimental)" checkbox in the Link Play tab (`play.ps1 -Story`), the Mac and iPhone launcher's "Story co-op" row, or
 `DM_COOP_STORY=1`. It turns Interact everywhere on with it. Every player in a session needs the same setting: it is part of the mods fingerprint
 (`c75a2da0380038c1` with Interact everywhere), so a session refuses a player whose setting differs. Off by default.
@@ -72,6 +72,12 @@ Windows: nxrt interprets `main+0x4c024c` with a site hook (rt.c, like Interact e
 `-Story`). It brings Interact everywhere with it, and it adds "Story co-op (experimental)" to the mods fingerprint: `c75a2da0380038c1`
 with Interact everywhere, logged by the Mac hosts and checked in coop_test.
 
+**1.0.5.** The talk handler is `main+0x469424`; the site sits at the same offset in it, `main+0x4698b0` (`orr w8, w25, w0`, word `2a000328`),
+between the same calls (stage == 0x11 at `main+0x703d60`, IsHost at `main+0x9a07c`, both identical to 2.0.1's). The rest of the handler differs
+only in struct offsets and its record's layout, which the site doesn't touch. The same table entries on both platforms (coop_interact.c,
+patches.py). On Windows both 1.0.5 sites attach and the game plays normally with them (one player, 2026-11-06); a visitor's talk on 1.0.5 is untested
+(it needs two 1.0.5 saves past the Link Play unlock, and 1.0.5 can't load 2.0.1 saves).
+
 | step (Mac host + Mac visitor, Story co-op on both) | result |
 |---|---|
 | visitor talks to Tangrowth | his conversation opens; "Look at this!" opens the item picker with the visitor's own items; the conversation closes cleanly |
@@ -91,8 +97,8 @@ the host's own conversations move the story.
 ### E: saves
 
 After the session the visitor went home and both players saved and quit. Against their copies only the live slot changed (`G00/CMNDAT.BIN`,
-`G00/STGDAT01.BIN`); the backup slot and `S00/SYDAT.BIN` are identical. Both saves loaded alone reach the field. 1.0.5 is not covered: P1's
-site, like Interact everywhere's, exists for 2.0.1 only.
+`G00/STGDAT01.BIN`); the backup slot and `S00/SYDAT.BIN` are identical. Both saves loaded alone reach the field. These tests ran on 2.0.1;
+1.0.5 has the same site since 2026-11-06 (above), untested in a session.
 
 ### Not covered yet
 

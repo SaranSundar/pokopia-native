@@ -77,6 +77,12 @@ struct Partition {
 
 uint64_t parse_hex(const std::string& s) { return std::stoull(s, nullptr, 16); }
 
+// A path as UTF-8, the encoding lld-link reads response files in (path::string() is the ANSI code page: "é" broke the link)
+std::string utf8(const fs::path& p) {
+    const std::u8string s = p.u8string();
+    return std::string(s.begin(), s.end());
+}
+
 // Bumped whenever optimisation or code generation changes in a way the IR does not show
 constexpr const char* k_cache_version = "nxlift-objcache-1";
 
@@ -103,12 +109,12 @@ void place_object(const fs::path& from, const fs::path& to) {
 
 #ifdef _WIN32
 // Runs a command line at idle priority and waits; the exit code
-int run_idle(const std::string& cmd) {
-    STARTUPINFOA si{};
+int run_idle(const std::wstring& cmd) {
+    STARTUPINFOW si{};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi{};
-    std::string c = cmd;
-    if (!CreateProcessA(nullptr, c.data(), nullptr, nullptr, FALSE, IDLE_PRIORITY_CLASS, nullptr, nullptr, &si, &pi)) return -1;
+    std::wstring c = cmd;
+    if (!CreateProcessW(nullptr, c.data(), nullptr, nullptr, FALSE, IDLE_PRIORITY_CLASS, nullptr, nullptr, &si, &pi)) return -1;
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD rc = 1;
     GetExitCodeProcess(pi.hProcess, &rc);
@@ -464,20 +470,20 @@ int main(int argc, char** argv) {
             if (lld.empty()) lld = find_lld();
             const fs::path rsp = out / "link.rsp";
             {
-                std::ofstream r(rsp);
+                std::ofstream r(rsp, std::ios::binary);
                 r << "/DLL\n/NOENTRY\n/NODEFAULTLIB\n/MACHINE:X64\n/OPT:REF\n/OPT:NOICF\n/INCREMENTAL:NO\n/HIGHENTROPYVA:NO\n";
-                r << "\"/OUT:" << fs::absolute(dll).string() << "\"\n";
+                r << "\"/OUT:" << utf8(fs::absolute(dll)) << "\"\n";
                 for (const Partition& p : parts) {
                     char name[64];
                     std::snprintf(name, sizeof name, "%s/p%04u.obj", in.module_name(p.module), p.index);
-                    r << '"' << fs::absolute(out / name).string() << "\"\n";
+                    r << '"' << utf8(fs::absolute(out / name)) << "\"\n";
                 }
-                r << '"' << fs::absolute(out / "nxw_game.obj").string() << "\"\n";
-                r << '"' << fs::absolute(nxrt_lib).string() << "\"\n";
+                r << '"' << utf8(fs::absolute(out / "nxw_game.obj")) << "\"\n";
+                r << '"' << utf8(fs::absolute(nxrt_lib)) << "\"\n";
             }
             std::printf("nxlift: linking %s with %s\n", dll.string().c_str(), lld.string().c_str());
             std::fflush(stdout);
-            const int rc = run_idle("\"" + lld.string() + "\" @\"" + fs::absolute(rsp).string() + "\"");
+            const int rc = run_idle(L"\"" + lld.wstring() + L"\" @\"" + fs::absolute(rsp).wstring() + L"\"");
             if (rc) nxw::fail("lld-link failed with exit code " + std::to_string(rc));
             std::printf("nxlift: %s: %zu functions, %.1f MB, linked in %.1f s\n", dll.string().c_str(), all.size(),
                         fs::file_size(dll) / 1048576.0, ms(Clock::now() - l0) / 1000);

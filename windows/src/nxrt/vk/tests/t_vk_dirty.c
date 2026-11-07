@@ -47,6 +47,19 @@ int main(void) {
     double us = dt / 1e3 / nf;
     printf("tracker: %d protect + write-fault rounds in %.2f ms = %.2f us each (%llu faults)\n", nf, vt_ms(dt), us, (unsigned long long)(f2 - f1));
     CHECK(f2 - f1 >= (uint64_t)nf - 1, "every round faulted");
+    // a range with a hole the heap has not committed (#27: textures whose storage spans an untouched 1 MB chunk): Windows refuses the whole run, so the
+    // committed parts are protected one by one and only the hole counts as written
+    uint8_t *hm = VirtualAlloc(NULL, 16 * PG, MEM_RESERVE, PAGE_NOACCESS);
+    VirtualAlloc(hm, 4 * PG, MEM_COMMIT, PAGE_READWRITE); VirtualAlloc(hm + 8 * PG, 8 * PG, MEM_COMMIT, PAGE_READWRITE);
+    for (int i = 0; i < 4 * PG; i++) hm[i] = 1;
+    for (int i = 8 * PG; i < 16 * PG; i++) hm[i] = 2;
+    nvn_dirty_add_range(hm, 16 * PG);
+    uint64_t hs = nvn_dirty_now(); nvn_dirty_protect(hm, 16 * PG);
+    CHECK(!nvn_dirty_since(hm, 4 * PG, hs) && !nvn_dirty_since(hm + 8 * PG, 8 * PG, hs), "a hole: the committed parts are tracked (clean after the protect)");
+    CHECK(nvn_dirty_since(hm + 4 * PG, PG, hs) && nvn_dirty_since(hm + 7 * PG, PG, hs), "a hole: its own pages count as written");
+    uint64_t hf0, hp0, hf1, hp1; nvn_dirty_stats(&hf0, &hp0); hm[9 * PG + 3] = 7; nvn_dirty_stats(&hf1, &hp1);
+    CHECK(hf1 - hf0 == 1 && nvn_dirty_since(hm + 9 * PG, PG, hs) && !nvn_dirty_since(hm + 10 * PG, PG, hs), "a hole: a write past it faults and only its page is newer");
+    nvn_dirty_remove_range(hm); VirtualFree(hm, 0, MEM_RELEASE);
 
     // ---- The mirror (needs a GPU) ----
     int rc = vt_up(0, 1);
@@ -103,6 +116,49 @@ int main(void) {
     CHECK(!memcmp(mem + 70 * PG + 128, upd, 64), "an inline update lands in guest memory");
     vkm_frame_tick(241); submit_sync_all();
     CHECK(mirror_equals(mem, NP * PG), "after the write backs the device copy and guest memory agree");
+    // #27: a page wholly written back by the GPU is not copied up again (the device copy holds those bytes); a CPU write after it is seen as before
+    vkm_stats(&a);
+    vks_begin(); vkm_use((uint64_t)(uintptr_t)(mem + 50 * PG), PG, &db_, &do_); vks_wait(vks_commit(), UINT64_MAX);
+    vkm_stats(&b);
+    CHECK(b.up_pages == a.up_pages, "a page the GPU wrote whole: not copied up again (%llu)", (unsigned long long)(b.up_pages - a.up_pages));
+    nvn_dirty_stats(&fa, &pa); mem[50 * PG + 17] ^= 0xff; nvn_dirty_stats(&fb, &pb_);
+    vkm_stats(&a);
+    vks_begin(); vkm_use((uint64_t)(uintptr_t)(mem + 50 * PG), PG, &db_, &do_); vks_wait(vks_commit(), UINT64_MAX);
+    vkm_stats(&b);
+    CHECK(fb - fa == 1 && b.up_pages - a.up_pages == 1, "it is protected again: a CPU write faults (%llu) and the page is copied (%llu)",
+          (unsigned long long)(fb - fa), (unsigned long long)(b.up_pages - a.up_pages));
+    CHECK(mirror_equals(mem, NP * PG), "the device copy follows that write");
+    // #27: a hot page is copied once per submission, however many uses it has there, and again in the next one (a write between them is seen)
+    for (int f = 242; f < 248; f++) { mem[41 * PG + f] = (uint8_t)f; vkm_frame_tick((uint64_t)f); submit_sync_all(); }
+    vkm_stats(&a); CHECK(a.hot_pages >= 1, "page 41 is hot (%llu)", (unsigned long long)a.hot_pages);
+    mem[41 * PG + 500] = 0x77;
+    vks_begin();
+    for (int u = 0; u < 5; u++) vkm_use((uint64_t)(uintptr_t)(mem + 41 * PG), PG, &db_, &do_);
+    vks_wait(vks_commit(), UINT64_MAX);
+    vkm_stats(&b);
+    CHECK(b.up_pages - a.up_pages == 1, "a hot page used five times in one submission: copied once (%llu)", (unsigned long long)(b.up_pages - a.up_pages));
+    mem[41 * PG + 501] = 0x78;
+    vkm_stats(&a); vks_begin(); vkm_use((uint64_t)(uintptr_t)(mem + 41 * PG), PG, &db_, &do_); vks_wait(vks_commit(), UINT64_MAX); vkm_stats(&b);
+    CHECK(b.up_pages - a.up_pages == 1 && mirror_equals(mem, NP * PG), "the next submission copies it again, with the write since");
+    // #27: allocations past the staging ring share host blocks within their submission instead of a buffer each
+    vkm_stats(&a);
+    vks_begin();
+    VkDeviceSize last_off = 0; VkBuffer last_buf = VK_NULL_HANDLE; int same = 1, n_ovf = 0, ring_mb = 0;
+    for (int k = 0; k < 80; k++) {   // 80 MB in 1 MB pieces: the 64 MB ring first, then the rest past it
+        VkBuffer sbuf; VkDeviceSize soff; uint8_t *sp = vkm_staging(1 << 20, 16, &sbuf, &soff);
+        if (!sp) { same = 0; break; }
+        memset(sp, k, 1 << 20);
+        vkm_stats(&b);
+        if (b.staging_overflow > a.staging_overflow + (uint64_t)n_ovf) {   // this one went past the ring
+            if (n_ovf && (sbuf != last_buf || soff < last_off + (1 << 20))) same = 0;
+            last_buf = sbuf; last_off = soff; n_ovf++;
+        } else ring_mb++;
+    }
+    vks_wait(vks_commit(), UINT64_MAX);
+    vkm_stats(&b);
+    CHECK(n_ovf >= 8 && same && b.staging_overflow_buffers - a.staging_overflow_buffers == 1,
+          "%d MB past the %d MB in the ring went into %llu host buffer(s), one after another", n_ovf, ring_mb,
+          (unsigned long long)(b.staging_overflow_buffers - a.staging_overflow_buffers));
 
     vkm_stats_t s; vkm_stats(&s);
     printf("mirror: %llu pages copied in %llu runs (%.2f ms CPU), staging %llu KB, %llu hot pages, %.1f KB written back; pool backed %.1f MB of %.1f MB (%s)\n",

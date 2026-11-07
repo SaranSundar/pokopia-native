@@ -13,9 +13,9 @@ static uint64_t mach_absolute_time(void) { LARGE_INTEGER c; QueryPerformanceCoun
 typedef struct { uint64_t numer, denom; } mach_timebase_info_data_t;   // ticks * numer / denom = ns
 static void mach_timebase_info(mach_timebase_info_data_t *tb) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); tb->numer = 1000000000ull; tb->denom = (uint64_t)f.QuadPart; }
 static _Atomic int g_vp_red;
-static int mprotect_(void *a, size_t len, int prot) {   // 0 = done
+static int mprotect_(void *a, size_t len, int prot, int quiet) {   // 0 = done
     DWORD old; if (VirtualProtect(a, len, prot & PROT_WRITE ? PAGE_READWRITE : PAGE_READONLY, &old)) return 0;
-    if (!atomic_exchange(&g_vp_red, 1))
+    if (!quiet && !atomic_exchange(&g_vp_red, 1))
         LOG("[RED] dirty-page tracking: VirtualProtect %p+%#zx failed (error %lu): those pages stay writable and count as always written; later failures are not logged",
             a, len, (unsigned long)GetLastError());
     return -1;
@@ -50,11 +50,12 @@ void nvn_dirty_stat(int *live, int *peak, int *cap) { *live = atomic_load(&g_liv
 static _Atomic int g_overflow_logged;
 static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // Pool creation, retirement and protection serialize descriptor lifetime; the page-fault path does not touch this mutex
 static _Atomic uint64_t g_mp_calls, g_mp_pages, g_mp_ticks;   // This module's mprotect: call count, pages covered, time spent (mach timebase, safe in the page-fault path too)
-static int mp(uintptr_t a, size_t len, int prot) {
-    uint64_t t = mach_absolute_time(); int r = mprotect_((void *)a, len, prot);
+static int mp_(uintptr_t a, size_t len, int prot, int quiet) {
+    uint64_t t = mach_absolute_time(); int r = mprotect_((void *)a, len, prot, quiet);
     atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - t); atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, len >> g_shift);
     return r;
 }
+static int mp(uintptr_t a, size_t len, int prot) { return mp_(a, len, prot, 0); }
 
 static mach_timebase_info_data_t g_tb;   // obtained when the first pool is registered (the fault path only multiplies and divides)
 static _Atomic int g_busy_red;
@@ -192,6 +193,55 @@ int nvn_dirty_tracked(const void *addr, size_t len) {
 }
 // The tracked range holding [addr, addr+len), as a handle a caller keeps (packaged textures: the scan over every range ran twice per texture lookup). NULL = untracked
 const void *nvn_dirty_span(const void *addr, size_t len) { return len ? find_span((uintptr_t)addr, len) : NULL; }
+static void mark_prot(range_t *r, uintptr_t k0, uintptr_t k1) {   // pages [k0, k1) now read-only: a page that counted as always written counts as written now
+    for (uintptr_t k = k0; k < k1; k++) {
+        if (atomic_load(&r->gen[k]) == UINT64_MAX) atomic_store(&r->gen[k], atomic_fetch_add(&g_now, 1) + 1);
+        atomic_store(&r->state[k], PG_PROT);
+    }
+}
+static void mark_open(range_t *r, uintptr_t k0, uintptr_t k1) { for (uintptr_t k = k0; k < k1; k++) { atomic_store(&r->gen[k], UINT64_MAX); atomic_store(&r->state[k], PG_NONE); } }
+// Windows refused a run: part of it is not committed (the heap commits 1 MB chunks lazily, and a texture's storage can span one the game has not touched; #27: three
+// 4 MB textures with a 2 MB hole each). Its committed regions are protected one by one and only the rest stays writable and counts as always written: a write there
+// commits its chunk first, unseen, so it must count as written, and a later protect tracks it from then on. The whole run used to count as always written
+#ifdef _WIN32
+static void protect_parts(range_t *r, uintptr_t k0, uintptr_t k1) {
+    for (uintptr_t k = k0; k < k1; ) {
+        uintptr_t a = r->base + (k << g_shift), stop = k + 1; MEMORY_BASIC_INFORMATION mi;
+        int ok = VirtualQuery((void *)a, &mi, sizeof mi) != 0;
+        if (ok) { uintptr_t e = (uintptr_t)mi.BaseAddress + mi.RegionSize, ke = (e - r->base) >> g_shift; if (ke > k) stop = ke < k1 ? ke : k1; }
+        if (ok && mi.State == MEM_COMMIT && !mp(a, (stop - k) << g_shift, PROT_READ)) mark_prot(r, k, stop);
+        else mark_open(r, k, stop);
+        k = stop;
+    }
+}
+// Windows can refuse (uncommitted pages): those stay writable and untracked, so they count as always written (UINT64_MAX) rather than silently clean;
+// once a later protect takes, such a page counts as written now and is tracked from there
+static void protect_run(range_t *r, uintptr_t k0, uintptr_t k1) {
+    if (!mp_(r->base + (k0 << g_shift), (k1 - k0) << g_shift, PROT_READ, 1)) mark_prot(r, k0, k1);
+    else protect_parts(r, k0, k1);
+}
+#else
+int dm_guest_readable_run(uint64_t a, uint64_t *end);   // host/hle_svc.c: the guest heap's and the alias's commit bitmaps, else a probe
+// Linux: a read-only protect succeeds on pages the guest heap has not committed too (committing is a protection change there). The first write would then be
+// the tracker's fault, not the heap's, so the chunk would never count as committed and its uploads would be stepped over. Only the committed parts are
+// protected; the rest stays as it is and counts as always written, as protect_parts does on Windows (#27). Pages alike are merged into one mprotect
+static void protect_run(range_t *r, uintptr_t k0, uintptr_t k1) {
+    for (uintptr_t k = k0; k < k1; ) {
+        uint64_t e = 0; int ok = dm_guest_readable_run(r->base + (k << g_shift), &e);
+        uintptr_t stop = k + 1;
+        for (;;) {   // as far as the pages are alike: a bitmap answers a whole run at once, a probe one page
+            uintptr_t ke = e > r->base ? (uintptr_t)((e - r->base) >> g_shift) : 0;
+            if (ke > stop) stop = ke;
+            if (stop >= k1) { stop = k1; break; }
+            if (dm_guest_readable_run(r->base + (stop << g_shift), &e) != ok) break;
+            stop++;
+        }
+        if (ok && !mp_(r->base + (k << g_shift), (stop - k) << g_shift, PROT_READ, 1)) mark_prot(r, k, stop);
+        else mark_open(r, k, stop);
+        k = stop;
+    }
+}
+#endif
 // Set read-only: mark the pages BUSY first and mark them PROT only after mprotect has landed (for the order and the invariant see the state notes at the top of the file)
 void nvn_dirty_protect(const void *addr, size_t len) {
     // Keep this descriptor live through the last mprotect. Retirement restores
@@ -209,17 +259,7 @@ void nvn_dirty_protect(const void *addr, size_t len) {
         uint8_t st = PG_NONE;
         int took = i <= q && atomic_compare_exchange_strong(&r->state[i], &st, PG_BUSY);
         if (took && !open) { run = i; open = 1; }
-        if (!took && open) {
-            // Windows can refuse (uncommitted pages): those stay writable and untracked, so they count as always written (UINT64_MAX) rather than silently clean;
-            // once a later protect takes, such a page counts as written now and is tracked from there
-            if (!mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ))
-                for (uintptr_t k = run; k < i; k++) {
-                    if (atomic_load(&r->gen[k]) == UINT64_MAX) atomic_store(&r->gen[k], atomic_fetch_add(&g_now, 1) + 1);
-                    atomic_store(&r->state[k], PG_PROT);
-                }
-            else for (uintptr_t k = run; k < i; k++) { atomic_store(&r->gen[k], UINT64_MAX); atomic_store(&r->state[k], PG_NONE); }
-            open = 0;
-        }
+        if (!took && open) { protect_run(r, run, i); open = 0; }
         if (!took && i <= q && st == PG_BUSY && busy_wait(r, i)) i--;   // this page again
     }
     pthread_mutex_unlock(&g_slot_mu);

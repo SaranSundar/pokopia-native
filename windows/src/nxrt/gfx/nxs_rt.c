@@ -161,8 +161,13 @@ static void request(const char *key) {
     AcquireSRWLockExclusive(&g_qlk);
     *g_qt = r; g_qt = &r->next;
     const char *j = getenv("NXRT_SHADER_JOBS"); int jobs = j && *j ? atoi(j) : 2; jobs = jobs < 1 ? 1 : jobs > 4 ? 4 : jobs;
+#ifdef _WIN32
+    enum { QPRIO = THREAD_PRIORITY_BELOW_NORMAL };
+#else   // Linux: far below the game (nice +10), which the translator it starts inherits: on a 4-core Steam Deck it would compete with the render thread
+    enum { QPRIO = THREAD_PRIORITY_LOWEST };
+#endif
     while (g_qthread < jobs) {
-        g_qthread++; HANDLE h = CreateThread(NULL, 0, qthread, NULL, 0, NULL); if (h) { SetThreadPriority(h, THREAD_PRIORITY_BELOW_NORMAL); CloseHandle(h); }
+        g_qthread++; HANDLE h = CreateThread(NULL, 0, qthread, NULL, 0, NULL); if (h) { SetThreadPriority(h, QPRIO); CloseHandle(h); }
     }
     WakeAllConditionVariable(&g_qcv);
     ReleaseSRWLockExclusive(&g_qlk);

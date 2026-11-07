@@ -229,3 +229,16 @@ pull (512 frames): a feeder thread keeps one period (or the largest request seen
 (`audio_ready_fn`, never padding), after each callback and every 2 ms, under the stream's lock; the callback pulls only a shortfall. WASAPI's 480
 frames keep the direct pull. `NXRT_AUDIO_RESERVE=0` turns it off. `nxrt.audio_sdl` reproduces the case with SDL's dummy driver at 1024 frames:
 95 of 192 pulls ran dry without the reserve, 0 of 290 with it, at 48,680 frames a second.
+
+### 1.3.3 on Linux (2026-11-07, beta 4)
+
+Main d9035f4 merged (#27's uploads, the NVIDIA loop guards, `NXRT_VK_SUBGROUP32`, `NXRT_VK_SKIP`, 1.0.5 co-op, #31). #27's `protect_parts`
+asked VirtualQuery which pages of a refused run are committed; on Linux a read-only `mprotect` is not refused on pages the guest heap hasn't
+committed (committing is itself a protection change there), so holes were tracked as clean and the heap would never see its first write.
+`protect_run` on Linux splits each run by the heap's and the alias's commit bitmaps (`dm_guest_readable_run`) instead: committed parts are
+protected, the rest stays writable and counts as always written (`nxrt.vk_dirty`'s hole case). The translation queue runs at nice +10 (the
+.NET translator inherits it) so on a 4-core Deck it doesn't take the render thread's time. play.sh takes play.ps1's co-op build rule (the
+runtime still turns co-op off on a build it has no sites for). Checked in WSL on beta 3's game build (1.3.3 changed nxlift only for Windows
+DLLs): both loaders start and draw; `NXRT_VK_SUBGROUP32=1` on lavapipe logs that its 8 lanes can't be raised; the sound at 1024-frame periods,
+beta 3 and beta 4 back to back twice: beta 3 0 and 2, beta 4 3 and 0 underruns of 6,000 (one earlier beta 4 run had 29 in its first 4,000, after three
+game starts in a row); at 2048, 0 of 6,000.

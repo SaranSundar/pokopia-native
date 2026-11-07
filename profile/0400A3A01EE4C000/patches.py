@@ -10,4 +10,8 @@ OBS = {
         (0xb1030, OBS_COOP_INTERACT | COOP_SITE_MASK << 8, 'f2c0002d', 'Interact everywhere: the permissions a story area gives online players'),
         (0x4c06d8, OBS_COOP_INTERACT | COOP_SITE_TALK << 8, '2a000328', 'Story co-op: a visitor talks to NPCs as the host does'),
     ],
+    '816c5358e8178d802fcec4a7ce5a741a': [   # 1.0.5 main: the same two sites (the mask builder at main+0xa61e0, the talk handler at main+0x469424)
+        (0xa62b0, OBS_COOP_INTERACT | COOP_SITE_MASK << 8, 'f2c0002d', 'Interact everywhere: the permissions a story area gives online players'),
+        (0x4698b0, OBS_COOP_INTERACT | COOP_SITE_TALK << 8, '2a000328', 'Story co-op: a visitor talks to NPCs as the host does'),
+    ],
 }

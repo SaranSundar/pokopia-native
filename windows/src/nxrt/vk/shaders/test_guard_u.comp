@@ -1,0 +1,18 @@
+#version 450
+// vkspv_limit_count's unsigned case (t_vk_guard.c): shader 560a0262fe47818a's shape. A count in a constant buffer's word 13, read and compared as unsigned,
+// bounds a loop over a texel table, one texel an item; each lane writes how many items it walked
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std140) uniform Cb { vec4 m[4]; } cp_c3;
+layout(set = 0, binding = 1) uniform sampler2D cp_t_tcb_12;
+layout(set = 0, binding = 2, std430) buffer Out { uint walked[]; };
+void main() {
+    uint n = 0u; float acc = 0.0;
+    if (!(0u >= floatBitsToUint(cp_c3.m[3].y))) {
+        uint i = 0u;
+        do {
+            acc += texelFetch(cp_t_tcb_12, ivec2(int(i & 16383u), int(i >> 14)), 0).x;
+            n++; i++;
+        } while (!(i >= floatBitsToUint(cp_c3.m[3].y)));
+    }
+    walked[gl_GlobalInvocationID.x] = n + (acc > 1e30 ? 1u : 0u);
+}

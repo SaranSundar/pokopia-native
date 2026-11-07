@@ -29,6 +29,8 @@ scripts drive Windows and the Mac host.
   profile entry `look_cam` writes the camera directly, as on the Mac. The default is 0.05° per mouse count (raw input, no pointer acceleration); `DM_LOOK_SENS` and
   `DM_LOOK_SCALE` override it. While captured, left is A, right is B and middle is the right stick's press. Esc or losing focus releases the mouse. Without pointer
   look the left button is the touch screen.
+  While the character moves sideways (the left stick held left or right), the game's follow camera sets the yaw each frame and a written turn is lost (#31), so the
+  mouse turns the camera through the right stick then, as a controller does (`DM_LOOK_STRAFE=0`: written then too).
 - **Controllers:** each is a player of its own. The first is player 1 through `dm_pad_set_player(0)` = `dm_pad_set`, ORed with the keyboard. `DM_PAD_MERGE=1`
   makes every controller player 1 and `DM_KBD_PLAYER=own` keeps player 1 for the keyboard alone (nxnative's `pad_slots.h`). Mapping:
   - Face buttons by position, as on a Switch (right A, bottom B, top X, left Y). SDL3 names buttons by position, so a Nintendo pad maps name for name (as

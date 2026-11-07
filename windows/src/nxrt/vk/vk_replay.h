@@ -30,13 +30,17 @@ int vkr_fmt_as_ct(int nvn_format, int ct);
 
 typedef struct {
     uint64_t handles, records, draws, draws_skipped, dispatches, passes, clears, copies, tex_copies, updates, fills, barriers, queries, bad;
-    uint64_t skip_no_shader, skip_no_pipeline, skip_no_target, skip_state, inexact_vertex;
+    uint64_t skip_no_shader, skip_no_pipeline, skip_no_target, skip_state, inexact_vertex, skip_named;   // skip_named: draws and dispatches NXRT_VK_SKIP left out
     uint64_t desc_sets, writebacks, scaled_sets, sets_reused;   // scaled_sets: with their own support buffer (F-5 render scales); sets_reused: bound again (same content)
 } vkr_stats_t;
 void vkr_stats(vkr_stats_t *s);
 void vkr_frame(uint64_t frame);              // per present: statistics every 300 frames
 void vkr_passdump_next(long n);              // DM_CTL passdump: the next n frames as NXRT_VK_PASSDUMP logs them; any thread
 void vkr_texdump_next(void);                 // DM_CTL texdump: the next frame's images as NXRT_VK_TEXDUMP writes them; any thread
+// NXRT_VK_SKIP: shader keys whose draws and dispatches are left out (diagnosis). The list as the variable gives it (keys of 16 hex digits, separated by
+// commas, semicolons or spaces): how many keys it holds, -1 when something in it is not a key (the keys are kept). Whether a key is in it
+int vkr_skip_set(const char *list);
+int vkr_skip_has(const char *key);
 
 #ifdef __cplusplus
 }
