@@ -51,7 +51,8 @@ Please do not share build folders, `game.so`, shader files or saves.
 ## What we checked for beta 3, and what we could not
 
 In WSL (Ubuntu 22.04) with Mesa's software renderer, and SDL's test sound driver set to ask for sound the way PipeWire does: with beta 2 about
-840 of every 2,000 sound requests found nothing ready (as in Quantumenis's logs); with beta 3 none did, at both 1,024 and 2,048 frames. Linux's
+840 of every 2,000 sound requests found nothing ready (as in Quantumenis's logs); with beta 3 none of 6,000 did at 1,024 frames, and 3 of 6,000
+at 2,048 frames, all within the first 2,000, as the game started. Linux's
 own tests pass, among them a new one for exactly this. The game starts and draws with Ubuntu's Vulkan library and with one built the way
 Fedora builds it, and the AppImage opens its builder window. **Not checked:** real PipeWire (our test system has none), a real Steam Deck, and
 any real graphics card. If the sound is clean for you now, or still isn't, please say so in **#linux-beta**, with your system.
