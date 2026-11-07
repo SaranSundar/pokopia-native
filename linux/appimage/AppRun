@@ -3,7 +3,7 @@
 # fonttools and pillow, the .NET runtime, the Linux tools and nxnative) to ${XDG_DATA_HOME:-~/.local/share}/pokopia-native/builder/<version>,
 # because games built with it run its Python and .NET from there once the AppImage has closed. Then the window opens. With arguments,
 # nxs2.py runs them instead: Pokopia-Native-Builder-*.AppImage doctor | build <dump> --linux | import-save <build folder> <save folder> | ...;
-# "report <build folder>" runs linux/report.sh.
+# "report [build folder]" runs linux/report.sh (it finds the build folder itself).
 set -eu
 APPDIR=${APPDIR:-$(dirname "$(readlink -f "$0")")}
 VER=$(cat "$APPDIR/payload/VERSION")
