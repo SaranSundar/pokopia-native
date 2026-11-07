@@ -72,7 +72,7 @@ int vk_mem_type(uint32_t bits, VkMemoryPropertyFlags want, VkMemoryPropertyFlags
 void vk_name(uint64_t handle, VkObjectType type, const char *name);   // debug-utils object name (validation builds)
 // A lost device (#12, #17): the first VK_ERROR_DEVICE_LOST logs what the GPU was doing (the checkpoints each stage reached) and the driver's fault report
 void vk_lost(const char *where, VkResult r);
-void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect, const uint32_t *cw);   // kind 'c' dispatch, 'd' draw; cw: 8 constant words or NULL
+void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect, const uint32_t *cw);   // kind 'c' dispatch, 'd' draw; cw: 16 constant words or NULL
 
 // One-shot command buffers on the universal queue (uploads at bring-up, readbacks, tests): begin, record, then submit and wait
 VkCommandBuffer vk_once_begin(void);

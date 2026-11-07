@@ -86,9 +86,10 @@ size_t vkspv_ballot_per_lane(uint32_t **words, size_t nwords, int *rewritten);
 // Whether that rewrite applies: NVIDIA's GPUs (vendor 0x10de) only, whose hang it is (the lane's own bit assumes 32-lane subgroups, and lavapipe crashes in
 // the rewritten counters); env, NXRT_VK_BALLOT_FIX, decides when given: 0 off, anything else on
 int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env);
-// A loop over a texel table's items whose count is count_var's first word (634565ab77c61463, D-1): its integer comparisons get min(count, the items tex_var holds,
-// stride texels each). The new word count (*words replaced) and *limited comparisons, nwords when nothing changed
-size_t vkspv_limit_count(uint32_t **words, size_t nwords, const char *count_var, const char *tex_var, uint32_t stride, int *limited);
+// A loop over a texel table's items whose count is word `word` of count_var (634565ab77c61463's word 0, D-1; 560a0262fe47818a's words 12 and 13, D-11): its integer
+// comparisons get min(count, the items tex_var holds, stride texels each), the unsigned minimum for a count read as unsigned. The new word count (*words replaced)
+// and *limited comparisons, nwords when nothing changed
+size_t vkspv_limit_count(uint32_t **words, size_t nwords, const char *count_var, uint32_t word, const char *tex_var, uint32_t stride, int *limited);
 // Whether that guard applies: NVIDIA's GPUs only, where the hang was seen (AMD's Windows driver crashed making the guarded pipeline on 1.3.1); env,
 // NXRT_VK_LOOP_GUARD, decides when given: 0 off, anything else on
 int vkspv_loop_guard_wanted(uint32_t vendor, const char *env);

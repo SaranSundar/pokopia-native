@@ -142,6 +142,12 @@ static uint8_t *rec(uint8_t *p, uint32_t op, const void *payload, uint32_t n) {
 }
 
 static void cpu_part(void) {
+    // NXRT_VK_SKIP's list (D-7: a tester leaves suspects out one at a time): keys of 16 hex digits, any case, separated by commas, semicolons or spaces
+    CHECK(vkr_skip_set("47ce9f1d88b72b56, 7760D1202244455A;48a15ecf29169b6c") == 3 && vkr_skip_has("47ce9f1d88b72b56") && vkr_skip_has("7760d1202244455a") &&
+          vkr_skip_has("48a15ecf29169b6c") && !vkr_skip_has("53b2b6735447fdaf") && !vkr_skip_has(NULL), "NXRT_VK_SKIP: three keys, any case and separator");
+    CHECK(vkr_skip_set("5c0cab20f0f47ec3 notakey 1234") == -1 && vkr_skip_has("5c0cab20f0f47ec3") && !vkr_skip_has("47ce9f1d88b72b56"),
+          "NXRT_VK_SKIP: what is not a key is refused, the keys are kept, the old list is gone");
+    CHECK(vkr_skip_set("") == 0 && !vkr_skip_has("5c0cab20f0f47ec3") && vkr_skip_set(NULL) == 0, "NXRT_VK_SKIP: empty, nothing left out");
     // the blend states the game binds on the title screen (raw words also in the Mac host's pass dump): alpha blending, additive glow, a multiply layer
     blend_st a = blend_of(0x4860a1828ull), g = blend_of(0x4820a0828ull), m = blend_of(0x485020c08ull), ov = blend_of(0x482021410ull);
     CHECK(vkp_blend_factor(a.src_rgb) == VK_BLEND_FACTOR_SRC_ALPHA && vkp_blend_factor(a.dst_rgb) == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA && vkp_blend_op(a.eq_rgb) == VK_BLEND_OP_ADD,

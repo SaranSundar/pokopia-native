@@ -175,6 +175,12 @@ static void test_config(void) {
     CHECK(strstr(err, "internet") != NULL);
     CHECK_EQ(coop_cfg_parse(&c, "join:172.32.0.1:1", NULL, err, sizeof err), -1);
     CHECK_EQ(coop_cfg_parse(&c, "join:100.64.0.1:1", NULL, err, sizeof err), -1);   // carrier NAT is not a LAN
+    CHECK(strstr(err, "Tailscale") != NULL);
+    CHECK_EQ(coop_cfg_parse(&c, "join:26.139.206.94", NULL, err, sizeof err), -1);   // VPN addresses: internet play, named in the refusal
+    CHECK(strstr(err, "26.139.206.94 (Radmin VPN's range) is not") != NULL && strstr(err, "internet play") != NULL);
+    CHECK_EQ(coop_cfg_parse(&c, "join:25.1.2.3", NULL, err, sizeof err), -1); CHECK(strstr(err, "Hamachi") != NULL);
+    CHECK_EQ(coop_cfg_parse(&c, "join:8.8.8.8", NULL, err, sizeof err), -1); CHECK(strstr(err, "range") == NULL);
+    CHECK(!strcmp(coop_addr4_vpn(0x647FFFFFu), " (carrier NAT, or Tailscale's range)") && !*coop_addr4_vpn(0x64800000u) && !*coop_addr4_vpn(0x1B000001u));
     CHECK_EQ(coop_cfg_parse(&c, "join:0.0.0.0:1", NULL, err, sizeof err), -1);
     CHECK_EQ(coop_cfg_parse(&c, "join:255.255.255.255:1", NULL, err, sizeof err), -1);
     CHECK_EQ(coop_cfg_parse(&c, "join:224.0.0.251:1", NULL, err, sizeof err), -1);
@@ -896,7 +902,9 @@ static void test_interact(void) {
     const coop_site *s = NULL;
     CHECK_EQ(coop_interact_sites("76a489f3bd3642fa5e18bd83d32c98bacc5f7d0e", &s), 1);
     CHECK(s && s->id == COOP_SITE_MASK && s->off == 0xb1030 && s->fn == 0xb0f60 && s->word == 0xf2c0002du);
-    CHECK_EQ(coop_interact_sites("816c5358e8178d802fcec4a7ce5a741a", &s), 0);   // 1.0.5: none
+    CHECK_EQ(coop_interact_sites("816c5358e8178d802fcec4a7ce5a741a", &s), 1);   // 1.0.5
+    CHECK(s && s->id == COOP_SITE_MASK && s->off == 0xa62b0 && s->fn == 0xa61e0 && s->word == 0xf2c0002du);
+    CHECK_EQ(coop_interact_sites("816c5358e8178d80ffffffffffffffff", &s), 0);   // the whole build ID must match
     CHECK(s == NULL);
     CHECK_EQ(coop_interact_sites(NULL, &s), 0);
     uint64_t x[31] = {0};
@@ -919,7 +927,9 @@ static void test_story(void) {
     const coop_site *s = NULL;
     CHECK_EQ(coop_story_sites("76a489f3bd3642fa5e18bd83d32c98bacc5f7d0e", &s), 1);
     CHECK(s && s->id == COOP_SITE_TALK && s->off == 0x4c06d8 && s->fn == 0x4c024c && s->word == 0x2a000328u);
-    CHECK_EQ(coop_story_sites("816c5358e8178d802fcec4a7ce5a741a", &s), 0);   // 1.0.5: none
+    CHECK_EQ(coop_story_sites("816c5358e8178d802fcec4a7ce5a741a", &s), 1);   // 1.0.5
+    CHECK(s && s->id == COOP_SITE_TALK && s->off == 0x4698b0 && s->fn == 0x469424 && s->word == 0x2a000328u);
+    CHECK_EQ(coop_story_sites("0000000000000000000000000000000000000000", &s), 0);
     CHECK(s == NULL);
     uint64_t x[31] = {0};
     env_set("DM_COOP_STORY", NULL);

@@ -79,19 +79,29 @@ one step per game present). `NXRT_VK_SHOT=<n>` writes present n as the window sh
 - **Dirty tracking is the recording layer's** (`gfx/nvn_dirty.c`, nxnative's tracker ported by track A; I had ported it too and dropped mine
   to keep one): pages are write-protected with `VirtualProtect`, a guest write faults into the runtime's vectored handler, which stamps the
   page and unprotects it. The mirror keeps, per page, the stamp its copy was taken at; a page is copied again when its generation is newer.
-  Order per run, nxnative's: take the stamp, protect, then read. Host writes go through `dm_guest_write_prepare` as before.
+  Order per run, nxnative's: take the stamp, protect, then read. Host writes go through `dm_guest_write_prepare` as before. A run Windows
+  refuses because part of it is not committed (a texture's storage spanning a 1 MB heap chunk the game has not touched) is protected region by
+  region: only the uncommitted pages count as always written (#27; the whole run used to).
 - **Uploads** go through a **staging ring** (64 MB, host-visible), into the submission's upload command buffer, batched as one
   `vkCmdCopyBuffer` with up to 256 regions per pool; runs of up to 4 MB. A ring that fills waits for the oldest submission; a submission
-  that alone needs more gets an overflow buffer released with it.
+  that alone needs more takes host blocks of 32 MB (or its allocation's size), released with it, and fills each before the next (#27: it was a
+  buffer per allocation, about 96 a frame).
 - **Per-frame budget** (`NXRT_VK_UPLOAD_MB`, 64 MB): background uploads (the whole-pool sync below, ASTC high-quality replacements) stop at
   it; uploads a submission needs never do.
-- **Hot pages**: a page written in 3 frames in a row stops being protected (no fault per write) and is copied at every use; every 240 frames
-  hot pages cool down (protected again at their next copy).
+- **Hot pages**: a page written in 3 frames in a row stops being protected (no fault per write) and is copied once per submission (the GPU reads
+  NVN memory when the submission runs, and the game does not rewrite what a submission reads before it is done); every 240 frames hot pages cool
+  down (protected again at their next copy). They were copied at every use: #27's 4 MB hot range, bound by a dozen draws and dispatches a frame,
+  was 50-94 MB of uploads a frame. `NXRT_VK_HOT_EVERY_USE=1` brings that back.
 - **Uncommitted pages** (the heap commits lazily; most of Pokopia's 3.4 GB pool is never touched) are neither read nor protected: a use reads
   them as zeros and keeps asking, the background sync steps over the region.
 - **GPU writes into pools** (copies, fills, uniform updates now; storage writes, transform feedback, query results with the replay) are
   copied back to guest memory when the submission completes; their pages are marked in flight meanwhile so a sync cannot overwrite the newer
-  device copy with old guest bytes.
+  device copy with old guest bytes. A page the write covers whole, which the CPU has not written since its copy and no other GPU write is on its
+  way to, then holds the same bytes on both sides: it is protected again and counts as copied instead of going back up (#27: the light pass's
+  10 MB every two frames went GPU → guest memory → staging → GPU unchanged, and a buffer written back every frame turned hot).
+  `NXRT_VK_WB_RECOPY=1` copies every written-back page up again, as before.
+- **`NXRT_VK_UPLOAD_TOP=1`** adds to each memory line the ranges copied most since the last one, how often, and why their pages were behind
+  (never copied, hot, written back by the GPU, written by the CPU).
 - **Two policies**: `vkm_use(addr, len)` brings a range up to date for the submission being recorded (the replay's, per binding) and
   `vkm_sync_all()` copies every written page of every pool, round robin, within the budget. Until the replay asks per use, the backend runs
   `vkm_sync_all` once a frame (`NXRT_VK_SYNC=all`, the default now), which measures the worst case; `NXRT_VK_SYNC=use` is M5-C's setting.

@@ -85,8 +85,17 @@ the first word of its constant buffer read as an integer, with nothing else boun
 - **NVIDIA only since 1.3.2** (`vkspv_loop_guard_wanted`, as the ballot rewrite): on 1.3.1 AMD's Windows driver crashed making the guarded
   pipeline (santriman's Radeon 890M, amdvlk64.dll, 19 s in, right after the guard's log line; 1.2.x ran the unguarded shader for minutes). The hang
   was only seen on NVIDIA (D-1's RTX 3050 Laptop, D-11's GTX 1650). `NXRT_VK_LOOP_GUARD=1` makes it on any GPU, `=0` turns it off (on 1.3.1 too).
-- **The report:** on NVIDIA, a lost device now prints the first eight words of each dispatch's first constant buffer as guest memory held them when it
-  was recorded, beside the checkpoint that names the dispatch.
+- **The report:** on NVIDIA, a lost device prints the first 16 words (8 in 1.3.1) of each dispatch's first constant buffer as guest memory held them
+  when it was recorded, beside the checkpoint that names the dispatch, with word 0 as an integer and words 12 and 13 as unsigned.
+
+**D-11 on 1.3.1** (GTX 1650, driver 621.14): the guard held on `634565ab`, then after 62 minutes the GPU hung in a 30x17x16-group dispatch of
+`560a0262fe47818a`, the per-cluster light lists (one of the ballot-rewritten counters). It has the same weakness: two loops, `for (i = lane; i < count;
+i += 64)` over the lights of a texel table (one texel a light), with `count` constant buffer words 12 and 13, read and compared as unsigned, and nothing
+else bounding them. The report's eight words were sane (a matrix row), but they do not reach words 12 and 13.
+- **The same guard** for both loops (`vkspv_limit_count` takes the word and, for an unsigned count, the unsigned minimum: 0xffffffff is no negative
+  number), NVIDIA only by default and switched with `634565ab`'s by `NXRT_VK_LOOP_GUARD`.
+- Whether the counts were garbage is not known; both shaders read their counts from the game's per-frame constants, so a count read while the game
+  rewrites its slot is the lead. The 16-word report shows words 12 and 13 next time.
 
 **64-lane GPUs.** NVN's shaders are written for 32-lane warps: ballots read `.x`, the shuffle helpers clamp to lane 31, votes span 32. AMD's GPUs run
 64-lane subgroups by default (santriman's Radeon 890M on 1.2.6: "size 64"), Intel's 8 to 32. Of the cache's shaders 49 use subgroup operations (15
@@ -98,7 +107,8 @@ compute, 34 fragment); on 64 lanes a warp-32 counter sees only lanes 0-31 in its
   run it, leaves the driver's size, as in 1.3.0; the log line then names the switch. NVIDIA (always 32) is unchanged either way.
 - The ballot rewrite stays NVIDIA's only.
 
-**Checked here** (RTX 4070 Ti): `t_vk_guard` 11 of 11, 12 with the real shader through `NXRT_TEST_SPV` (a sane count unchanged, a count of a billion walks the table's items at once, one and two
-rows, the edited module valid, the guard on by default only for NVIDIA; on the real `634565ab` two comparisons limited, spirv-val passes, decompiled only those two lines differ);
+**Checked here** (RTX 4070 Ti): `t_vk_guard` 17 of 17, 18 with a real shader through `NXRT_TEST_SPV` (a sane count unchanged, a count of a billion walks the table's items at once, one and two
+rows, the edited module valid, the guard on by default only for NVIDIA; `test_guard_u.comp`, 560a0262's shape: word 13, unsigned, 0xffffffff and 1.0f
+walk the table's items; on the real `634565ab` two comparisons limited, on the real `560a0262` four, spirv-val passes, decompiled only those lines differ);
 `t_vk_ballot` 16 of 16; the 2.0.1 route with validation on, `NXRT_VK_SUBGROUP32=1` and the guard: 0 errors, pictures right. **Not checked:** an AMD or
 Intel GPU (only santriman on 1.3.1, or a Steam Deck tester), a real lost device's new report line.

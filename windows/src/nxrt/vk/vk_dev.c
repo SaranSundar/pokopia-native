@@ -425,7 +425,7 @@ int vk_tl_wait(uint64_t value, uint64_t timeout_ns) {
 
 // ---------- A lost device (#12, #17): a checkpoint before each dispatch (and draw) names what the GPU had started and finished when it stopped ----------
 enum { CK_N = 4096 };
-static struct { uint64_t seq; char kind, indirect, key[17], has_cw; uint32_t x, y, z, cw[8]; } g_ck[CK_N];
+static struct { uint64_t seq; char kind, indirect, key[17], has_cw; uint32_t x, y, z, cw[16]; } g_ck[CK_N];
 static _Atomic uint64_t g_ck_seq;
 
 void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect, const uint32_t *cw) {
@@ -444,9 +444,11 @@ static const char *ck_text(uint64_t s, char *out, size_t n) {
     else {
         int k = snprintf(out, n, "#%llu a dispatch of shader %s, %ux%ux%u groups%s", (unsigned long long)s, g_ck[s % CK_N].key, g_ck[s % CK_N].x, g_ck[s % CK_N].y,
                          g_ck[s % CK_N].z, g_ck[s % CK_N].indirect ? " (indirect: what guest memory held when it was recorded; the GPU reads its own copy)" : "");
-        const uint32_t *c = g_ck[s % CK_N].cw;   // its first constant buffer's first words as guest memory held them when it was recorded (D-1: a loop's count)
+        const uint32_t *c = g_ck[s % CK_N].cw;   // its first constant buffer's first 16 words as guest memory held them when it was recorded (loop counts: D-1's word 0, D-11's 12 and 13)
         if (g_ck[s % CK_N].has_cw && k > 0 && (size_t)k < n)
-            snprintf(out + k, n - k, "; its first constants then: %08x %08x %08x %08x %08x %08x %08x %08x (the first as an integer: %d)", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], (int32_t)c[0]);
+            snprintf(out + k, n - k, "; its first constants then: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x "
+                     "(word 0 as an integer: %d; words 12 and 13 as unsigned: %u %u)", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11],
+                     c[12], c[13], c[14], c[15], (int32_t)c[0], c[12], c[13]);
     }
     return out;
 }
