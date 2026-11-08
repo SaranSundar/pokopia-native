@@ -308,7 +308,8 @@ python nxs2.py build "C:\path\to\your dump folder" --windows
 ```
 
 (or the window: **Setup**, then **Build** with "Windows: play on this PC" ticked). It took 20 minutes on my PC (longer on a smaller one), most of it
-the recompile, at idle priority. Then double-click `<build folder>\out\Play Pokopia <version>.cmd`. Keyboard and mouse
+the recompile, at idle priority. Then double-click `<build folder>\out\Play Pokopia <version>.exe` (pin it to the taskbar or add it to Steam
+as a non-Steam game; the `.cmd` beside it does the same in a console window). Keyboard and mouse
 as on the Mac below, controllers as Switch controllers. Your save lives in `%APPDATA%\Pokopia Native\<version>\save`;
 **Import save…** in the window (or `nxs2.py import-save`) brings the one you have from Eden, the phone or the Mac. The
 first start draws a few things late while the game's run-time shaders are translated once. Everything else, including

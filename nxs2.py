@@ -171,6 +171,7 @@ def win_tools():
     if (kit / 'nxrt.exe').is_file():
         t = {n: kit / n for n in WIN_KIT_FILES}; t['dir'] = kit
         t['gamecontrollerdb.txt'] = kit / 'gamecontrollerdb.txt'   # SDL_GameControllerDB's controller mappings: copied beside nxrt.exe when the kit has them
+        t['pokopia-launch.exe'] = kit / 'pokopia-launch.exe'       # the launcher as a program: out\Play Pokopia <version>.exe when the kit has it
     else:
         src = HERE / 'windows'; rel = src / 'build' / 'Release'
         t = {n: rel / 'bin' / n for n in ('nxanalyze.exe', 'nxlift.exe', 'nxrt.exe', 'SDL3.dll')}
@@ -178,6 +179,7 @@ def win_tools():
                   'nxshader/nxshader.py': src / 'src/nxshader/nxshader.py', 'nxshader/dmsh_abi.h': src / 'src/nxrt/gfx/dmsh_abi.h',
                   'lld-link.exe': llvm_tool('lld-link'), 'dir': rel / 'bin'})
         t['gamecontrollerdb.txt'] = src / 'src/nxrt/front/third_party/SDL_GameControllerDB/gamecontrollerdb.txt'
+        t['pokopia-launch.exe'] = rel / 'bin' / 'pokopia-launch.exe'
         vk = [pathlib.Path(v) / 'Bin' for v in (os.environ.get('VULKAN_SDK'),) if v] + sorted(pathlib.Path('C:/VulkanSDK').glob('*/Bin'))[-1:]
         for n in ('spirv-opt.exe', 'spirv-val.exe'): t[n] = next((d / n for d in vk if (d / n).is_file()), None)
     t['missing'] = [n for n in WIN_KIT_FILES if not (t.get(n) and pathlib.Path(t[n]).is_file())]
@@ -1155,7 +1157,12 @@ rem -PadCheck; -Save and -Work with other folders for a second player on this PC
 rem The window before Pokemon Pokopia {b.version} starts (Link Play, Controls, Display), even after "Don't ask again" was ticked. Play in it starts the game.
 {play} -Settings %*
 ''' + end, encoding='ascii')
-    say(f'Windows game: {cmd}  (the settings window: Pokopia Settings {b.version}.cmd beside it; save: {win_save_dir(b)})')
+    exe = t.get('pokopia-launch.exe')   # the same two launchers as programs (no console window, an icon; for a taskbar pin or Steam's "Add a Non-Steam Game")
+    if exe and pathlib.Path(exe).is_file():
+        copy_if_changed(exe, b.outputs / f'Play Pokopia {b.version}.exe'); copy_if_changed(exe, b.outputs / f'Pokopia Settings {b.version}.exe')
+        say(f'Windows game: {b.outputs / f"Play Pokopia {b.version}.exe"}  (or the .cmd beside it; the settings window: Pokopia Settings {b.version}.exe; save: {win_save_dir(b)})')
+    else:
+        say(f'Windows game: {cmd}  (the settings window: Pokopia Settings {b.version}.cmd beside it; save: {win_save_dir(b)})')
     return cmd
 
 
@@ -1315,7 +1322,9 @@ def build(args):
         st_xcode(b, args.team_id)
     if not (args.mac_app or args.ipa or args.xcode or args.windows): say('no output asked for (--mac-app, --ipa, --xcode); the build folder is complete for nxs2.py run')
     if apple: report(b)
-    if args.windows: say(f'the Windows game: double-click "{b.outputs / f"Play Pokopia {b.version}.cmd"}" (or nxs2.py run "{b.out}")')
+    if args.windows:
+        play = b.outputs / f'Play Pokopia {b.version}.exe'
+        say(f'the Windows game: double-click "{play if play.is_file() else b.outputs / f"Play Pokopia {b.version}.cmd"}" (or nxs2.py run "{b.out}")')
     say('done')
 
 

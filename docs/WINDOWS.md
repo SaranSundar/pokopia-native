@@ -63,7 +63,14 @@ only what changed is redone.
 
 ### Play
 
-Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in the window, or `python nxs2.py run "<build folder>"`).
+Double-click **`<build folder>\out\Play Pokopia <version>.exe`** (or **Play** in the window, or `python nxs2.py run "<build folder>"`).
+
+- **The .exe** has the game's icon and no console window: right-click it → **Pin to taskbar**, make a desktop shortcut, or add it to
+  Steam (**Add a Game → Add a Non-Steam Game**, then **Browse** to it). Keep the file itself in the `out` folder: it finds the game
+  next to it. **Pokopia Settings <version>.exe** opens the window before the game even after "Don't ask again".
+- **The .cmd files beside them** do the same in a console window, and show its messages there. Switches go after either one in a
+  terminal (`-Fullscreen`, `-Window 1600x900`, `-Silent`, `-PadCheck`). If the .exe ever shows a message that the game didn't start,
+  the .cmd shows the same and more.
 
 - **Keyboard and mouse:** WASD moves; click the picture and the mouse looks around (Esc gives it back); J K U I are
   A B X Y, Q E are L R, Z C are ZL ZR, Return is +, Tab is −; F11 is full screen.

@@ -84,6 +84,9 @@ def kit_files(src, bld, a):
     gc = src / 'src/nxrt/front/third_party/SDL_GameControllerDB/gamecontrollerdb.txt'   # SDL_GameControllerDB's mappings, read by nxrt beside itself (a source from before them has none)
     if gc.is_file(): k['gamecontrollerdb.txt'] = (gc, 'SDL_GameControllerDB (windows-native source, src/nxrt/front/third_party/SDL_GameControllerDB/README.md names its commit)')
     else: print('note: no gamecontrollerdb.txt in the windows-native source: the kit goes without the extra controller mappings')
+    pl = bld / 'bin' / 'pokopia-launch.exe'   # the launcher as a program (windows-native src/launcher; a build from before it has none)
+    if pl.is_file(): k['pokopia-launch.exe'] = (pl, 'windows-native build (the launcher: out/Play Pokopia <version>.exe)')
+    else: print('note: no pokopia-launch.exe in the windows-native build: builds get only the .cmd launchers')
     if a.vc_redist:
         for n in VC_RUNTIME: k[n] = (pathlib.Path(a.vc_redist) / n, 'Visual Studio 2022 redistributable (for spirv-opt and spirv-val)')
     return k
