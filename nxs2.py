@@ -26,7 +26,7 @@ platform), Python 3.12 or newer with capstone (5.x), lz4 and fontTools, the .NET
 translator), xcodegen for the iPhone build. On Windows the iPhone build needs the toolchain in docs/WINDOWS.md and the
 Windows game the tools of the "for Windows PCs" download (windows/bin). `nxs2.py doctor` lists what is missing.
 """
-import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shutil, struct, subprocess, sys, time
+import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shlex, shutil, struct, subprocess, sys, time
 
 TOOL_VERSION = '1.3.4'   # this tool's release (co-op compares the game build and mods, not this); the game's own version is separate
 TITLE = '0400A3A01EE4C000'
@@ -308,6 +308,27 @@ def externally_managed():
     return sys.prefix == sys.base_prefix and pathlib.Path(sysconfig.get_path('stdlib'), 'EXTERNALLY-MANAGED').is_file()
 
 
+def metal_hint(sdk, selected, said):
+    """Why `xcrun -sdk <sdk> metal` failed, in one line: the usual cause is the Command Line Tools selected instead of Xcode, which installing the
+    Metal toolchain in Xcode does not change. selected is `xcode-select -p`, said what xcrun printed."""
+    said = ' '.join(said.split()); low = said.lower()
+    apps = pathlib.Path('/Applications')
+    xcode = apps / 'Xcode.app' if (apps / 'Xcode.app').is_dir() else next(iter(sorted(apps.glob('Xcode*.app'))), None)
+    if xcode is None:
+        return 'install Xcode (App Store or developer.apple.com) and open it once, then Xcode -> Settings -> Components: install the Metal toolchain'
+    if '/commandlinetools' in selected.lower() or not selected:
+        return (f'Terminal uses Apple\'s Command Line Tools, which have no Metal compiler; switch it to Xcode (asks for your password), '
+                f'in Terminal: sudo xcode-select -s {shlex.quote(str(xcode / "Contents" / "Developer"))}')
+    if 'license' in low: return 'accept the Xcode license, in Terminal: sudo xcodebuild -license accept'
+    if 'runfirstlaunch' in low or 'first launch' in low: return 'finish Xcode\'s setup, in Terminal: sudo xcodebuild -runFirstLaunch'
+    if sdk == 'iphoneos' and ('cannot be located' in low or 'sdk "iphoneos"' in low):
+        return 'Xcode -> Settings -> Components: install the iOS platform'
+    if 'metal toolchain' in low or 'metaltoolchain' in low or 'unable to find utility' in low:
+        return 'Xcode -> Settings -> Components: install the Metal toolchain, or in Terminal: xcodebuild -downloadComponent MetalToolchain'
+    return ('Xcode -> Settings -> Components: install the Metal toolchain' + (' and the iOS platform' if sdk == 'iphoneos' else '')
+            + (f' (xcrun said: {said[:160]})' if said else ''))
+
+
 def doctor(need_ios=True, quiet=False, need_windows=True):
     """What this machine has of what the build needs. Returns the list of problems (empty = ready). On Windows need_ios is the iPhone IPA's toolchain
     and need_windows the Windows game's tools."""
@@ -320,12 +341,14 @@ def doctor(need_ios=True, quiet=False, need_windows=True):
     ok('macOS on Apple silicon', sys.platform == 'darwin' and platform.machine() == 'arm64', 'the host runs the game\'s arm64 code natively: an Apple silicon Mac is required')
     ok(f'Python 3.12+ (running {platform.python_version()})', sys.version_info >= (3, 12), 'brew install python@3.12, then run nxs2.py with python3.12')
     managed = externally_managed(); missing = 0
+    venv = shlex.quote(str(VENV))   # a managed Python's fix: the builder's own environment, made and filled in one go (the window shows only this line)
+    venv_fix = f'in Terminal: {shlex.quote(sys.executable)} -m venv {venv} && {venv}/bin/python -m pip install "capstone>=5,<6" lz4 fonttools pillow'
     for mod, pip in (('capstone', 'capstone>=5,<6'), ('lz4', 'lz4'), ('fontTools', 'fonttools')):
         try: __import__(mod); have = True
         except ImportError: have = False; missing += 1
-        ok(f'python module {mod}', have, 'the steps below' if managed else f'{PY} -m pip install "{pip}"')
+        ok(f'python module {mod}', have, venv_fix if managed else f'{PY} -m pip install "{pip}"')
     try:
-        import capstone; ok('capstone 5.x', capstone.__version__.startswith('5.'), f'{VENV}/bin/python -m pip install "capstone>=5,<6"' if managed else f'{PY} -m pip install "capstone>=5,<6"')
+        import capstone; ok('capstone 5.x', capstone.__version__.startswith('5.'), venv_fix if managed else f'{PY} -m pip install "capstone>=5,<6"')
     except ImportError: pass
     if missing and managed and not quiet:
         print(f'  This Python ({sys.executable}) is managed by Homebrew or the system, which keeps pip packages out of it.\n'
@@ -339,7 +362,7 @@ def doctor(need_ios=True, quiet=False, need_windows=True):
     ok('make', which('make') is not None, 'comes with Xcode\'s command line tools')
     for sdk in ('macosx',) + (('iphoneos',) if need_ios else ()):
         r = subprocess.run(['xcrun', '-sdk', sdk, 'metal', '--version'], capture_output=True, text=True)
-        ok(f'Metal compiler for {sdk}', r.returncode == 0, 'Xcode -> Settings -> Components: install the Metal toolchain' + (' and the iOS platform' if sdk == 'iphoneos' else ''))
+        ok(f'Metal compiler for {sdk}', r.returncode == 0, '' if r.returncode == 0 else metal_hint(sdk, xc.stdout.strip(), r.stdout + ' ' + r.stderr))
     d = dotnet_root()
     have_rt = False
     if d:
