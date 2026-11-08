@@ -179,3 +179,34 @@ making fragment shader `b1f4b2d7c3863ab0`'s pipeline, at the same spot every tim
   - a crash staged while making the beam effect's pipeline (vertex `47ce9f1d88b72b56`, fragment `7760d1202244455a`) was caught at 1.4 s, and the game
     ran on to 7800 frames at 60 fps.
 - **Not run:** on an AMD GPU. The full ctest passes (61 of 61).
+
+## The 1.3.5 kit check: the guards on the kit's own shaders
+
+The kit's test run (2.0.1, RTX 4070 Ti, the shaders the kit translated itself) logged `2cb5df5c`'s cap as "could not be capped". The guards had only been
+checked on our own shader cache, and the kit's translation differs from it in two ways:
+
+- **Ids.** The cap named its variable by id (`%2154`). In the kit's module that id is another variable; the count is `%2072`. `vkspv_cap_bound` now finds
+  the variable by its shape (`var` 0): the one uint function variable that is stored once and is the right operand of an unsigned `>=`. In both
+  translations exactly one variable has that shape.
+- **Tables.** The kit lays NVN's texel buffers out as texel buffers (Dim Buffer), ours as 2D textures. `634565ab`'s and `560a0262`'s table-size guards
+  queried the size with `OpImageQuerySizeLod`, which is not valid on a texel buffer (spirv-val: "Image 'Dim' must be 1D, 2D, 3D or Cube").
+  - NVIDIA's driver took those modules. What the query then returned is not known, so the light lists' limit may have been wrong on every kit-built
+    install since these guards shipped.
+  - A texel buffer table is now sized by `OpImageQuerySize`, its texel count. It accepts both declarations: the kit's sampled image over a Buffer image,
+    and glslang's plain Buffer image.
+
+**The check that would have caught it** (`nxrt.vk_guard_corpus_nv` and `nxrt.vk_guard_corpus_other`): every guarded shader of whole shader caches goes
+through `vksh_make`. That means every rewrite in the runtime's order, first as NVIDIA gets them (ballot rewrite, table-size guards), then as other GPUs get
+them (caps). Each is made into a pipeline with validation on.
+- The test checks the comparisons each guard limited (634565ab 2, 560a0262 4, 2cb5df5c 1) and that the guarded module adds no validation errors.
+- `NXRT_TEST_CORPUS` lists the caches, '|'-separated. By default these are our cache and the kit test's `m7-test/build201/windows/shaders`, and missing
+  ones are skipped.
+- Run it on a kit-built cache before a release.
+
+**Checked:**
+- **`t_vk_guard`, 40 checks**, including a texel buffer table walked on the GPU (`test_guard_b.comp`). A sane count is unchanged; 0xffffffff walks the
+  buffer's 40 texels; 1.0f read as a count walks its 70000 texels. The GPU part now runs only when every edit applied: an edit that did not apply would
+  give the GPU an endless loop.
+- **Both corpus tests, 52 checks each:** both caches, all three shaders guarded, no validation errors.
+- **spirv-val:** passes on the kit's three guarded modules.
+- **In the game,** with a copy of the kit's shaders and its seed list: 560a0262 2 + 2, 634565ab 2, and 2cb5df5c "kept to at most 16384 entries".

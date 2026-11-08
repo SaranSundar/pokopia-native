@@ -28,6 +28,7 @@ typedef struct vks_shader {
     char key[17]; int stage, set;
     VkShaderModule mod;
     VkShaderModule mod_plain;                               // a loop-guarded compute shader's module as translated (vk_pipe.c: when the guarded one cannot be made)
+    uint16_t guard_cmp;                                     // a loop-guarded shader: the comparisons its guard limited or the caps it put in (0: none; tests)
     VkDescriptorSetLayout dsl;
     int nb; vks_bind *b;
     int nin; struct { uint8_t loc, ct, ncomp; } in[32];   // vertex inputs: location = NVN vertex attribute
@@ -88,12 +89,13 @@ size_t vkspv_ballot_per_lane(uint32_t **words, size_t nwords, int *rewritten);
 // the rewritten counters); env, NXRT_VK_BALLOT_FIX, decides when given: 0 off, anything else on
 int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env);
 // A loop over a texel table's items whose count is word `word` of count_var (634565ab77c61463's word 0, D-1; 560a0262fe47818a's words 12 and 13, D-11): its integer
-// comparisons get min(count, the items tex_var holds, stride texels each), the unsigned minimum for a count read as unsigned. The new word count (*words replaced)
-// and *limited comparisons, nwords when nothing changed
+// comparisons get min(count, the items tex_var holds, stride texels each), the unsigned minimum for a count read as unsigned. The table may be a 2D texture in
+// rows of 16384 texels or a texel buffer (the kit's corpus); without tex_var the count is capped at 16384. The new word count (*words replaced) and *limited
+// comparisons, nwords when nothing changed
 size_t vkspv_limit_count(uint32_t **words, size_t nwords, const char *count_var, uint32_t word, const char *tex_var, uint32_t stride, int *limited);
 // A loop bound kept in function variable `var` (2cb5df5cb96b324e's count read from a data texture, Styphix's hang on 1.3.3): the value stored into it becomes
-// min(value, cap), unsigned. Only when var is a uint function variable stored once and read by an unsigned `i >= bound`. The new word count (*words
-// replaced) and *capped (1 done), nwords when nothing changed
+// min(value, cap), unsigned. Only when var is a uint function variable stored once and read by an unsigned `i >= bound`; var 0 finds that variable by
+// this shape (the one such variable: ids differ between translations). The new word count (*words replaced) and *capped (1 done), nwords when nothing changed
 size_t vkspv_cap_bound(uint32_t **words, size_t nwords, uint32_t var, uint32_t cap, int *capped);
 // Whether that guard applies: NVIDIA's GPUs only, where the hang was seen (AMD's Windows driver crashed making the guarded pipeline on 1.3.1); env,
 // NXRT_VK_LOOP_GUARD, decides when given: 0 off, anything else on

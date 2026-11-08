@@ -17,7 +17,7 @@ message(STATUS "nxrt: Vulkan backend with SDL3 ${SDL3_VERSION} (${NXRT_SDL3_DIR}
 
 # The backend's own shaders, compiled to SPIR-V headers
 set(_spv)
-foreach(sh present.vert present.frag menu.vert menu.frag test_fill.comp test_pervertex.vert test_pervertex_cull.vert test_bind.frag clear.vert clear_f.frag clear_u.frag clear_i.frag test_dual.frag test_tri.vert test_ballot.comp test_ballot_used.comp test_ballot_slot.comp test_ballot_slot4.comp test_ballot_rank.comp test_guard.comp test_guard_u.comp test_guard_v.comp quad_args.comp)
+foreach(sh present.vert present.frag menu.vert menu.frag test_fill.comp test_pervertex.vert test_pervertex_cull.vert test_bind.frag clear.vert clear_f.frag clear_u.frag clear_i.frag test_dual.frag test_tri.vert test_ballot.comp test_ballot_used.comp test_ballot_slot.comp test_ballot_slot4.comp test_ballot_rank.comp test_guard.comp test_guard_u.comp test_guard_v.comp test_guard_b.comp quad_args.comp)
   string(REPLACE "." "_" var ${sh})
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${var}.h
     COMMAND ${NXRT_GLSLANG} -V --target-env vulkan1.3 --vn ${var}_spv -o ${CMAKE_CURRENT_BINARY_DIR}/${var}.h ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${sh}
@@ -64,6 +64,17 @@ foreach(t device dirty tex astc pcache replay windows ballot guard quads scale w
   add_test(NAME nxrt.vk_${t} COMMAND nxrt-tests-vk-${t})
   set_tests_properties(nxrt.vk_${t} PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache")
 endforeach()
+# The loop guards on whole shader caches (t_vk_guard's corpus part): 634565ab, 560a0262 and 2cb5df5c through vksh_make, with every rewrite in the order
+# NVIDIA gets them, then as other GPUs get them, made into pipelines with validation on; skipped without a cache. NXRT_TEST_CORPUS: shader cache folders
+# (each with vk/), '|'-separated. The kit's corpus lays the tables out as texel buffers, ours as 2D textures: run it on a kit-built cache before a release
+set(NXRT_TEST_CORPUS "${CMAKE_SOURCE_DIR}/_local/nxshader/cache|${CMAKE_SOURCE_DIR}/../windows-native/_local/nxshader/cache|${CMAKE_SOURCE_DIR}/../m7-test/build201/windows/shaders"
+    CACHE STRING "shader caches for nxrt.vk_guard_corpus_* ('|'-separated; missing ones are skipped)")
+add_test(NAME nxrt.vk_guard_corpus_nv COMMAND nxrt-tests-vk-guard)
+add_test(NAME nxrt.vk_guard_corpus_other COMMAND nxrt-tests-vk-guard)
+set_tests_properties(nxrt.vk_guard_corpus_nv PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT
+  "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache;NXRT_TEST_CORPUS=${NXRT_TEST_CORPUS};NXRT_VK_LOOP_GUARD=1;NXRT_VK_BALLOT_FIX=1")
+set_tests_properties(nxrt.vk_guard_corpus_other PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT
+  "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache;NXRT_TEST_CORPUS=${NXRT_TEST_CORPUS};NXRT_VK_LOOP_GUARD=cap;NXRT_VK_BALLOT_FIX=0")
 # The pool windows once more, side by side (no sparse aliasing): a range across a window edge is refused
 add_test(NAME nxrt.vk_windows_side COMMAND nxrt-tests-vk-windows)
 set_tests_properties(nxrt.vk_windows_side PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NXRT_VK_NO_ALIAS=1;NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache")
@@ -73,7 +84,7 @@ target_sources(nxrt-tests-vk-ballot PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_bal
   ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_slot_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_slot4_comp.h
   ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_rank_comp.h)
 target_sources(nxrt-tests-vk-guard PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_guard_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_guard_u_comp.h
-  ${CMAKE_CURRENT_BINARY_DIR}/test_guard_v_comp.h)
+  ${CMAKE_CURRENT_BINARY_DIR}/test_guard_v_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_guard_b_comp.h)
 target_sources(nxrt-tests-vk-quads PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/quad_args_comp.h)
 target_sources(nxrt-tests-vk-scale PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_bind_frag.h)
 target_sources(nxrt-tests-vk-replay PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_cull_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_bind_frag.h
