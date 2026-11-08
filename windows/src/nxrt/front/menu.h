@@ -1,6 +1,6 @@
 // The in-game settings menu (docs/in-game-menu.md): F1, or a controller's Minus + Plus together, opens it over the running game; while it is open the game
-// gets no input. A Graphics tab (resolution, window or full screen, window size, docked or handheld, upscaling, sharpness, frame rate, vsync) and a Controls
-// tab (the keyboard's keys). Every change applies at once and is saved to the files the launcher uses (display.json, controls.json), so both agree.
+// gets no input. A Graphics tab (resolution, window or full screen, window size, docked or handheld, upscaling, sharpness, frame rate, vsync), a Controls
+// tab (the keyboard's keys) and a Link Play tab (menu_linkplay.c: how this game plays, the room code to copy, who is there). Every change applies at once and is saved to the files the launcher uses (display.json, controls.json), so both agree.
 // Platform-neutral: SDL3 events in, a list of quads out (vk_menu.c draws them over the picture); the window thread feeds it, the present thread draws it.
 #pragma once
 #include <SDL3/SDL.h>

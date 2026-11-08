@@ -1,7 +1,7 @@
 // The in-game settings menu (menu.h, docs/in-game-menu.md). Our own; the font is Aileron (dotcolon.net, CC0) as menu_font.py makes it.
 // Threads: the window thread feeds events (menu_event: the open/close keys, navigation, a key being bound), the present thread draws (menu_build: the layout,
 // the mouse, the choices made, their effect). The settings, the open state and the queued input are under one SDL mutex.
-#include "menu.h"
+#include "menu_int.h"
 #include "menu_font.h"
 #include "front_map.h"
 #include "dm.h"
@@ -22,9 +22,8 @@ void vkp_set_upscale(int sharp, float sharpness);
 void vkp_set_mode(int mode);
 void vk_set_fps_target(int fps);
 int dm_opmode(void);
-void front_sdl_keymap_get(front_keymap *m);
-void front_sdl_keymap_set(const front_keymap *m);
 void front_sdl_menu_opened(int open);
+void front_sdl_vpad(const char *cmd);
 extern void (*dm_ctl_menu)(const char *cmd);
 
 void menu_font_atlas(const uint8_t **px, int *w, int *h) { *px = mf_atlas; *w = MF_W; *h = MF_H; }
@@ -36,20 +35,18 @@ static const char *const win_sizes[5] = {"1280x720", "1600x900", "1920x1080", "2
 typedef struct {
     char res[24];                                                         // "default" or "<w>x<h>" as saved (an older size keeps its string: it means that size)
     int fullscreen, win, console, sharp, sharpness, fps30, vsync, counter, wide;   // indexes and switches; sharpness 0..10; counter 0 off, 1 corner, 2 detailed
-    front_keymap keys;
 } settings;
 static struct {
     SDL_Mutex *mu; int ready;
     settings s;
-    int open, tab, sel, dd, dd_sel, capture;   // dd: the open dropdown's row (-1 none); capture: the action whose key is awaited (-1 none)
+    int open, tab, sel, dd, dd_sel;            // dd: the open dropdown's row (-1 none)
     int wide_now;                              // the wide view this run started with (a change takes effect at the next start)
     float mx, my; int mouse_moved;
     struct { int kind, a; float x, y; } q[64]; int nq;   // input for the next build: navigation and clicks
     int pad_back, pad_start; float stick_y, stick_x; uint64_t stick_t;
     char dir[1024], status[160]; uint64_t status_t;
     uint64_t fps_t0, fps_last; int fps_n; float fps, ms;   // the FPS counter: presents counted over half a second
-} M = {.dd = -1, .capture = -1};
-enum { IN_UP = 1, IN_DOWN, IN_LEFT, IN_RIGHT, IN_OK, IN_BACK, IN_TABL, IN_TABR, IN_CLICK };
+} M = {.dd = -1};
 
 static const char *settings_dir(void) {
     if (M.dir[0]) return M.dir;
@@ -116,14 +113,6 @@ static void save_display(void) {
     fprintf(f, "{\n    \"console\":  %d,\n    \"resolution\":  \"%s\",\n    \"fullscreen\":  %s,\n    \"window\":  \"%s\",\n    \"upscale\":  \"%s\",\n    \"sharpness\":  %d,\n"
                "    \"fps\":  %d,\n    \"vsync\":  %s,\n    \"fps_counter\":  \"%s\",\n    \"wide_view\":  %s\n}\n", s->console, s->res, s->fullscreen ? "true" : "false",
             win_sizes[s->win], s->sharp ? "sharp" : "standard", s->sharpness, s->fps30 ? 30 : 60, s->vsync ? "true" : "false", cnt[s->counter], s->wide ? "true" : "false");
-    fclose(f);
-}
-static void save_controls(void) {
-    FILE *f = settings_file("controls.json", "w"); if (!f) { LOG("[menu] controls.json could not be written in %s", settings_dir()); return; }
-    // the launcher's names (play.ps1 $ControlsDefault) for front_map.h's actions
-    fprintf(f, "{\n    \"version\":  1,\n");
-    for (int i = 0; i < FRONT_ACTS; i++) fprintf(f, "    \"%s\":  %d%s\n", front_act_names[i], (int)M.s.keys.key[i], i + 1 < FRONT_ACTS ? "," : "");
-    fprintf(f, "}\n");
     fclose(f);
 }
 static void status(const char *t) { snprintf(M.status, sizeof M.status, "%s", t); M.status_t = SDL_GetTicksNS(); }
@@ -193,18 +182,7 @@ static int picture_fit(int *ww, int *wh) {
     return k < 0.99f ? -1 : k > 1.01f ? 1 : 0;
 }
 
-// ---------- The Controls tab: the launcher's labels, two columns ----------
-static const char *const c_label[FRONT_ACTS] = {"A", "B", "X", "Y", "Left stick press", "Right stick press", "L", "R", "ZL", "ZR", "+ (Plus)", "- (Minus)",
-                                                "D-pad left", "D-pad up", "D-pad right", "D-pad down", "Stick up", "Stick left", "Stick down", "Stick right", "Shake"};
-enum { C_RESET = FRONT_ACTS, C_N };   // the last row: back to the default keys
-static void key_name(SDL_Scancode sc, char *out, size_t n) { const char *k = sc ? SDL_GetScancodeName(sc) : ""; snprintf(out, n, "%s", k && *k ? k : "(none)"); }
-static void c_bind(int act, SDL_Scancode sc) {   // a key for an action; the action that had it takes this one's old key (the two swap)
-    char t[120], kn[40]; SDL_Scancode old = M.s.keys.key[act];
-    for (int i = 0; i < FRONT_ACTS; i++) if (i != act && M.s.keys.key[i] == sc) M.s.keys.key[i] = old;
-    M.s.keys.key[act] = sc; front_sdl_keymap_set(&M.s.keys); save_controls();
-    key_name(sc, kn, sizeof kn); snprintf(t, sizeof t, "%s: %s", c_label[act], kn); status(t); LOG("[menu] key %s", t);
-}
-static void c_reset(void) { front_keymap_default(&M.s.keys); front_sdl_keymap_set(&M.s.keys); save_controls(); status("Controls: back to the default keys"); LOG("[menu] the default keys"); }
+// (The Controls tab is menu_controls.c)
 
 // ---------- The state at start: what the game was started with ----------
 void menu_init(void) {
@@ -224,7 +202,7 @@ void menu_init(void) {
     e = getenv("DM_FPS"); s->fps30 = e && atoi(e) == 30;
     e = getenv("NXRT_VK_PRESENT"); s->vsync = !(e && (!strcmp(e, "mailbox") || !strcmp(e, "immediate")));
     e = getenv("NXRT_VK_WIDE"); s->wide = M.wide_now = e && *e == '1';
-    front_sdl_keymap_get(&s->keys);
+    ct_init();
     dm_ctl_menu = menu_ctl;
     M.ready = 1;
     LOG("[menu] the in-game menu: F1, or a controller's Minus + Plus together; settings in %s", settings_dir());
@@ -234,7 +212,7 @@ int menu_active(void) { return M.ready && (M.open || M.s.counter); }
 
 static void set_open(int open) {
     if (open == M.open) return;
-    M.open = open; M.dd = -1; M.capture = -1; M.nq = 0; M.status[0] = 0;
+    M.open = open; M.dd = -1; M.nq = 0; M.status[0] = 0; ct_close();
     front_sdl_menu_opened(open);   // the game's input released while open (and the mouse shown), taken up again after
     LOG("[menu] %s", open ? "opened" : "closed");
 }
@@ -250,21 +228,15 @@ static float density(SDL_WindowID id) { SDL_Window *w = SDL_GetWindowFromID(id);
 
 int menu_event(const SDL_Event *e) {
     if (!M.ready || !M.mu) return 0;
+    if (lp_event(e)) return 1;   // the Link Play tab's clipboard, written here on the window thread
     int taken = 0;
     SDL_LockMutex(M.mu);
+    if (M.open && ct_event(e)) { SDL_UnlockMutex(M.mu); return 1; }   // a key or a controller button for the Controls tab's action awaited
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:
         if (e->key.scancode == SDL_SCANCODE_F1 && !e->key.repeat) { set_open(!M.open); taken = 1; break; }
         if (!M.open) break;
         taken = 1;
-        if (M.capture >= 0) {   // binding a key: Esc cancels; the keys the launcher refuses (the window's and Windows') are refused here too
-            SDL_Scancode sc = e->key.scancode;
-            if (sc == SDL_SCANCODE_ESCAPE) { M.capture = -1; status("Not changed"); }
-            else if (front_key_reserved(sc) || sc == SDL_SCANCODE_F1 || sc == SDL_SCANCODE_LALT || sc == SDL_SCANCODE_RALT || sc == SDL_SCANCODE_LGUI || sc == SDL_SCANCODE_RGUI)
-                status("That key belongs to the window or to Windows: choose another");
-            else { c_bind(M.capture, sc); M.capture = -1; }
-            break;
-        }
         switch (e->key.scancode) {
         case SDL_SCANCODE_UP: case SDL_SCANCODE_W: push_in(IN_UP, 0, 0, 0); break;
         case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S: push_in(IN_DOWN, 0, 0, 0); break;
@@ -294,7 +266,7 @@ int menu_event(const SDL_Event *e) {
         if (down && M.pad_back && M.pad_start && (b == SDL_GAMEPAD_BUTTON_BACK || b == SDL_GAMEPAD_BUTTON_START)) { set_open(!M.open); taken = 1; break; }   // Minus + Plus
         if (!M.open) break;
         taken = 1;
-        if (!down || M.capture >= 0) break;   // keys are bound with the keyboard
+        if (!down) break;
         if (b == SDL_GAMEPAD_BUTTON_DPAD_UP) push_in(IN_UP, 0, 0, 0); else if (b == SDL_GAMEPAD_BUTTON_DPAD_DOWN) push_in(IN_DOWN, 0, 0, 0);
         else if (b == SDL_GAMEPAD_BUTTON_DPAD_LEFT) push_in(IN_LEFT, 0, 0, 0); else if (b == SDL_GAMEPAD_BUTTON_DPAD_RIGHT) push_in(IN_RIGHT, 0, 0, 0);
         else if (b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) push_in(IN_TABL, 0, 0, 0); else if (b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) push_in(IN_TABR, 0, 0, 0);
@@ -319,10 +291,6 @@ int menu_event(const SDL_Event *e) {
 }
 
 // ---------- Drawing ----------
-#define RGBA(r, g, b, a) ((uint32_t)(r) | (uint32_t)(g) << 8 | (uint32_t)(b) << 16 | (uint32_t)(a) << 24)
-static const uint32_t C_DIM = RGBA(24, 18, 48, 150), C_PANEL = RGBA(250, 248, 255, 250), C_EDGE = RGBA(200, 186, 246, 255), C_TITLE = RGBA(66, 54, 128, 255),
-                      C_TEXT = RGBA(64, 60, 96, 255), C_SOFT = RGBA(130, 124, 160, 255), C_PILL = RGBA(238, 233, 253, 255), C_SEL = RGBA(255, 222, 70, 255),
-                      C_SELTEXT = RGBA(70, 52, 0, 255), C_TAB = RGBA(229, 221, 251, 255), C_LIST = RGBA(255, 255, 255, 255), C_OFF = RGBA(170, 166, 190, 255);
 static void q_add(mn_list *l, mn_quad q) {
     if (l->n == l->cap) { int c = l->cap ? 2 * l->cap : 1024; mn_quad *n = realloc(l->q, (size_t)c * sizeof *n); if (!n) return; l->q = n; l->cap = c; }
     l->q[l->n++] = q;
@@ -342,6 +310,17 @@ static void text(mn_list *l, const char *t, float x, float y, float px, uint32_t
 }
 static int inside(float x, float y, float x0, float y0, float w, float h) { return x >= x0 && x < x0 + w && y >= y0 && y < y0 + h; }
 static float fit(const char *t, float px, float w, float u) { while (px > 13 * u && text_w(t, px) > w) px *= 0.95f; return px; }   // smaller until it fits
+// for the tabs in files of their own (menu_int.h)
+void mn_rect(mn_list *l, float x, float y, float w, float h, float r, uint32_t c) { rect(l, x, y, w, h, r, c); }
+void mn_text(mn_list *l, const char *t, float x, float y, float px, uint32_t c) { text(l, t, x, y, px, c); }
+float mn_text_w(const char *t, float px) { return text_w(t, px); }
+float mn_fit(const char *t, float px, float w, float u) { return fit(t, px, w, u); }
+int mn_inside(float x, float y, float x0, float y0, float w, float h) { return inside(x, y, x0, y0, w, h); }
+void mn_status(const char *t) { status(t); }
+const char *mn_settings_dir(void) { return settings_dir(); }
+int mn_tab(void) { return M.tab; }
+enum { TABS = 3, TAB_CTL = 1, TAB_LINK = 2 };   // Graphics, Controls (menu_controls.c), Link Play (menu_linkplay.c)
+static float tab_x(float px, float pw, float u, int t) { return px + pw - 48 * u - (TABS - t) * 200 * u - (TABS - 1 - t) * 12 * u; }
 
 // Greyed: no effect as things are (the window's size in full screen; upscaling and its sharpness when the picture is not stretched to the window)
 static int row_off(int r, int fitk) { return (r == G_WIN && M.s.fullscreen) || ((r == G_UPSCALE || r == G_SHARP) && fitk <= 0); }
@@ -371,13 +350,12 @@ void menu_build(mn_list *out, int W, int H) {
     float u = H / 1080.0f; if (u < 0.6f) u = 0.6f;
     float pw = fminf(W * 0.9f, 1240 * u), ph = fminf(H * 0.9f, 920 * u), px = (W - pw) / 2, py = (H - ph) / 2;
     float row_h = 54 * u, fs = 26 * u, x_lab = px + 48 * u, val_w = fminf(560 * u, pw * 0.5f), x_val = px + pw - 48 * u - val_w, y_rows = py + 168 * u;
-    int nrows = M.tab == 0 ? G_N : C_N;
-    // the controls in two columns
-    int ccol = (C_N + 1) / 2; float c_row = 48 * u, c_colw = (pw - 96 * u - 32 * u) / 2;
+    mn_panel P = {px, py, pw, ph, u, fs, y_rows};   // the tabs in files of their own (menu_controls.c, menu_linkplay.c)
+    int nrows = M.tab == 0 ? G_N : M.tab == TAB_LINK ? lp_rows() : ct_rows();
     // input, in the order it came
     for (int i = 0; i < M.nq; i++) {
         int k = M.q[i].kind;
-        if (k == IN_TABL || k == IN_TABR) { if (M.dd < 0 && M.capture < 0) { M.tab = !M.tab; M.sel = 0; M.status[0] = 0; } continue; }   // the last change belongs to its tab
+        if (k == IN_TABL || k == IN_TABR) { if (M.dd < 0 && !ct_capturing()) { M.tab = (M.tab + (k == IN_TABR ? 1 : TABS - 1)) % TABS; M.sel = 0; M.status[0] = 0; } continue; }   // the last change belongs to its tab
         if (M.dd >= 0) {   // a dropdown is open
             int n = g_count(M.dd);
             if (k == IN_UP) M.dd_sel = (M.dd_sel + n - 1) % n; else if (k == IN_DOWN) M.dd_sel = (M.dd_sel + 1) % n;
@@ -391,27 +369,26 @@ void menu_build(mn_list *out, int W, int H) {
             }
             continue;
         }
-        if (k == IN_UP) M.sel = M.tab == 0 ? (M.sel + nrows - 1) % nrows : (M.sel % ccol ? M.sel - 1 : M.sel);
-        else if (k == IN_DOWN) M.sel = M.tab == 0 ? (M.sel + 1) % nrows : ((M.sel % ccol) + 1 < ccol && M.sel + 1 < C_N ? M.sel + 1 : M.sel);
-        else if ((k == IN_LEFT || k == IN_RIGHT) && M.tab == 0) {   // left / right step a choice without opening the list
+        if (M.tab == TAB_LINK && k != IN_CLICK) { lp_input(&P, k, 0, 0, &M.sel); continue; }
+        if (M.tab == TAB_CTL && k != IN_CLICK) { ct_input(&P, k, 0, 0, &M.sel); continue; }
+        if (k == IN_UP) M.sel = (M.sel + nrows - 1) % nrows;
+        else if (k == IN_DOWN) M.sel = (M.sel + 1) % nrows;
+        else if (k == IN_LEFT || k == IN_RIGHT) {   // left / right step a choice without opening the list
             int n = g_count(M.sel), v = g_value(M.sel), nv = k == IN_LEFT ? v - 1 : v + 1;
             if (row_off(M.sel, fitk)) continue;
             if (nv >= 0 && nv < n) g_set(M.sel, nv);
-        } else if ((k == IN_LEFT || k == IN_RIGHT) && M.tab == 1) { int c2 = k == IN_LEFT ? M.sel - ccol : M.sel + ccol; if (c2 >= 0 && c2 < C_N) M.sel = c2; }
-        else if (k == IN_OK) {
-            if (M.tab == 0) { if (row_off(M.sel, fitk)) {} else if (M.sel == G_SHARP) g_set(G_SHARP, (s->sharpness + 1) % 11); else { M.dd = M.sel; M.dd_sel = g_value(M.sel); } }
-            else if (M.sel == C_RESET) c_reset(); else { M.capture = M.sel; status("Press a key (Esc: keep it)"); }
+        } else if (k == IN_OK) {
+            if (row_off(M.sel, fitk)) {} else if (M.sel == G_SHARP) g_set(G_SHARP, (s->sharpness + 1) % 11); else { M.dd = M.sel; M.dd_sel = g_value(M.sel); }
         } else if (k == IN_BACK) {}
         else if (k == IN_CLICK) {
             float cx = M.q[i].x, cy = M.q[i].y;
-            for (int t = 0; t < 2; t++) if (inside(cx, cy, px + pw - 48 * u - (2 - t) * 200 * u - (1 - t) * 12 * u, py + 40 * u, 200 * u, 56 * u) && M.tab != t) { M.tab = t; M.sel = 0; M.status[0] = 0; }
-            if (M.tab == 0) for (int r = 0; r < G_N; r++) {
+            for (int t = 0; t < TABS; t++) if (inside(cx, cy, tab_x(px, pw, u, t), py + 40 * u, 200 * u, 56 * u) && M.tab != t) { M.tab = t; M.sel = 0; M.status[0] = 0; }
+            if (M.tab == TAB_LINK) lp_input(&P, IN_CLICK, cx, cy, &M.sel);
+            else if (M.tab == TAB_CTL) ct_input(&P, IN_CLICK, cx, cy, &M.sel);
+            else for (int r = 0; r < G_N; r++) {
                 if (!inside(cx, cy, px + 24 * u, y_rows + r * row_h, pw - 48 * u, row_h)) continue;
                 M.sel = r;
                 if (inside(cx, cy, x_val, y_rows + r * row_h, val_w, row_h) && !row_off(r, fitk)) { if (r == G_SHARP) g_set(G_SHARP, (s->sharpness + 1) % 11); else { M.dd = r; M.dd_sel = g_value(r); } }
-            } else for (int r = 0; r < C_N; r++) {
-                float cx0 = px + 48 * u + (r / ccol) * (c_colw + 32 * u), cy0 = y_rows + (r % ccol) * c_row;
-                if (inside(cx, cy, cx0, cy0, c_colw, c_row)) { M.sel = r; if (r == C_RESET) c_reset(); else { M.capture = r; status("Press a key (Esc: keep it)"); } }
             }
             if (inside(cx, cy, px + pw - 48 * u - 180 * u, py + ph - 76 * u, 180 * u, 52 * u)) set_open(0);
         }
@@ -419,19 +396,23 @@ void menu_build(mn_list *out, int W, int H) {
     M.nq = 0;
     if (!M.open) { SDL_UnlockMutex(M.mu); return; }
     int moved = M.mouse_moved; M.mouse_moved = 0;   // the mouse picks what it moves over (and leaves the keys' choice alone while it rests)
-    if (moved && M.dd < 0 && M.capture < 0) {
+    if (moved && M.dd < 0 && !ct_capturing()) {
         if (M.tab == 0) { for (int r = 0; r < G_N; r++) if (inside(M.mx, M.my, px + 24 * u, y_rows + r * row_h, pw - 48 * u, row_h)) M.sel = r; }
-        else for (int r = 0; r < C_N; r++) if (inside(M.mx, M.my, px + 48 * u + (r / ccol) * (c_colw + 32 * u), y_rows + (r % ccol) * c_row, c_colw, c_row)) M.sel = r;
+        else if (M.tab == TAB_LINK) { int b = lp_pick(&P, M.mx, M.my); if (b >= 0) M.sel = b; }
+        else { int b = ct_pick(&P, M.mx, M.my); if (b >= 0) M.sel = b; }
     }
+    if (M.tab == TAB_LINK) nrows = lp_rows();   // a room code can come and go
+    else if (M.tab == TAB_CTL) nrows = ct_rows();   // the page shown
     if (M.sel >= nrows) M.sel = nrows - 1;
+    if (M.sel < 0) M.sel = 0;
     // the panel
     rect(out, 0, 0, (float)W, (float)H, 0, C_DIM);
     rect(out, px - 3 * u, py - 3 * u, pw + 6 * u, ph + 6 * u, 30 * u, C_EDGE);
     rect(out, px, py, pw, ph, 28 * u, C_PANEL);
     text(out, "Settings", px + 48 * u, py + 44 * u, 44 * u, C_TITLE);
-    static const char *const tabs[2] = {"Graphics", "Controls"};
-    for (int t = 0; t < 2; t++) {
-        float tx = px + pw - 48 * u - (2 - t) * 200 * u - (1 - t) * 12 * u, ty = py + 40 * u;
+    static const char *const tabs[TABS] = {"Graphics", "Controls", "Link Play"};
+    for (int t = 0; t < TABS; t++) {
+        float tx = tab_x(px, pw, u, t), ty = py + 40 * u;
         rect(out, tx, ty, 200 * u, 56 * u, 28 * u, M.tab == t ? C_SEL : C_TAB);
         text(out, tabs[t], tx + (200 * u - text_w(tabs[t], fs)) / 2, ty + 14 * u, fs, M.tab == t ? C_SELTEXT : C_TEXT);
     }
@@ -457,23 +438,10 @@ void menu_build(mn_list *out, int W, int H) {
         else if (fitk > 0) snprintf(v, sizeof v, "The picture is stretched to fill your window. Upscaling and Sharpness choose how that looks.");
         if (fitk) text(out, v, x_lab, y_rows + G_N * row_h + 10 * u, fit(v, 21 * u, pw - 96 * u, u), C_TITLE);
 
-    } else {
-        for (int r = 0; r < C_N; r++) {
-            float x = px + 48 * u + (r / ccol) * (c_colw + 32 * u), y = y_rows + (r % ccol) * c_row, cfs = 22 * u;
-            int sel = r == M.sel;
-            if (r == C_RESET) { rect(out, x, y + 4 * u, c_colw, c_row - 8 * u, (c_row - 8 * u) / 2, sel ? C_SEL : C_TAB);
-                                text(out, "Reset to defaults", x + (c_colw - text_w("Reset to defaults", cfs)) / 2, y + (c_row - cfs) / 2, cfs, sel ? C_SELTEXT : C_TEXT); continue; }
-            if (sel) rect(out, x - 8 * u, y + 3 * u, c_colw + 16 * u, c_row - 6 * u, (c_row - 6 * u) / 2, RGBA(255, 244, 196, 255));
-            text(out, c_label[r], x + 12 * u, y + (c_row - cfs) / 2, cfs, C_TEXT);
-            float kw = c_colw * 0.48f, kx = x + c_colw - kw;
-            rect(out, kx, y + 7 * u, kw, c_row - 14 * u, (c_row - 14 * u) / 2, M.capture == r ? C_EDGE : sel ? C_SEL : C_PILL);
-            if (M.capture == r) snprintf(v, sizeof v, "press a key..."); else key_name(s->keys.key[r], v, sizeof v);
-            text(out, v, kx + (kw - text_w(v, cfs)) / 2, y + (c_row - cfs) / 2, cfs, sel ? C_SELTEXT : C_TEXT);
-        }
-    }
+    } else if (M.tab == TAB_LINK) lp_draw(out, &P, lp_rows() ? M.sel : -1);
+    else ct_draw(out, &P, M.sel);
     // the hint, the last change, the keys, the Close button
-    const char *hint = M.tab == 0 ? g_hint[M.sel] : M.sel == C_RESET ? "The keys the game starts with." : "Choose an action, then press the key for it. Controllers keep their buttons.";
-    if (M.capture >= 0) hint = "Press the new key. Esc keeps the old one.";
+    const char *hint = M.tab == 0 ? g_hint[M.sel] : M.tab == TAB_LINK ? lp_hint(lp_rows() ? M.sel : -1) : ct_hint(M.sel);
     const char *keys = "Arrows / D-pad: choose    Enter / A: change    Q E / L R: tabs    Esc / B: back    F1 / Minus + Plus: close";
     float tw = pw - 96 * u, kw = pw - 96 * u - 200 * u;
     text(out, hint, px + 48 * u, py + ph - 128 * u, fit(hint, 21 * u, tw, u), C_SOFT);
@@ -504,14 +472,15 @@ void menu_ctl(const char *cmd) {
     if (!M.ready || !M.mu) return;
     static const char *const names[G_N] = {"resolution", "display", "window", "console", "upscale", "sharpness", "fps", "vsync", "counter", "wide"};
     while (*cmd == ' ') cmd++;
+    if (!strncmp(cmd, "vpad ", 5)) { front_sdl_vpad(cmd + 5); return; }   // a virtual controller's input (front_sdl.c, DM_PAD_VIRTUAL)
     SDL_LockMutex(M.mu);
-    char name[32]; int a = -1, b = -1;
+    char name[32]; int a = -1;
     if (!strncmp(cmd, "open", 4)) set_open(1);
     else if (!strncmp(cmd, "close", 5)) set_open(0);
-    else if (!strncmp(cmd, "reset", 5)) c_reset();
-    else if (sscanf(cmd, "key %d %d", &a, &b) == 2 && a >= 0 && a < FRONT_ACTS && !front_key_reserved(b)) c_bind(a, (SDL_Scancode)b);
+    else if (!strncmp(cmd, "reset", 5) || !strncmp(cmd, "key ", 4) || !strncmp(cmd, "ct ", 3)) { if (!strncmp(cmd, "ct ", 3)) { M.tab = TAB_CTL; M.sel = 0; } ct_ctl(cmd); }
     else if (sscanf(cmd, "set %31s %d", name, &a) == 2) { for (int r = 0; r < G_N; r++) if (!strcmp(name, names[r]) && a >= 0 && a < g_count(r)) { M.dd = -1; g_set(r, a); } }
     else if (sscanf(cmd, "list %31s", name) == 1) { for (int r = 0; r < G_N; r++) if (!strcmp(name, names[r]) && r != G_SHARP) { M.tab = 0; M.sel = M.dd = r; M.dd_sel = g_value(r); } }
-    else if (!strncmp(cmd, "tab", 3)) { int t = atoi(cmd + 3) ? 1 : 0; if (t != M.tab) M.status[0] = 0; M.tab = t; M.sel = 0; M.dd = -1; }
+    else if (!strncmp(cmd, "lp ", 3)) { M.tab = 2; M.sel = 0; lp_ctl(cmd + 3); }
+    else if (!strncmp(cmd, "tab", 3)) { int t = atoi(cmd + 3); if (t < 0 || t >= TABS) t = 0; if (t != M.tab) M.status[0] = 0; M.tab = t; M.sel = 0; M.dd = -1; }
     SDL_UnlockMutex(M.mu);
 }

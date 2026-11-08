@@ -11,6 +11,9 @@
 // focus as front_mac.m does), gyro and accelerometer (SDL's gamepad sensors → dm_motion_set_hid in the Switch's frame, front_motion_frame; DM_MOTION=0 off), the
 // player lights (SDL_SetGamepadPlayerIndex), and the controller check (DM_PAD_CHECK=1: each controller's details, presses, sticks, triggers, motion and rumble in the
 // log and the window title; F5 / F6 run the strong / weak motor for a second, F7 sends player 1 a vibration through the game's path, hle_haptics.c)
+// Our own additions: the controllers' map (DM_KEYMAP's file, controls.json: a "pad" object, front_map.h front_padmap; without one the layout above), the
+// controller that is player 1 (its "player1" GUID: it takes player 1 when it connects; the in-game menu chooses it), more controllers (SDL's HIDAPI driver for
+// the Steam Controller, gamecontrollerdb.txt beside nxrt.exe and in the settings folder, and a guessed layout for a device SDL knows no mapping for)
 #include "dm.h"
 #include "dm_input.h"
 #include "front.h"
@@ -28,7 +31,7 @@ enum { RUMBLE_MS = 1000, CHECK_TEST_NS = 1000000000 };
 #define CHECK_TITLE_NS 200000000ull
 #define CHECK_LOG_NS 1000000000ull
 typedef struct {
-    SDL_Gamepad *g; SDL_JoystickID id; char name[64];
+    SDL_Gamepad *g; SDL_JoystickID id; char name[64], guid[40]; int type;
     int rumble, motion, has_acc; float acc[3], rot[3];   // rumble: routed to its player; motion: its sensors on; the latest SDL samples
     uint64_t check_btn; float check_max[6];              // the controller check: the buttons last logged, the largest deflection seen per axis
 } fpad;
@@ -37,6 +40,10 @@ static struct {
     int input_on;                 // the window has focus
     front_kbd kbd;
     front_keymap keymap;          // the keyboard's actions (DM_KEYMAP, else the default layout)
+    front_padmap padmap; int pad_custom;   // the controllers' map (DM_KEYMAP's "pad" object); without one (pad_custom 0) the layout of front_pad_button
+    char p1_guid[40], p1_name[64];   // the controller that takes player 1 when it connects (DM_KEYMAP's "player1" and "player1_name"), "" none
+    uint32_t ev_p1;               // the in-game menu's choice of player 1 (code: the joystick id), from whichever thread it was
+    front_pad_info roster[NPADS]; int nroster;   // the connected controllers for the menu (under klk)
     uint64_t look_btn;            // the mouse buttons while it looks, ORed into the keyboard's
     int look_cap, mouse_touch;
     float sens, inner, outer;
@@ -68,12 +75,23 @@ static void push(void) {
 // ---------- The keyboard map: DM_KEYMAP=<file> (play.ps1's Controls tab), else the default layout; the active one is logged ----------
 static void keymap_load(void) {
     const char *path = getenv("DM_KEYMAP"); char why[MAX_PATH + 80] = "the default layout";
-    front_keymap_default(&F.keymap);
+    front_keymap_default(&F.keymap); front_padmap_default(&F.padmap);
     if (path && *path) {
         FILE *f = fopen(path, "rb"); char *t = NULL; long n = 0;
         if (f && !fseek(f, 0, SEEK_END) && (n = ftell(f)) > 0 && n < (1 << 16) && !fseek(f, 0, SEEK_SET) && (t = calloc(1, (size_t)n + 1)) && fread(t, 1, (size_t)n, f) == (size_t)n) {
             int refused = 0, set = front_keymap_parse(&F.keymap, t, &refused);
             snprintf(why, sizeof why, "%s (%d action%s set%s)", path, set, set == 1 ? "" : "s", refused ? ", some refused: a reserved key or a key used twice" : "");
+            int pref = 0, pset = front_padmap_parse(&F.padmap, t, &pref);   // the controllers' map and player 1, from the same file
+            F.pad_custom = pset >= 0;
+            if (!front_json_str(t, "player1", F.p1_guid, sizeof F.p1_guid)) F.p1_guid[0] = 0;
+            if (!front_json_str(t, "player1_name", F.p1_name, sizeof F.p1_name)) F.p1_name[0] = 0;
+            if (F.pad_custom) {
+                char line[700]; int o = 0;
+                for (int a = 0; a < FRONT_PACTS && o < (int)sizeof line - 40; a++)
+                    o += snprintf(line + o, sizeof line - (size_t)o, "%s%s %s", a ? ", " : "", front_act_names[a], F.padmap.in[a] >= 0 ? front_in_names[F.padmap.in[a]] : "none");
+                LOG("front end: controllers from %s (%d button%s set%s): %s", path, pset, pset == 1 ? "" : "s", pref ? ", some refused: Guide, an unknown input or one used twice" : "", line);
+            }
+            if (F.p1_guid[0]) LOG("front end: player 1 is '%s' (%s) when it is connected (the in-game menu chose it)", F.p1_name[0] ? F.p1_name : "a controller", F.p1_guid);
         } else {
             LOG("[RED] DM_KEYMAP: cannot read %s: the default layout", path);
         }
@@ -89,6 +107,24 @@ static void keymap_load(void) {
 // The in-game menu's Controls tab (menu.c): the map as it is, a new one (the file is the menu's to write)
 void front_sdl_keymap_get(front_keymap *m) { AcquireSRWLockShared(&F.klk); *m = F.keymap; ReleaseSRWLockShared(&F.klk); }
 void front_sdl_keymap_set(const front_keymap *m) { AcquireSRWLockExclusive(&F.klk); F.keymap = *m; ReleaseSRWLockExclusive(&F.klk); }
+// The controllers' map (custom 0: none chosen, the layout of front_pad_button) and the controller remembered as player 1
+void front_sdl_padmap_get(front_padmap *m, int *custom, char guid[40], char name[64]) {
+    AcquireSRWLockShared(&F.klk); *m = F.padmap; *custom = F.pad_custom; memcpy(guid, F.p1_guid, 40); memcpy(name, F.p1_name, 64); ReleaseSRWLockShared(&F.klk);
+}
+// The controller remembered for player 1: its GUID and, when one is kept, its name (Steam's virtual controllers share one GUID; their names tell them apart)
+static int p1_match(const fpad *p) {
+    char n[64]; front_name_clean(p->name, n, sizeof n);
+    return F.p1_guid[0] && !strcmp(F.p1_guid, p->guid) && (!F.p1_name[0] || !strcmp(F.p1_name, n));
+}
+void front_sdl_padmap_set(const front_padmap *m, int custom) { AcquireSRWLockExclusive(&F.klk); F.padmap = *m; F.pad_custom = custom; ReleaseSRWLockExclusive(&F.klk); }
+int front_sdl_pads(front_pad_info *out, int max) {
+    AcquireSRWLockShared(&F.klk); int n = F.nroster < max ? F.nroster : max; memcpy(out, F.roster, sizeof *out * (size_t)(n > 0 ? n : 0)); ReleaseSRWLockShared(&F.klk);
+    return n;
+}
+void front_sdl_player1(uint32_t id) {
+    if (!F.ev_p1) return;
+    SDL_Event e; SDL_zero(e); e.type = F.ev_p1; e.user.code = (Sint32)id; SDL_PushEvent(&e);
+}
 void front_sdl_menu_opened(int open) {   // the game's input let go while it is open, taken up again after (on the window thread)
     if (!F.ev_menu) return;
     SDL_Event e; SDL_zero(e); e.type = F.ev_menu; e.user.code = open; SDL_PushEvent(&e);
@@ -115,6 +151,17 @@ static fpad *pad_by_id(SDL_JoystickID id) { for (int i = 0; i < NPADS; i++) if (
 static int pad_player(fpad *p) { return F.merge ? 0 : pad_slot_of(&F.slots, p); }
 static uint64_t pad_buttons(fpad *p) {
     uint64_t m = 0;
+    AcquireSRWLockShared(&F.klk);
+    if (F.pad_custom) {   // the chosen map: every input by its place, the triggers past a quarter
+        uint8_t held[FRONT_INS] = {0};
+        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++) held[b] = SDL_GetGamepadButton(p->g, (SDL_GamepadButton)b);
+        held[FRONT_IN_LT] = (uint8_t)front_trigger(SDL_GetGamepadAxis(p->g, SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+        held[FRONT_IN_RT] = (uint8_t)front_trigger(SDL_GetGamepadAxis(p->g, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+        m = front_padmap_buttons(&F.padmap, held);
+        ReleaseSRWLockShared(&F.klk);
+        return m;
+    }
+    ReleaseSRWLockShared(&F.klk);
     for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++)
         if (SDL_GetGamepadButton(p->g, (SDL_GamepadButton)b))
             m |= front_pad_button((SDL_GamepadButton)b, F.by_label, b <= SDL_GAMEPAD_BUTTON_NORTH ? SDL_GetGamepadButtonLabel(p->g, (SDL_GamepadButton)b) : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN);
@@ -135,6 +182,7 @@ static void pad_read(fpad *p) {
 }
 static void npad_name(int p, char *out, size_t cap) { uint32_t id = dm_player_npad(p); if (id == 0x20) snprintf(out, cap, "handheld"); else snprintf(out, cap, "%u", id); }
 static const char *face_layout(SDL_Gamepad *g) {
+    if (F.pad_custom) return "buttons as the controller map says (controls.json)";
     if (F.by_label && SDL_GetGamepadButtonLabel(g, SDL_GAMEPAD_BUTTON_SOUTH) == SDL_GAMEPAD_BUTTON_LABEL_A) return "face buttons by their letters (DM_PAD_FACE=labels)";
     return SDL_GetGamepadButtonLabel(g, SDL_GAMEPAD_BUTTON_EAST) == SDL_GAMEPAD_BUTTON_LABEL_A ? "Nintendo layout, buttons as labelled"
                                                                                               : "face buttons by position (right A, bottom B, top X, left Y)";
@@ -145,6 +193,30 @@ static void rumble_route(int pl) {
     int any = 0; for (int i = 0; i < NPADS; i++) any |= F.pads[i].g && F.pads[i].rumble && pad_player(&F.pads[i]) == pl;
     dm_haptics_route(pl, any);
 }
+static void roster_update(void) {   // the menu's list: every connected controller with its player
+    AcquireSRWLockExclusive(&F.klk);
+    F.nroster = 0;
+    for (int i = 0; i < NPADS; i++) {
+        fpad *p = &F.pads[i]; if (!p->g) continue;
+        front_pad_info *r = &F.roster[F.nroster++];
+        r->id = p->id; r->player = pad_player(p); r->type = p->type;
+        snprintf(r->name, sizeof r->name, "%s", p->name); snprintf(r->guid, sizeof r->guid, "%s", p->guid);
+    }
+    ReleaseSRWLockExclusive(&F.klk);
+}
+static const char g_kbd_token = 0;   // the keyboard's hold on player 1 (DM_KBD_PLAYER=own)
+// p made player 1: whoever had it takes p's place; both players' buttons, lights, rumble and motion follow
+static void pad_first(fpad *p, const char *why) {
+    if (F.merge || !p) return;
+    int was = pad_slot_of(&F.slots, p);
+    if (pad_slot_first(&F.slots, p, &g_kbd_token) != 0 || was <= 0) return;
+    dm_pad_set_player(0, 0, 0, 0, 0, 0); dm_pad_set_player(was, 0, 0, 0, 0, 0);   // nothing stays pressed in either place
+    dm_motion_clear_hid(0); dm_motion_clear_hid(was);
+    for (int i = 0; i < NPADS; i++) if (F.pads[i].g) { SDL_SetGamepadPlayerIndex(F.pads[i].g, pad_player(&F.pads[i])); pad_read(&F.pads[i]); }
+    rumble_route(0); rumble_route(was);
+    roster_update();
+    LOG("front end: controller '%s' is player 1 now (%s); player 1's controller before it is player %d", p->name, why, was + 1);
+}
 static void check_pad_details(fpad *p);
 static void pad_added(SDL_JoystickID id) {
     if (pad_by_id(id)) return;
@@ -153,6 +225,7 @@ static void pad_added(SDL_JoystickID id) {
     SDL_Gamepad *g = SDL_OpenGamepad(id);
     if (!g) { LOG("[RED] front end: controller %u could not be opened: %s", (unsigned)id, SDL_GetError()); return; }
     p->g = g; p->id = id; snprintf(p->name, sizeof p->name, "%s", SDL_GetGamepadName(g) ? SDL_GetGamepadName(g) : "?");
+    SDL_GUIDToString(SDL_GetGamepadGUIDForID(id), p->guid, sizeof p->guid); p->type = (int)SDL_GetGamepadType(g);
     int pl = F.merge ? 0 : pad_slot_take(&F.slots, p, p->name); char nb[16];
     const char *type = SDL_GetGamepadStringForType(SDL_GetGamepadType(g));
     if (pl < 0) { LOG("front end: controller '%s' connected: all %d players are taken, not used", p->name, DM_PLAYERS); SDL_CloseGamepad(g); memset(p, 0, sizeof *p); return; }
@@ -167,6 +240,11 @@ static void pad_added(SDL_JoystickID id) {
     if (p->rumble) rumble_route(pl);
     if (F.check) check_pad_details(p);
     pad_read(p);
+    roster_update();
+    if (pl > 0 && p1_match(p)) {   // the controller remembered as player 1, unless player 1 already has one like it
+        fpad *q = NULL; for (int i = 0; i < NPADS && !q; i++) if (F.pads[i].g && pad_player(&F.pads[i]) == 0) q = &F.pads[i];
+        if (!q || !p1_match(q)) pad_first(p, "the controller remembered for player 1");
+    }
 }
 static void pad_removed(SDL_JoystickID id) {
     fpad *p = pad_by_id(id); if (!p) return;
@@ -189,6 +267,68 @@ static void pad_removed(SDL_JoystickID id) {
     dm_pad_players(pad_slot_mask(&F.slots));
     if (rumbled) rumble_route(pl);
     if (moved && pl >= 0) dm_motion_clear_hid(pl);
+    roster_update();
+}
+// A device SDL knows no gamepad mapping for: a guessed layout (the common DirectInput one: buttons 0-3 the face buttons, 4 and 5 the shoulders, 6 and 7
+// Back and Start, 8 and 9 the stick presses; axes 0-1 the left stick, 2-3 the right, 4-5 the triggers; hat 0 the D-pad), so it plays at all; the in-game
+// menu's Controller page or a line in gamecontrollerdb.txt fixes the rest. SDL then reports it as a gamepad
+static void guess_mapping(SDL_JoystickID id) {
+    if (SDL_IsGamepad(id)) return;
+    SDL_Joystick *j = SDL_OpenJoystick(id); if (!j) return;
+    int nb = SDL_GetNumJoystickButtons(j), na = SDL_GetNumJoystickAxes(j), nh = SDL_GetNumJoystickHats(j);
+    const char *name = SDL_GetJoystickName(j) ? SDL_GetJoystickName(j) : "a controller";
+    char guid[40], m[700]; SDL_GUIDToString(SDL_GetJoystickGUID(j), guid, sizeof guid);
+    if (nb < 4 || (na < 2 && nh < 1)) { LOG("front end: '%s' (%d buttons, %d axes, %d hats) is not a controller SDL knows, and too small to guess: not used", name, nb, na, nh); SDL_CloseJoystick(j); return; }
+    static const char *const bn[10] = {"a", "b", "x", "y", "leftshoulder", "rightshoulder", "back", "start", "leftstick", "rightstick"};
+    int o = snprintf(m, sizeof m, "%s,%s", guid, "Guessed layout");
+    for (int b = 0; b < 10 && b < nb; b++) o += snprintf(m + o, sizeof m - (size_t)o, ",%s:b%d", bn[b], b);
+    if (na >= 2) o += snprintf(m + o, sizeof m - (size_t)o, ",leftx:a0,lefty:a1");
+    if (na >= 4) o += snprintf(m + o, sizeof m - (size_t)o, ",rightx:a2,righty:a3");
+    if (na >= 6) o += snprintf(m + o, sizeof m - (size_t)o, ",lefttrigger:a4,righttrigger:a5");
+    if (nh >= 1) o += snprintf(m + o, sizeof m - (size_t)o, ",dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8");
+    LOG("front end: '%s' (%d buttons, %d axes, %d hats) has no SDL mapping: a guessed layout (the in-game menu's Controller page, or a line for it in "
+        "gamecontrollerdb.txt, fixes what is wrong): %s", name, nb, na, nh, m);
+    SDL_CloseJoystick(j);
+    if (SDL_AddGamepadMapping(m) < 0) LOG("[RED] front end: the guessed layout for '%s' was refused: %s", name, SDL_GetError());
+}
+// SDL's mapping files (SDL_GameControllerDB's format): beside nxrt.exe (the kit's), then the settings folder's (the player's own lines win)
+const char *mn_settings_dir(void);
+static void mappings_load(void) {
+    char p[1200]; const char *base = SDL_GetBasePath(), *dir = mn_settings_dir();
+    const char *where[2] = {base, dir}; const char *sep[2] = {"", "/"};
+    for (int k = 0; k < 2; k++) {
+        if (!where[k] || !*where[k]) continue;
+        snprintf(p, sizeof p, "%s%sgamecontrollerdb.txt", where[k], sep[k]);
+        FILE *f = fopen(p, "rb"); if (!f) continue; fclose(f);
+        int n = SDL_AddGamepadMappingsFromFile(p);
+        if (n < 0) LOG("[RED] front end: controller mappings in %s could not be read: %s", p, SDL_GetError());
+        else LOG("front end: %d controller mapping%s from %s", n, n == 1 ? "" : "s", p);
+    }
+}
+// Tests: DM_PAD_VIRTUAL=<n> attaches n virtual controllers (SDL's virtual joysticks, gamepads with every button and axis, "Virtual pad 1".. with USB ids
+// 1209:7001..), and DM_CTL "menu vpad <i> <input name> <0|1>" holds or lets go one of their inputs (front_map.h's names; a trigger is pulled all the way)
+static SDL_JoystickID g_vpad[4]; static int g_nvpad;
+static void vpads_attach(void) {
+    const char *e = getenv("DM_PAD_VIRTUAL"); int n = e ? atoi(e) : 0; if (n > 4) n = 4;
+    for (int i = 0; i < n; i++) {
+        SDL_VirtualJoystickDesc d; SDL_INIT_INTERFACE(&d); char nm[32]; snprintf(nm, sizeof nm, "Virtual pad %d", i + 1);
+        d.type = SDL_JOYSTICK_TYPE_GAMEPAD; d.vendor_id = 0x1209; d.product_id = (Uint16)(0x7001 + i); d.naxes = SDL_GAMEPAD_AXIS_COUNT; d.nbuttons = SDL_GAMEPAD_BUTTON_COUNT; d.name = nm;
+        SDL_JoystickID id = SDL_AttachVirtualJoystick(&d);
+        if (!id) { LOG("[RED] DM_PAD_VIRTUAL: virtual controller %d not attached: %s", i + 1, SDL_GetError()); break; }
+        g_vpad[g_nvpad++] = id;
+    }
+    if (g_nvpad) LOG("front end: %d virtual controller%s attached (DM_PAD_VIRTUAL, tests)", g_nvpad, g_nvpad == 1 ? "" : "s");
+}
+void front_sdl_vpad(const char *cmd) {
+    int i = -1, v = 0; char nm[32];
+    if (sscanf(cmd, "%d %31s %d", &i, nm, &v) != 3 || i < 0 || i >= g_nvpad) return;
+    SDL_Joystick *j = SDL_GetJoystickFromID(g_vpad[i]); int in = front_in_by_name(nm, strlen(nm));
+    if (!j || in < 0) return;
+    if (in == FRONT_IN_LT || in == FRONT_IN_RT) SDL_SetJoystickVirtualAxis(j, in == FRONT_IN_LT ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, v ? 32767 : 0);
+    else SDL_SetJoystickVirtualButton(j, in, v != 0);
+}
+void front_sdl_hints(void) {
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1");   // Steam Controllers without Steam running (an environment variable of that name still decides)
 }
 
 // ---------- Motion ----------
@@ -358,11 +498,15 @@ void front_sdl_start(SDL_Window *win) {
     e = getenv("DM_MOTION"); F.motion_on = !(e && *e && !atoi(e));
     e = getenv("DM_PAD_CHECK"); F.check = e && atoi(e);
     InitializeSRWLock(&F.rlk); InitializeSRWLock(&F.klk);
-    F.ev_rumble = SDL_RegisterEvents(1); F.ev_menu = SDL_RegisterEvents(1);
+    F.ev_rumble = SDL_RegisterEvents(1); F.ev_menu = SDL_RegisterEvents(1); F.ev_p1 = SDL_RegisterEvents(1);
     dm_haptics_init(rumble_sink, F.rumble_on);   // the game sees vibration devices once a controller that rumbles is a player's (rumble_route)
-    static const char kbd = 0;
-    if (F.kbd_own) pad_slot_take(&F.slots, &kbd, "keyboard");   // holds player 1 for good
+    if (F.kbd_own) pad_slot_take(&F.slots, &g_kbd_token, "keyboard");   // holds player 1 for good
     keymap_load();
+    mappings_load();   // before the controllers are opened: a mapping can make a device a controller
+    vpads_attach();
+    int nj = 0; SDL_JoystickID *js = SDL_GetJoysticks(&nj);
+    for (int i = 0; js && i < nj; i++) guess_mapping(js[i]);
+    SDL_free(js);
     if (dm_look_on()) LOG("front end: mouse look available: click the picture to capture the mouse (left A, right B, middle right-stick press), Esc releases it "
                           "(%.3f degrees per count, DM_LOOK_SENS / DM_LOOK_SCALE)", F.sens);
     LOG("front end: controllers: %s; sticks' dead zones %.2f inner, %.2f outer; rumble %s (gain %.2f, minimum %.2f), motion %s%s", F.merge ? "every controller is player 1 (DM_PAD_MERGE)"
@@ -386,6 +530,14 @@ void front_sdl_event(const SDL_Event *e) {
         if (e->user.code) input_release(); else if (SDL_GetWindowFlags(F.win) & SDL_WINDOW_INPUT_FOCUS) input_resume();
         return;
     }
+    if (F.ev_p1 && e->type == F.ev_p1) {   // the in-game menu's choice: made player 1 and remembered (the menu writes it to controls.json)
+        fpad *p = pad_by_id((SDL_JoystickID)e->user.code); if (!p) return;
+        AcquireSRWLockExclusive(&F.klk); snprintf(F.p1_guid, sizeof F.p1_guid, "%s", p->guid); front_name_clean(p->name, F.p1_name, sizeof F.p1_name); ReleaseSRWLockExclusive(&F.klk);
+        if (pad_player(p) == 0) LOG("front end: controller '%s' stays player 1 (chosen in the in-game menu)", p->name);
+        else pad_first(p, "chosen in the in-game menu");
+        return;
+    }
+    if (e->type == SDL_EVENT_JOYSTICK_ADDED) { guess_mapping(e->jdevice.which); return; }
     // The in-game menu first: what it takes the game never sees, and while it is open the game sees nothing but controllers coming and going and keys and
     // mouse buttons let go (nothing stays held)
     if (menu_event(e)) return;

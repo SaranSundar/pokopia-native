@@ -1318,7 +1318,7 @@ static void dispatch(const p_dispatch *dp) {
         }
     }
     uint32_t ckw[16], *ckp = NULL;   // a lost device's report shows the dispatch's first constants as recorded (loop counts: D-1's word 0, D-11's words 12 and 13)
-    if (g_vk.has.checkpoints) for (int i = 0; i < cs->nb && !ckp; i++) { const p_bind_buf *u = cs->b[i].kind == VKB_CBUF && cs->b[i].reg >= 0 && cs->b[i].reg < 16 ? &S->ubo[5][cs->b[i].reg] : NULL;
+    if (g_vk.has.checkpoints || g_vk.has.buffer_marker) for (int i = 0; i < cs->nb && !ckp; i++) { const p_bind_buf *u = cs->b[i].kind == VKB_CBUF && cs->b[i].reg >= 0 && cs->b[i].reg < 16 ? &S->ubo[5][cs->b[i].reg] : NULL;
         if (u && u->addr && u->size >= 32) { memset(ckw, 0, sizeof ckw); memcpy(ckw, (const void *)(uintptr_t)u->addr, u->size < sizeof ckw ? (size_t)u->size : sizeof ckw); ckp = ckw; } }
     vk_checkpoint(cb, 'c', cs->key, g_dispatch_dim[0], g_dispatch_dim[1], g_dispatch_dim[2], dp->ind != 0, ckp);
     if (dp->ind) { VkBuffer b; VkDeviceSize o; if (!vkm_use(dp->ind, 12, &b, &o)) { RED_ONCE(70, "indirect dispatch arguments are in no memory pool"); return; } vkCmdDispatchIndirect(cb, b, o); }
@@ -1838,6 +1838,7 @@ void vkr_frame(uint64_t frame) {
           (double)(s.desc_sets - prev.desc_sets) / df, (double)(s.scaled_sets - prev.scaled_sets) / df, (double)(s.sets_reused - prev.sets_reused) / df, (double)(s.writebacks - prev.writebacks) / df, (unsigned long long)ps.graphics, (unsigned long long)ps.compute,
           ps.create_ns / 1e6, ps.max_ns / 1e6, (unsigned long long)shl, (unsigned long long)shf);
     if (ps.prewarmed) VKLOG("pipelines made ahead by the prewarm up to frame %llu: %llu (%.1f ms on its threads)", (unsigned long long)frame, (unsigned long long)ps.prewarmed, ps.prewarm_ns / 1e6);
+    if (g_vk.has.buffer_marker) { uint64_t fin = 0, st = vk_markers_now(&fin); VKLOG("AMD buffer markers at frame %llu: started #%llu, everything before #%llu finished", (unsigned long long)frame, (unsigned long long)st, (unsigned long long)fin); }
     prev = s; pf = frame;
 }
 

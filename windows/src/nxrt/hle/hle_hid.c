@@ -178,6 +178,17 @@ static void look_write(uint8_t *cam, double dx, double dy) {   // turn the camer
     dm_guest_write_prepare(py, sizeof *py); *py = (float)y;
     dm_guest_write_prepare(pp, sizeof *pp); *pp = (float)p;
 }
+// The game's follow camera ("Camera - Auto Follow" in its settings) turns the camera while the player moves sideways, over what direct look writes (#31). It counts as on
+// when the camera turned between two frames of moving sideways that had no stick turn of ours, and stays on for 600 frames after the last such turn: only then does moving
+// sideways take the stick path. With it off, direct look stays on while strafing, which the stick path's steps made stuttery (1.3.4)
+static struct { float yaw; uint64_t frame; int side, stick, left; } g_fw;
+static void look_follow_seen(const uint8_t *cam, uint64_t f, int side) {
+    int was = g_fw.left > 0;
+    double d = fabs(remainder((double)*(const float *)(cam + g_lc.yaw) - g_fw.yaw, 2 * M_PI));
+    if (g_fw.frame + 1 == f && g_fw.side && side && !g_fw.stick && d > 1e-5) g_fw.left = 600;
+    else if (g_fw.left > 0) g_fw.left--;
+    if (was != (g_fw.left > 0)) LOG("look: the game's follow camera %s: moving sideways uses %s", g_fw.left > 0 ? "turns the camera" : "has been still for 600 frames", g_fw.left > 0 ? "the stick path" : "direct look");
+}
 static void look_apply(int32_t *rx, int32_t *ry, int32_t lx) {   // player 1's read: this frame's look (the camera written directly, or a tilt that wins over a resting right stick)
     if (!dm_look_on()) return;
     pthread_mutex_lock(&g_look_mu);
@@ -187,9 +198,12 @@ static void look_apply(int32_t *rx, int32_t *ry, int32_t lx) {   // player 1's r
         g_look_frame = f; g_look_t = now; look_stats_frame(f, now);
         g_look_axes[0] = g_look_axes[1] = 0;
         static int strafe = -1; if (strafe < 0) { const char *e = getenv("DM_LOOK_STRAFE"); strafe = !(e && *e && !atoi(e)); }
-        uint8_t *cam = look_cam(), *side = NULL;
-        if (cam && strafe && abs(lx) > DM_STICK_MAX / 5) { side = cam; cam = NULL; }   // moving sideways: the stick path, its overflow written (above)
+        uint8_t *cam = look_cam(), *side = NULL, *seen;
+        int sideways = abs(lx) > DM_STICK_MAX / 5;
+        if (cam) look_follow_seen(cam, f, sideways);
+        if (cam && strafe && sideways && g_fw.left > 0) { side = cam; cam = NULL; }   // moving sideways while the follow camera turns it: the stick path, its overflow written (above)
         g_look_direct = cam != NULL || side != NULL;
+        seen = cam ? cam : side;
         if (cam) {   // direct: the pointer's movement up to a steady delay before this read (look_pos_at), in this frame's camera update
             double mx, my; look_pos_at(now - fmin(g_lr_gap + 0.004, 0.04), &mx, &my);
             double dx = mx - g_lr_ax, dy = my - g_lr_ay; g_lr_ax = mx; g_lr_ay = my; g_look_acc[0] = g_look_acc[1] = 0;
@@ -209,6 +223,7 @@ static void look_apply(int32_t *rx, int32_t *ry, int32_t lx) {   // player 1's r
             g_look_acc[0] = g_look_acc[1] = 0;
         }
         }
+        if (seen) { g_fw.yaw = *(float *)(seen + g_lc.yaw); g_fw.frame = f; g_fw.side = sideways; g_fw.stick = g_look_axes[0] || g_look_axes[1]; }   // the camera as this frame leaves it
     }
     if (g_look_axes[0] || g_look_axes[1]) { *rx = g_look_axes[0]; *ry = g_look_axes[1]; }
     pthread_mutex_unlock(&g_look_mu);

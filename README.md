@@ -12,7 +12,7 @@ your Mac it builds a Mac app and an iPhone app. On a Windows PC it builds the ga
 PC, and the iPhone app too. Everything that comes from the game is created on your machine and stays in your build
 folder. Nothing from the game is in here.
 
-This works for both versions 1.0.5 (v327680) and 2.0.1 (v655360) as of 11/3/2026. The tool is version **1.3.4**.
+This works for both versions 1.0.5 (v327680) and 2.0.1 (v655360) as of 11/3/2026. The tool is version **1.3.5**.
 
 ## Which download do I need?
 
@@ -134,6 +134,10 @@ is missing.
 - **On an 8 GB Mac the game freezes at a scene change and the screen later turns pink.** The Mac ran out of graphics
   memory (the log says "Insufficient Memory"). Quit other apps, browsers above all, and start the game again; 16 GB is
   the comfortable size for now.
+- **The mouse camera feels less smooth while you walk sideways.** With the game's **Camera Auto-Follow** on (in its
+  Settings, Camera tab), the game turns the camera itself as you strafe, so the app has to steer it through the stick's
+  path, which moves in steps. Turn **Camera Auto-Follow** off for the smoothest mouse camera: from 1.3.5 the app notices
+  and turns the camera directly again.
 - **Mouse look stops while you hold movement keys on a MacBook's trackpad.** The trackpad ignores your finger while keys
   are held down (palm rejection), so the game never sees the movement. An external mouse or a controller works.
 - **Mac: Pokopia Native Builder does nothing, and its log says `nxs2_gui.py: No such file`** (macOS 27, with a path
@@ -468,8 +472,9 @@ and that feels like a console. I wanted it to feel like a PC or a phone game, so
 
 - **Mac:** click the game picture and the mouse is captured. Move it to look around; left click is A, right click is
   B, the middle button resets the camera. **Esc** gives the mouse back. Keyboard: WASD moves, J K U I are A B X Y, Q E
-  are L R, Z C are ZL ZR, Return is + and Tab is −. (On Windows these keys can be changed in the Controls tab of the
-  window before the game starts, docs/WINDOWS.md; the Mac and the iPhone keep this layout.)
+  are L R, Z C are ZL ZR, Return is + and Tab is −. (On Windows these keys, and a controller's buttons, can be changed
+  in the Controls tab of the window before the game starts or in the game's F1 menu, docs/WINDOWS.md; the Mac and the
+  iPhone keep this layout for now.)
 - **iPhone:** drag anywhere on the right half of the screen that isn't a button, and the camera follows your finger.
 
 **Sensitivity and invert** are in the app's launcher under Controls ("Look sensitivity", "Invert look up and down"),
@@ -481,7 +486,7 @@ memory and sets it directly, every frame, right before the game draws. Moving th
 turns the camera by exactly that amount (measured to a hundredth of a degree), with no speed limit, no smoothing and no
 drift after you stop. Touches and mouse moves are time-stamped, so every frame gets an even share of the movement and a
 steady pan stays steady. If the game ever takes the camera over, the app falls back to steering the stick for that
-moment.
+moment: while you walk sideways with the game's Camera Auto-Follow on, for one.
 
 ## Phone settings and heat
 

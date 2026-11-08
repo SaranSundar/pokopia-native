@@ -3,7 +3,7 @@
 pokopia-native's Switch 2 patch, for pokopia-native's host/nxnative-switch2.patch (make_patch.py turns the result into that patch). MIT, our own code.
     python3 apply_coop.py <nxnative checkout>
 Idempotent, with exact anchors; refuses a tree it does not recognise. What it does:
-- copies the module in as dm/host/coop.h, coop_int.h and hle_coop_{ldn,vnet,mpnet,plat,disc,auth,interact}.c (the host Makefile's hle_*.c wildcard; the
+- copies the module in as dm/host/coop.h, coop_int.h and hle_coop_{ldn,vnet,mpnet,plat,disc,auth,interact,nat}.c (the host Makefile's hle_*.c wildcard; the
   iOS build takes its sources from that Makefile);
 - dm/host/dm.h: observation gate OBS_COOP_INTERACT, "Interact everywhere" (docs/coop-interact.md): the profile's patches.py places it, ldn_glue.c attaches
   the shared callback;
@@ -39,7 +39,7 @@ def put(dst, data):
 
 for f in ('coop.h', 'coop_int.h'):
     put(host / f, (MOD / f).read_bytes())
-for f in ('coop_ldn.c', 'coop_vnet.c', 'coop_mpnet.c', 'coop_plat.c', 'coop_disc.c', 'coop_auth.c', 'coop_interact.c'):
+for f in ('coop_ldn.c', 'coop_vnet.c', 'coop_mpnet.c', 'coop_plat.c', 'coop_disc.c', 'coop_auth.c', 'coop_interact.c', 'coop_nat.c'):
     put(host / ('hle_' + f), (MOD / f).read_bytes())
 
 

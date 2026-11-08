@@ -244,6 +244,12 @@ int cplat_local_addrs(caddr *out, int max, int profiles) {
     free(aa);
     return k;
 }
+int cplat_gateway(uint32_t *gw) {   // the next hop towards the internet (8.8.8.8): the router
+    MIB_IPFORWARDROW r;
+    if (GetBestRoute(htonl(0x08080808u), 0, &r) != NO_ERROR || !r.dwForwardNextHop) return -1;
+    *gw = ntohl(r.dwForwardNextHop);
+    return 0;
+}
 #else
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -259,6 +265,22 @@ int cplat_local_addrs(caddr *out, int max, int profiles) {   // no network profi
     }
     freeifaddrs(ifs);
     return k;
+}
+#include <stdio.h>
+int cplat_gateway(uint32_t *gw) {   // the default route's gateway: Linux's routing table; elsewhere (Apple) the route's address with .1, the usual router
+    FILE *f = fopen("/proc/net/route", "r");
+    if (f) {
+        char line[256], ifn[64]; unsigned long dst, g, flags; int found = 0;
+        if (fgets(line, sizeof line, f))
+            while (!found && fgets(line, sizeof line, f))
+                if (sscanf(line, "%63s %lx %lx %lx", ifn, &dst, &g, &flags) == 4 && dst == 0 && (flags & 2) && g) { *gw = ntohl((uint32_t)g); found = 1; }
+        fclose(f);
+        if (found) return 0;
+    }
+    uint32_t me;
+    if (cplat_route_ip(&me) || coop_addr4_class(me) != COOP_ADDR_PRIVATE) return -1;
+    *gw = (me & 0xFFFFFF00u) | 1;
+    return 0;
 }
 #endif
 int cplat_route_ip(uint32_t *ip) {   // connect() on a UDP socket picks the source address and sends nothing

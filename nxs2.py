@@ -28,7 +28,7 @@ Windows game the tools of the "for Windows PCs" download (windows/bin). `nxs2.py
 """
 import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shlex, shutil, struct, subprocess, sys, time
 
-TOOL_VERSION = '1.3.4'   # this tool's release (co-op compares the game build and mods, not this); the game's own version is separate
+TOOL_VERSION = '1.3.5'   # this tool's release (co-op compares the game build and mods, not this); the game's own version is separate
 TITLE = '0400A3A01EE4C000'
 NAME = 'Pokemon Pokopia'
 UPSTREAM = 'https://github.com/seedds/nxnative'

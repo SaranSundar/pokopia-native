@@ -72,9 +72,18 @@ Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in
   their place on the keyboard, so the map works the same under any keyboard language. It is saved for this PC in
   `%APPDATA%\Pokopia Native\controls.json`, and the game's log lists the keys it uses. (If you ticked "Don't ask again",
   double-click **Pokopia Settings <version>.cmd** beside the Play launcher.) Esc, F11, Alt and the Windows keys can't be used. The Mac and the iPhone keep
-  their own layout.
+  their own layout for now.
 - **Controllers:** Xbox, PlayStation and Switch Pro controllers work as Switch controllers (face buttons by position),
-  with rumble and motion. Close Steam or turn off Steam Input for the controller if it does not show up.
+  with rumble and motion. So does the Steam Controller, and many less common controllers through SDL's community list
+  (`gamecontrollerdb.txt` beside the game); one the list doesn't know gets a guessed layout instead of being ignored.
+  Close Steam or turn off Steam Input for the controller if it does not show up.
+- **Your own controller buttons:** one map for every controller. In the game, **F1 → Controls → Controller**: choose a
+  Switch button, then press the controller button (or pull the trigger) for it; a button another one had swaps over, and
+  Home can't be changed. The launcher's **Controls** tab has the same map as a list. **Reset to defaults** brings the usual
+  layout back. It's saved in the same `controls.json`.
+- **Player 1:** with more than one controller, **F1 → Controls → Controller → Player 1** picks which one is player 1
+  (step through them, or press Enter and then any button on the one you want). It's remembered: that controller takes
+  player 1 whenever it connects. The launcher's Controls tab shows it and can forget it.
 - **Typing (your name, for one):** a small box opens over the game. Type and press Enter, or with only a controller
   press A, B or + to accept it (an empty box becomes "Player"; the game won't let you change your name later, so a
   keyboard is best for this one).
@@ -84,7 +93,8 @@ Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in
   or **Handheld**), window or full screen and the window size, **Upscaling** (Sharp or Standard) with its **Sharpness**
   (they only matter when the window is larger than the picture), 60 or 30 fps, vsync and an FPS counter.
 - **Settings while you play:** press **F1** (or **Minus + Plus** together on a controller) for a settings menu over the
-  game, with a **Graphics** tab (everything above) and a **Controls** tab (your keys). Changes apply at once; Console mode
+  game, with a **Graphics** tab (everything above), a **Controls** tab (your keys, your controller's buttons and player 1)
+  and a **Link Play** tab. Changes apply at once; Console mode
   applies from the next start. The window before the game has the same settings in its **Display** and **Controls**
   tabs; both are saved for this PC in `%APPDATA%\Pokopia Native\display.json` and `controls.json`.
 - Switches for the launcher go after its name in a terminal: `-Fullscreen`, `-Window 1600x900`, `-Silent`, `-PadCheck`

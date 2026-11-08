@@ -116,7 +116,7 @@ static int parse_uid(const char *s, uint8_t out[16]) {
 int coop_cfg_parse(coop_cfg *c, const char *coop, const char *uid, char *err, size_t errn) { return coop_cfg_parse_ex(c, coop, uid, NULL, NULL, NULL, err, errn); }
 int coop_cfg_parse_ex(coop_cfg *c, const char *coop, const char *uid, const char *internet, const char *room, const char *relay, char *err, size_t errn) {
     memset(c, 0, sizeof *c);
-    c->platform = 1; c->discovery = 1;
+    c->platform = 1; c->discovery = 1; c->nat = 1;
     put64(c->uid, k_uid_default[0]); put64(c->uid + 8, k_uid_default[1]);
     if (!coop || !*coop || !strcmp(coop, "off") || !strcmp(coop, "0")) return 0;
     const char *end = coop + strlen(coop);
@@ -173,18 +173,17 @@ int coop_env_uid(uint8_t out[16]) {
     const char *c = getenv("DM_COOP"), *u = getenv("DM_UID");
     return c && *c && strcmp(c, "off") && strcmp(c, "0") && u && !parse_uid(u, out);
 }
-coop_node *coop_env_node(const coop_hooks *hooks) {
-    static cmutex once = CMUTEX_INIT; static int done; static coop_node *node;
-    cplat_lock(&once);
-    if (!done) {
-        done = 1;
+coop_node *coop_env_make(const coop_hooks *hooks) {
+    coop_node *node = NULL;
+    {
         coop_cfg c; char err[320] = "", jm[96], msg[360];
         const char *mode = getenv("DM_COOP"), *inet = getenv("DM_COOP_INTERNET"), *room = getenv("DM_COOP_ROOM"), *relay = getenv("DM_COOP_RELAY");
         const char *join = getenv("DM_COOP_JOIN");   // the launcher's "Join address" under its Link Play switch: auto becomes join:<it>
         int joined = join && *join && mode && !strcmp(mode, "auto") && strlen(join) < 64;
         if (joined) { snprintf(jm, sizeof jm, "join:%s", join); mode = jm; }
         int r = coop_cfg_parse_ex(&c, mode, getenv("DM_UID"), inet, room, relay, err, sizeof err);
-        const char *t = getenv("DM_COOP_TCP"), *d = getenv("DM_COOP_DISCOVERY");
+        const char *t = getenv("DM_COOP_TCP"), *d = getenv("DM_COOP_DISCOVERY"), *na = getenv("DM_COOP_NAT");
+        if (na && !strcmp(na, "0")) c.nat = 0;
         c.tcp_only = t && *t && strcmp(t, "0");
         if (d && !strcmp(d, "0")) c.discovery = 0;
         if (hooks) c.hooks = *hooks;
@@ -201,8 +200,10 @@ coop_node *coop_env_node(const coop_hooks *hooks) {
                       c.tcp_only ? ", game datagrams over the control link (DM_COOP_TCP)" : "");
             if (c.auth) {
                 char shown[COOP_ROOM_SHOWN]; coop_room_format(c.room, shown);
+                // a code made here is logged whole: the Mac's launcher shows it nowhere else yet. A given one only by its first group: players attach
+                // their logs to bug reports, and the launchers and the in-game Link Play tab show it
                 if (c.room_new) coop_logf(node, "internet play: this session's room code is %s; visitors need it (set DM_COOP_ROOM to keep one code across sessions)", shown);
-                else coop_logf(node, "internet play: room code %s", shown);
+                else coop_logf(node, "internet play: room code %.4s-****-****-**** (the rest stays out of the log)", shown);
                 if (c.relay_ip) coop_logf(node, "internet play: through the relay %u.%u.%u.%u:%u (hosting opens the room there, scanning asks it for the room's host)",
                                           c.relay_ip >> 24, c.relay_ip >> 16 & 0xFF, c.relay_ip >> 8 & 0xFF, c.relay_ip & 0xFF, c.relay_port);
                 coop_logf(node, "internet play: every link proves the room code and every message is tagged against changes, but nothing is encrypted: "
@@ -210,6 +211,12 @@ coop_node *coop_env_node(const coop_hooks *hooks) {
             } else if ((room && *room) || (relay && *relay)) coop_logf(node, "DM_COOP_ROOM / DM_COOP_RELAY ignored: internet play is off (DM_COOP_INTERNET=1 turns it on)");
         }
     }
+    return node;
+}
+coop_node *coop_env_node(const coop_hooks *hooks) {
+    static cmutex once = CMUTEX_INIT; static int done; static coop_node *node;
+    cplat_lock(&once);
+    if (!done) { done = 1; node = coop_env_make(hooks); }
     cplat_unlock(&once);
     return node;
 }
@@ -233,6 +240,7 @@ coop_node *coop_create(const coop_cfg *c) {
 void coop_destroy(coop_node *n) {
     if (!n) return;
     coop_ldn_finalize(n);
+    cnat_stop(n);
     cdisc_fini(n);
     cvnet_reset(n);
     cplat_mutex_destroy(&n->lk); cplat_mutex_destroy(&n->life); cplat_mutex_destroy(&n->dlk);
@@ -242,6 +250,39 @@ void coop_destroy(coop_node *n) {
 }
 uint16_t coop_port(coop_node *n) { cnode_lock(n); uint16_t p = n->hosting ? n->bound_port : 0; cnode_unlock(n); return p; }
 int coop_role(coop_node *n) { return n->cfg.role; }
+void coop_get_info(coop_node *n, coop_info *o) {
+    memset(o, 0, sizeof *o);
+    cnode_lock(n);
+    const coop_cfg *c = &n->cfg;
+    o->role = c->role; o->scope = c->scope; o->internet = c->auth; o->tcp_only = c->tcp_only;
+    o->ldn = n->ls; o->hosting = n->hosting; o->port = n->hosting ? n->bound_port : 0;
+    if (c->auth && c->room[0]) coop_room_format(c->room, o->room);
+    o->relay_ip = c->relay_ip; o->relay_port = c->relay_port; o->relay_up = n->rc_open;
+    if (n->upi >= 0) { o->join_ip = n->pr[n->upi].ip; o->join_port = n->pr[n->upi].port; }
+    else if (c->role == COOP_ROLE_JOIN) { o->join_ip = c->addr; o->join_port = c->port; }
+    for (int i = 0; i < HOST_CONNS; i++) o->links += n->hc[i].state == CONN_READY;
+    for (int i = 0; i < PEERS; i++) { o->links += n->pr[i].used && n->pr[i].c.state == CONN_READY; o->found += n->pr[i].used && n->pr[i].compat == 1; }
+    if (n->mods) snprintf(o->mods, sizeof o->mods, "%s", n->mods_what);
+    o->nat = n->nat.info;
+    if (n->have_info && (n->ls == COOP_LS_AP_CREATED || n->ls == COOP_LS_STATION_CONNECTED)) {
+        const uint8_t *l = n->info + 0x50;
+        for (int k = 0; k < LDN_NODES && o->nplayers < COOP_INFO_PLAYERS; k++) {
+            const uint8_t *nd = l + 0x18 + 0x40 * k;
+            if (!nd[0xB]) continue;   // IsConnected
+            coop_player *p = &o->player[o->nplayers++];
+            cldn_name(p->name, nd + 0xC, 0x20); p->node = nd[0xA]; p->self = p->node == n->self;
+            if (n->hosting) { for (int i = 0; i < HOST_CONNS; i++) if (p->node > 0 && n->hc[i].state == CONN_READY && n->hc[i].node == p->node) p->ip = n->hc[i].peer_ip; }
+            else if (p->node == 0 && n->upi >= 0) p->ip = n->pr[n->upi].ip;
+        }
+    }
+    cnode_unlock(n);
+}
+int coop_local_ipv4(uint32_t *out, int max) {
+    caddr a[16]; uint32_t r = 0; int k = cplat_local_addrs(a, max < 16 ? max : 16, 0), first = 0;
+    if (k > 1 && !cplat_route_ip(&r)) for (int i = 0; i < k; i++) if (a[i].ip == r) { first = i; break; }   // the one the default route uses first
+    for (int i = 0, j = 0; i < k; i++) out[j++] = a[(i + first) % k].ip;
+    return k;
+}
 
 // ---------- the host's NetworkInfo ----------
 static void node_mac(coop_node *n, uint8_t *mac, const uint8_t *uid, int node) {

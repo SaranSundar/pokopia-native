@@ -166,3 +166,111 @@ static inline int front_button_names(uint64_t m, char *out, int cap) {
     for (int i = 0; i < 16 && o < cap - 8; i++) if (m >> i & 1) o += snprintf(out + o, (size_t)(cap - o), "%s%s", o ? " " : "", nm[i]);
     return o;
 }
+
+// ---------- The controller map: controls.json's "pad" object (the F1 Controls tab's Controller page, play.ps1's Controls tab) ----------
+// One controller input per Switch button (actions 0-15, as the keyboard's), shared by every controller. An input is one of SDL's gamepad buttons, named by
+// its place (south = the bottom face button, whatever is printed on it), or a trigger. Without a "pad" object the front end keeps the layout above
+// (front_pad_button, DM_PAD_FACE); the default map here is that same layout by place
+#define FRONT_PACTS 16
+enum { FRONT_IN_LT = SDL_GAMEPAD_BUTTON_COUNT, FRONT_IN_RT, FRONT_INS };   // the triggers, after SDL's buttons; -1 none
+typedef struct { int8_t in[FRONT_PACTS]; } front_padmap;
+static const char *const front_in_names[FRONT_INS] = {
+    [SDL_GAMEPAD_BUTTON_SOUTH] = "south", [SDL_GAMEPAD_BUTTON_EAST] = "east", [SDL_GAMEPAD_BUTTON_WEST] = "west", [SDL_GAMEPAD_BUTTON_NORTH] = "north",
+    [SDL_GAMEPAD_BUTTON_BACK] = "back", [SDL_GAMEPAD_BUTTON_GUIDE] = "guide", [SDL_GAMEPAD_BUTTON_START] = "start",
+    [SDL_GAMEPAD_BUTTON_LEFT_STICK] = "leftstick", [SDL_GAMEPAD_BUTTON_RIGHT_STICK] = "rightstick",
+    [SDL_GAMEPAD_BUTTON_LEFT_SHOULDER] = "leftshoulder", [SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER] = "rightshoulder",
+    [SDL_GAMEPAD_BUTTON_DPAD_UP] = "dpup", [SDL_GAMEPAD_BUTTON_DPAD_DOWN] = "dpdown", [SDL_GAMEPAD_BUTTON_DPAD_LEFT] = "dpleft", [SDL_GAMEPAD_BUTTON_DPAD_RIGHT] = "dpright",
+    [SDL_GAMEPAD_BUTTON_MISC1] = "misc1", [SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1] = "rightpaddle1", [SDL_GAMEPAD_BUTTON_LEFT_PADDLE1] = "leftpaddle1",
+    [SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2] = "rightpaddle2", [SDL_GAMEPAD_BUTTON_LEFT_PADDLE2] = "leftpaddle2", [SDL_GAMEPAD_BUTTON_TOUCHPAD] = "touchpad",
+    [SDL_GAMEPAD_BUTTON_MISC2] = "misc2", [SDL_GAMEPAD_BUTTON_MISC3] = "misc3", [SDL_GAMEPAD_BUTTON_MISC4] = "misc4", [SDL_GAMEPAD_BUTTON_MISC5] = "misc5",
+    [SDL_GAMEPAD_BUTTON_MISC6] = "misc6", [FRONT_IN_LT] = "lefttrigger", [FRONT_IN_RT] = "righttrigger"};
+static inline void front_padmap_default(front_padmap *m) {
+    static const int8_t d[FRONT_PACTS] = {SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_NORTH, SDL_GAMEPAD_BUTTON_WEST,
+        SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, FRONT_IN_LT, FRONT_IN_RT,
+        SDL_GAMEPAD_BUTTON_START, SDL_GAMEPAD_BUTTON_BACK, SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_DOWN};
+    for (int i = 0; i < FRONT_PACTS; i++) m->in[i] = d[i];
+}
+// Inputs a map may not take: Guide (Home) belongs to the system (Steam, the Xbox Game Bar), as on the Switch
+static inline int front_in_reserved(int in) { return in < 0 || in >= FRONT_INS || in == SDL_GAMEPAD_BUTTON_GUIDE; }
+static inline int front_in_by_name(const char *s, size_t n) {
+    for (int i = 0; i < FRONT_INS; i++) if (front_in_names[i] && strlen(front_in_names[i]) == n && !strncmp(s, front_in_names[i], n)) return i;
+    return -1;
+}
+// After "key" and its colon: the value's first character, or NULL
+static inline const char *front_json_value(const char *t, const char *key) {
+    char k[40]; snprintf(k, sizeof k, "\"%s\"", key);
+    const char *p = t ? strstr(t, k) : NULL; if (!p) return NULL;
+    p += strlen(k); while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p != ':') return NULL;
+    p++; while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    return p;
+}
+// A controller's name as controls.json keeps it: quotes, backslashes and control characters become '_' (front_json_str reads no escapes)
+static inline void front_name_clean(const char *in, char *out, size_t cap) {
+    size_t i = 0; for (; in && in[i] && i + 1 < cap; i++) out[i] = in[i] == '"' || in[i] == '\\' || (unsigned char)in[i] < 32 ? '_' : in[i];
+    if (cap) out[i] = 0;
+}
+// A string field's value ("player1": "<guid>"); 0 when there is none or it does not fit
+static inline int front_json_str(const char *t, const char *key, char *out, size_t cap) {
+    const char *p = front_json_value(t, key); if (!p || *p != '"' || !cap) return 0;
+    const char *q = strchr(p + 1, '"'); if (!q || (size_t)(q - p - 1) >= cap) return 0;
+    memcpy(out, p + 1, (size_t)(q - p - 1)); out[q - p - 1] = 0; return 1;
+}
+// controls.json's text: the "pad" object's "<action>": "<input>" pairs, as front_keymap_parse does the keys (from the default; a reserved or unknown input,
+// or one an earlier action asked for, is refused; "none" leaves an action without one; an action not asked for keeps its default input unless an asked one
+// took it). The actions set; -1 when the file has no "pad" object (the front end then keeps its layout)
+static inline int front_padmap_parse(front_padmap *m, const char *t, int *refused) {
+    front_padmap_default(m);
+    if (refused) *refused = 0;
+    const char *p = front_json_value(t, "pad"), *end = p && *p == '{' ? strchr(p, '}') : NULL;
+    if (!end) return -1;
+    int want[FRONT_PACTS], set = 0, bad = 0;
+    for (int i = 0; i < FRONT_PACTS; i++) want[i] = -2;   // -2 not asked, -1 asked for none
+    for (p++; p < end && (p = memchr(p, '"', (size_t)(end - p))) != NULL; ) {
+        const char *q = memchr(p + 1, '"', (size_t)(end - p - 1)); if (!q) break;
+        const char *r = q + 1; while (r < end && (*r == ' ' || *r == '\t' || *r == '\r' || *r == '\n')) r++;
+        if (r >= end || *r != ':') { p = q + 1; continue; }
+        r++; while (r < end && (*r == ' ' || *r == '\t' || *r == '\r' || *r == '\n')) r++;
+        const char *v0 = r < end && *r == '"' ? r + 1 : NULL, *v1 = v0 ? memchr(v0, '"', (size_t)(end - v0)) : NULL;
+        if (!v1) { p = r; continue; }
+        size_t n = (size_t)(q - p - 1), vn = (size_t)(v1 - v0);
+        for (int a = 0; a < FRONT_PACTS; a++) if (strlen(front_act_names[a]) == n && !strncmp(p + 1, front_act_names[a], n)) {
+            int none = vn == 4 && !strncmp(v0, "none", 4), in = none ? -1 : front_in_by_name(v0, vn);
+            if (!none && front_in_reserved(in)) bad++; else want[a] = in;
+        }
+        p = v1 + 1;
+    }
+    for (int a = 0; a < FRONT_PACTS; a++) {   // an input asked twice goes to the first action
+        if (want[a] == -2) continue;
+        if (want[a] == -1) { m->in[a] = -1; set++; continue; }
+        int dup = 0; for (int b = 0; b < a; b++) dup |= want[b] == want[a];
+        if (dup) { bad++; want[a] = -2; } else { m->in[a] = (int8_t)want[a]; set++; }
+    }
+    for (int a = 0; a < FRONT_PACTS; a++) {
+        if (want[a] != -2) continue;
+        for (int b = 0; b < FRONT_PACTS; b++) if (want[b] >= 0 && want[b] == m->in[a]) { m->in[a] = -1; break; }
+    }
+    if (refused) *refused = bad;
+    return set;
+}
+// The "pad" object for controls.json, without a trailing comma; its length
+static inline int front_padmap_json(const front_padmap *m, char *out, size_t cap) {
+    int o = snprintf(out, cap, "\"pad\":  {");
+    for (int a = 0; a < FRONT_PACTS && o > 0 && (size_t)o < cap; a++)
+        o += snprintf(out + o, cap - (size_t)o, "%s\"%s\": \"%s\"", a ? ", " : "", front_act_names[a], m->in[a] >= 0 && m->in[a] < FRONT_INS ? front_in_names[m->in[a]] : "none");
+    if (o > 0 && (size_t)o < cap) o += snprintf(out + o, cap - (size_t)o, "}");
+    return o;
+}
+// An input for an action; the action that had it takes this one's old input (the two swap)
+static inline void front_padmap_bind(front_padmap *m, int act, int in) {
+    if (act < 0 || act >= FRONT_PACTS || front_in_reserved(in)) return;
+    int old = m->in[act];
+    for (int a = 0; a < FRONT_PACTS; a++) if (a != act && m->in[a] == in) m->in[a] = (int8_t)old;
+    m->in[act] = (int8_t)in;
+}
+// The NpadButtons of the inputs held (held[i]: input i down, a trigger past FRONT_TRIGGER_PRESS)
+static inline uint64_t front_padmap_buttons(const front_padmap *m, const uint8_t held[FRONT_INS]) {
+    uint64_t b = 0;
+    for (int a = 0; a < FRONT_PACTS; a++) if (m->in[a] >= 0 && m->in[a] < FRONT_INS && held[m->in[a]]) b |= 1ull << a;
+    return b;
+}

@@ -1,0 +1,19 @@
+#version 450
+// vkspv_cap_bound (t_vk_guard.c): shader 2cb5df5cb96b324e's shape. A count read as unsigned (here a constant buffer's word 13) is stored once into a
+// function variable, `bound`, which ends a loop as `i >= bound`; each lane writes how many entries it walked
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std140) uniform Cb { vec4 m[4]; } cp_c3;
+layout(set = 0, binding = 1) uniform sampler2D cp_t_tcb_C;
+layout(set = 0, binding = 2, std430) buffer Out { uint walked[]; };
+void main() {
+    uint bound = floatBitsToUint(cp_c3.m[3].y);
+    uint n = 0u; float acc = 0.0;
+    if (0u < bound) {
+        uint i = 0u;
+        do {
+            acc += texelFetch(cp_t_tcb_C, ivec2(int(i & 15u), 0), 0).x;
+            n++; i++;
+        } while (!(i >= bound));
+    }
+    walked[gl_GlobalInvocationID.x] = n + (acc > 1e30 ? 1u : 0u);
+}

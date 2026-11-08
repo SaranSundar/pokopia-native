@@ -46,6 +46,7 @@ static unsigned __stdcall window_main(void *arg) {
     SDL_SetWindowMinimumSize(g_w.win, 320, 180);
     g_w.ev_req = SDL_RegisterEvents(1);
     if (!g_w.hidden) {   // the game's window (the tests' hidden ones take no input)
+        front_sdl_hints();
         front_sdl_lock(); int gok = SDL_InitSubSystem(SDL_INIT_GAMEPAD); front_sdl_unlock();
         if (!gok) VKRED("SDL cannot start its controller subsystem: %s (keyboard and mouse only)", SDL_GetError());
         front_sdl_start(g_w.win); g_w.front = 1;

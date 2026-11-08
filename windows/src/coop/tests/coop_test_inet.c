@@ -149,6 +149,9 @@ static coop_node *mk_inet(const char *coop, const char *uid, const char *room, c
     c.tcp_only = tcp_only; c.hooks = hooks(t); c.bind_loopback = 1; c.discovery = 0;
     return coop_create(&c);
 }
+static void env_set(const char *name, const char *v);   // coop_test.c
+static char g_logcap[4096];
+static void log_cap(void *u, const char *l) { (void)u; size_t k = strlen(g_logcap); snprintf(g_logcap + k, sizeof g_logcap - k, "%s\n", l); }
 static void test_inet_config(void) {
     coop_cfg c; char err[240];
     CHECK_EQ(coop_cfg_parse_ex(&c, "join:8.8.8.8:47600", NULL, NULL, ROOM, NULL, err, sizeof err), -1);   // internet play off: as step 1c
@@ -185,6 +188,29 @@ static void test_inet_config(void) {
     CHECK_EQ(coop_cfg_parse_ex(&c, "off", NULL, "1", ROOM, NULL, err, sizeof err), 0);
     CHECK_EQ(coop_cfg_parse(&c, "auto", NULL, err, sizeof err), 1); CHECK_EQ(c.auth, 0); CHECK_EQ(c.room[0], 0); CHECK_EQ(c.relay_ip, 0);
     for (int cls = 0; cls <= COOP_ADDR_INVALID; cls++) CHECK_EQ(coop_addr_allowed(COOP_SCOPE_INTERNET, cls), cls != COOP_ADDR_INVALID);
+    {   // the in-game Link Play page's snapshot before any session: the room code as players type it, the host a visitor will dial
+        tnode t = {.name = "info"}; coop_info i;
+        coop_node *v = mk_inet("join:203.0.113.7:47600", NULL, ROOM, NULL, &t, 0);
+        coop_get_info(v, &i);
+        CHECK(i.internet && i.role == COOP_ROLE_JOIN && i.scope == COOP_SCOPE_INTERNET && !strcmp(i.room, ROOM) && i.join_ip == 0xCB007107u && i.join_port == 47600);
+        CHECK(i.ldn == COOP_LS_NONE && !i.hosting && i.nplayers == 0 && i.links == 0);
+        coop_destroy(v);
+        coop_node *h = mk_inet("auto", NULL, "7k3m 9qxa 2b4c hj6n", NULL, &t, 0);
+        coop_get_info(h, &i);
+        CHECK(i.internet && i.role == COOP_ROLE_AUTO && !i.hosting && i.join_ip == 0 && !strcmp(i.room, ROOM));
+        coop_destroy(h);
+        // the log keeps a given room code out but for its first group (logs end up in bug reports); a code made here is logged whole
+        coop_hooks hk = {NULL, log_cap, NULL, NULL, NULL, NULL};
+        env_set("DM_COOP", "auto"); env_set("DM_COOP_INTERNET", "1"); env_set("DM_COOP_ROOM", ROOM); env_set("DM_COOP_JOIN", NULL); env_set("DM_COOP_DISCOVERY", "0");
+        g_logcap[0] = 0; coop_node *x = coop_env_make(&hk); CHECK(x != NULL);
+        CHECK(strstr(g_logcap, "room code 7K3M-****-****-****") != NULL); CHECK(strstr(g_logcap, "9QXA") == NULL);
+        coop_destroy(x);
+        env_set("DM_COOP_ROOM", NULL); g_logcap[0] = 0; x = coop_env_make(&hk); CHECK(x != NULL); CHECK(strstr(g_logcap, "this session's room code is ") != NULL);
+        coop_destroy(x);
+        env_set("DM_COOP", NULL); env_set("DM_COOP_INTERNET", NULL); env_set("DM_COOP_DISCOVERY", NULL);
+        uint32_t a[8]; int k = coop_local_ipv4(a, 8);
+        CHECK(k >= 0 && k <= 8); for (int j = 0; j < k; j++) CHECK((a[j] >> 24) != 127);
+    }
 }
 
 // A man in the middle for one link: it copies the station's bytes to the host unchanged, and the host's frames back, changing, repeating or

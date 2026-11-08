@@ -63,7 +63,31 @@ int main(void) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) { printf("SKIP: SDL cannot start (%s)\n", SDL_GetError()); return 77; }
     SDL_Window *w = SDL_CreateWindow("nxrt pad test", 320, 180, SDL_WINDOW_HIDDEN);
     if (!w) { printf("SKIP: no window (%s)\n", SDL_GetError()); return 77; }
+    /* 0. SDL_GameControllerDB's file beside the program (the build copies it there): an entry for this platform that SDL's own list lacks, which the front
+       end's start must add */
+    char gguid[40] = "", gname[80] = "";
+    {
+        char p[1024]; snprintf(p, sizeof p, "%sgamecontrollerdb.txt", SDL_GetBasePath() ? SDL_GetBasePath() : "");
+        FILE *f = fopen(p, "rb"); char line[2048], plat[64]; snprintf(plat, sizeof plat, "platform:%s,", SDL_GetPlatform());   /* SDL keeps this platform's lines only */
+        T(f != NULL);
+        while (f && fgets(line, sizeof line, f) && !gguid[0]) {
+            const char *c1 = strchr(line, ','), *c2 = c1 ? strchr(c1 + 1, ',') : NULL;
+            if (line[0] == '#' || !c2 || c1 - line != 32 || !strstr(line, plat)) continue;
+            char g[40]; memcpy(g, line, 32); g[32] = 0;
+            char *had = SDL_GetGamepadMappingForGUID(SDL_StringToGUID(g));
+            if (!had) { snprintf(gguid, sizeof gguid, "%s", g); snprintf(gname, sizeof gname, "%.*s", (int)(c2 - c1 - 1), c1 + 1); }
+            SDL_free(had);
+        }
+        if (f) fclose(f);
+        T(gguid[0]);
+    }
     front_sdl_start(w);
+    {
+        char *m = gguid[0] ? SDL_GetGamepadMappingForGUID(SDL_StringToGUID(gguid)) : NULL;
+        T(m && strstr(m, gname));
+        printf("gamecontrollerdb.txt: '%s' (%s), not in SDL's own list, is mapped after the start: %s\n", gname, gguid, m ? "yes" : "no");
+        SDL_free(m);
+    }
 
     /* 1. player 1's gamepad */
     SDL_JoystickID p1 = attach("Virtual Pad 1");
@@ -164,7 +188,8 @@ int main(void) {
     e = key(SDL_SCANCODE_J, 1); front_sdl_event(&e); T(!(rd(0).buttons & DM_BTN_A)); e = key(SDL_SCANCODE_J, 0); front_sdl_event(&e);
     SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_DPAD_UP, true); pump(50); T(!(rd(0).buttons & 0xffff)); SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_DPAD_UP, false); pump(30);
     menu_build(&ml, 1920, 1080);
-    e = key(SDL_SCANCODE_E, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);        /* the Controls tab, its first action: A */
+    e = key(SDL_SCANCODE_E, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);        /* the Controls tab, its Keyboard page */
+    e = key(SDL_SCANCODE_DOWN, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);     /* below the page switch: the first action, A */
     e = key(SDL_SCANCODE_RETURN, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);   /* waits for a key */
     e = key(SDL_SCANCODE_K, 1); front_sdl_event(&e); e = key(SDL_SCANCODE_K, 0); front_sdl_event(&e);   /* K, B's key until now: the two swap */
     menu_build(&ml, 1920, 1080); T(ml.n > 100);   /* it is drawn: panels and text */
@@ -184,9 +209,39 @@ int main(void) {
     rd(0); T(!(rd(0).buttons & 0xffff));   /* Minus, which reached the game before Plus made the pair, let go */
     SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_EAST, true); pump(50); T(!menu_is_open());   /* B by its label */
     SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_EAST, false); pump(30);
-    free(ml.q);
     printf("the in-game menu: F1 opens it, nothing reaches the game while it is open, a key bound in it (K for A, J now B's) plays at once, a key let go "
            "while it is open is let go in the game, Esc closes it; Back + Start opens it, B closes it\n");
+
+    /* 6. the Controls tab's Controller page: a second gamepad made player 1 there (the first takes its place), then the bottom button captured for A; both
+       play at once, and both are in controls.json */
+    SDL_JoystickID pb = attach("Pad B (virtual)"); pump(100);
+    SDL_Joystick *jb = SDL_OpenJoystick(pb); T(jb != NULL);
+    memset(&e, 0, sizeof e); e.type = SDL_EVENT_WINDOW_FOCUS_GAINED; front_sdl_event(&e);   /* B closed the menu: the input taken up again */
+    SDL_SetJoystickVirtualButton(jb, SDL_GAMEPAD_BUTTON_EAST, true); pump(50); T((rd(2).buttons & 0xffff) == DM_BTN_A); SDL_SetJoystickVirtualButton(jb, SDL_GAMEPAD_BUTTON_EAST, false); pump(30);
+    e = key(SDL_SCANCODE_F1, 1); front_sdl_event(&e); e = key(SDL_SCANCODE_F1, 0); front_sdl_event(&e); pump(30); T(menu_is_open());
+    e = key(SDL_SCANCODE_Q, 1); front_sdl_event(&e); e = key(SDL_SCANCODE_E, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);   /* Controls again, at its page switch */
+    e = key(SDL_SCANCODE_RIGHT, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);   /* the Controller page */
+    e = key(SDL_SCANCODE_DOWN, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);    /* the Player 1 row */
+    e = key(SDL_SCANCODE_RIGHT, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080); pump(50);   /* the next controller: Pad B */
+    e = key(SDL_SCANCODE_DOWN, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);    /* the first button, A */
+    e = key(SDL_SCANCODE_RETURN, 1); front_sdl_event(&e); menu_build(&ml, 1920, 1080);  /* waits for a controller button */
+    SDL_SetJoystickVirtualButton(jb, SDL_GAMEPAD_BUTTON_SOUTH, true); pump(50); SDL_SetJoystickVirtualButton(jb, SDL_GAMEPAD_BUTTON_SOUTH, false); pump(30);
+    menu_build(&ml, 1920, 1080); T(ml.n > 100);
+    e = key(SDL_SCANCODE_ESCAPE, 1); front_sdl_event(&e); pump(30); T(!menu_is_open());
+    memset(&e, 0, sizeof e); e.type = SDL_EVENT_WINDOW_FOCUS_GAINED; front_sdl_event(&e);
+    SDL_SetJoystickVirtualButton(jb, SDL_GAMEPAD_BUTTON_SOUTH, true); pump(50); s = rd(0); T((s.buttons & 0xffff) == DM_BTN_A);   /* Pad B is player 1; its bottom button is A */
+    SDL_SetJoystickVirtualButton(jb, SDL_GAMEPAD_BUTTON_SOUTH, false); pump(30); T(!(rd(0).buttons & 0xffff));
+    SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_SOUTH, true); pump(50); s = rd(2); T((s.buttons & 0xffff) == DM_BTN_A);   /* Pad 1 is player 3 now (Pad B came in as player 3, the lowest no controller had held; the two swapped), the same map */
+    SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_SOUTH, false); pump(30);
+    SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_EAST, true); pump(50); T((rd(2).buttons & 0xffff) == DM_BTN_B); SDL_SetJoystickVirtualButton(j1, SDL_GAMEPAD_BUTTON_EAST, false); pump(30);   /* B took A's old right button (the two swapped) */
+    {
+        char cf[700]; snprintf(cf, sizeof cf, "%s/controls.json", sd); FILE *f = fopen(cf, "rb"); char t[4096] = {0};
+        if (f) { fread(t, 1, sizeof t - 1, f); fclose(f); }
+        T(strstr(t, "\"pad\"") && strstr(t, "\"A\": \"south\"") && strstr(t, "\"player1_name\":  \"Pad B (virtual)\""));
+    }
+    SDL_CloseJoystick(jb); SDL_DetachVirtualJoystick(pb); pump(50);
+    free(ml.q);
+    printf("the Controls tab's Controller page: a gamepad made player 1 there, a button captured for A; both play at once and are saved\n");
 
     SDL_CloseJoystick(j1); SDL_DetachVirtualJoystick(p1); pump(50);
     SDL_DestroyWindow(w); SDL_Quit();

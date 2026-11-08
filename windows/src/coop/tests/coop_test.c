@@ -389,6 +389,19 @@ static void run(int tcp_only) {
     uint32_t ip2 = 0; CHECK_EQ(coop_ldn_ipv4(S2, &ip2, &mask), 0); CHECK_EQ(ip2, net | 3);
     WAIT_UNTIL(coop_ldn_network_info(S1, sinfo) == 0 && NI_COUNT(sinfo) == 3, 2000);   // S1 hears of S2 through SYNC
     CHECK_EQ(NI_COUNT(sinfo), 3); CHECK_EQ(NI_NODE_IP(sinfo, 2), ip2);
+    {   // the in-game Link Play page's snapshot: the players by name, with the real addresses each side knows
+        coop_info hi, si;
+        WAIT_UNTIL((coop_get_info(H, &hi), hi.nplayers == 3), 2000);
+        CHECK_EQ(hi.ldn, COOP_LS_AP_CREATED); CHECK(hi.hosting); CHECK_EQ(hi.port, port); CHECK_EQ(hi.internet, 0); CHECK_EQ(hi.room[0], 0); CHECK_EQ(hi.join_ip, 0);
+        CHECK_EQ(hi.nplayers, 3); CHECK_EQ(hi.links, 2);
+        CHECK(!strcmp(hi.player[0].name, "Host") && hi.player[0].self && hi.player[0].node == 0 && hi.player[0].ip == 0);
+        CHECK(!strcmp(hi.player[1].name, "Sta1") && !hi.player[1].self && hi.player[1].node == 1 && hi.player[1].ip == 0x7F000001u);
+        CHECK(!strcmp(hi.player[2].name, "Sta2") && hi.player[2].ip == 0x7F000001u);
+        WAIT_UNTIL((coop_get_info(S1, &si), si.nplayers == 3), 2000);
+        CHECK_EQ(si.ldn, COOP_LS_STATION_CONNECTED); CHECK(!si.hosting); CHECK_EQ(si.port, 0); CHECK_EQ(si.join_ip, 0x7F000001u); CHECK_EQ(si.join_port, port);
+        CHECK_EQ(si.nplayers, 3); CHECK(si.player[1].self && !si.player[0].self); CHECK(!strcmp(si.player[0].name, "Host") && si.player[0].ip == 0x7F000001u);
+        CHECK_EQ(si.player[2].ip, 0);   // another visitor's address: only the host knows it
+    }
 
     // ---- station 3: the network is full (Number of Players: Three)
     coop_node *S3 = mk_node(join, "0000000000000001000000000000000d", &t3, tcp_only);
@@ -883,6 +896,7 @@ static void test_mdns(void) {
 }
 
 #include "coop_test_inet.c"   // step 1d: internet play and the relay
+#include "coop_test_nat.c"    // automatic port forwarding
 
 // "Interact everywhere": the sites by build, the callback's register change, and a fingerprint every port computes alike (nxnative's cheat names, then the mod)
 static void env_set(const char *name, const char *v) {   // NULL removes it
@@ -950,7 +964,7 @@ int main(int argc, char **argv) {
     cplat_init();   // the raw sockets need Winsock even while no node exists
     int all = argc < 2;
     int want_config = all, want_addr = all, want_txt = all, want_loop = all, want_lan = all, want_hostile = all, want_mdns = m && atoi(m);
-    int want_crypto = all, want_inet = all, want_relay = all, want_probe = 0, want_interact = all;
+    int want_crypto = all, want_inet = all, want_relay = all, want_probe = 0, want_interact = all, want_nat = all;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "config")) want_config = 1;
         else if (!strcmp(argv[i], "addr")) want_addr = 1;
@@ -964,7 +978,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "relay")) want_relay = 1;
         else if (!strcmp(argv[i], "probe")) want_probe = 1;
         else if (!strcmp(argv[i], "interact")) want_interact = 1;
-        else { fprintf(stderr, "sections: config addr txt loopback lan hostile mdns crypto inet relay probe interact\n"); return 2; }
+        else if (!strcmp(argv[i], "nat")) want_nat = 1;
+        else { fprintf(stderr, "sections: config addr txt loopback lan hostile mdns crypto inet relay probe interact nat\n"); return 2; }
     }
     if (want_config) test_config();
     if (want_addr) test_addr();
@@ -978,6 +993,7 @@ int main(int argc, char **argv) {
     if (want_relay) test_relay();
     if (want_probe) test_probe();
     if (want_interact) { test_interact(); test_story(); }
+    if (want_nat) test_nat();
     fprintf(stderr, "%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

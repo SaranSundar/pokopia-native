@@ -59,7 +59,8 @@ static int g_origin_ll = 1;
 static uint64_t g_frame;
 static _Atomic uint64_t s_fences;
 
-static void on_close(void) { VKLOG("window closed: ending the run"); nxrt_logf("window closed by the user"); ExitProcess(0); }
+void dm_coop_quit(void);   // hle_offline.c: the router's port forward given back
+static void on_close(void) { VKLOG("window closed: ending the run"); nxrt_logf("window closed by the user"); dm_coop_quit(); ExitProcess(0); }
 // DM_CTL's renderer commands (host/ctl_gfx.h)
 static void ctl_texdump(const char *path) { (void)path; vkr_texdump_next(); VKLOG("DM_CTL texdump: the next frame's images, beside the log (NXRT_VK_TEXDUMP's names)"); }
 static void ctl_passdump(long n) { vkr_passdump_next(n); VKLOG("DM_CTL passdump: the next %ld frames, in this log", n); }

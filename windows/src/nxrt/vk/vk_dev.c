@@ -42,6 +42,7 @@ int vk_dev_fail(char *found, size_t n, const char *sep) {
         o += (size_t)snprintf(found + o, n - o, "%s%s (Vulkan %u.%u)", i ? sep : "", g_fail.name[i], VK_API_VERSION_MAJOR(g_fail.api[i]), VK_API_VERSION_MINOR(g_fail.api[i]));
     return g_fail.why;
 }
+static int markers_make(void);
 int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_inst_exts) {
     if (g_vk.up) return 0;
     g_fail.why = 3; g_fail.n = 0;
@@ -159,6 +160,7 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
         {VK_NV_VIEWPORT_ARRAY_2_EXTENSION_NAME, &h->viewport_array2_nv}, {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, &h->push_descriptor},
         {VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME, NULL},   // with the graphics pipeline library only
         {VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME, &h->checkpoints},   // vk_lost's report; NXRT_VK_CHECKPOINTS=0 leaves it off
+        {VK_AMD_BUFFER_MARKER_EXTENSION_NAME, &h->buffer_marker},   // the same report where there are no checkpoints (AMD); NXRT_VK_CHECKPOINTS=markers takes them instead (tests)
     };
     const char *ck = getenv("NXRT_VK_CHECKPOINTS");
     feat_any *fs[NEF]; const char *dexts[64]; uint32_t nd = 0;
@@ -182,7 +184,9 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
     for (unsigned i = 0; i < sizeof ex / sizeof *ex; i++) {
         if (!has_ext(de, nde, ex[i].ext)) continue;
         if (!ex[i].flag && !(has_ext(de, nde, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME))) continue;
-        if (ex[i].flag == &h->checkpoints && ck && *ck == '0') continue;
+        if ((ex[i].flag == &h->checkpoints || ex[i].flag == &h->buffer_marker) && ck && *ck == '0') continue;
+        if (ex[i].flag == &h->checkpoints && ck && !strcmp(ck, "markers")) continue;
+        if (ex[i].flag == &h->buffer_marker && h->checkpoints) continue;
         dexts[nd++] = ex[i].ext; if (ex[i].flag) *ex[i].flag = 1;
     }
     if (h->checkpoints && ck && !strcmp(ck, "all")) h->checkpoints = 2;
@@ -236,6 +240,7 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
     VkSemaphoreCreateInfo sci = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &tci, 0};
     if (vkCreateSemaphore(g_vk.dev, &sci, NULL, &g_vk.tl) != VK_SUCCESS) { VKRED("cannot create the GPU timeline semaphore"); return -1; }
     vk_name((uint64_t)g_vk.tl, VK_OBJECT_TYPE_SEMAPHORE, "gpu timeline");
+    if (h->buffer_marker) { if (ck && !strcmp(ck, "all")) h->buffer_marker = 2; if (markers_make()) h->buffer_marker = 0; }
 
     VkPhysicalDeviceProperties *p = &g_vk.props;
     VKLOG("device: %s, %s driver %u.%u (raw %#x), Vulkan %u.%u.%u, queue family %u%s, %u device extensions enabled, validation %s",
@@ -251,8 +256,9 @@ int vk_dev_open(const vk_dev_opts *o, const char *const *inst_exts, uint32_t n_i
           h->custom_border, h->custom_border_noformat, h->xfb, h->depth_clip_control, h->index_u8, h->cond_render, h->provoking_last, h->null_descriptor,
           h->eds2_logic_op, h->eds3, h->viewport_swizzle_nv, h->memory_budget, h->present_wait, h->line_raster, h->vertex_divisor, h->prim_list_restart, h->stencil_export,
           h->fs_interlock, h->gpl, h->mirror_clamp_edge, h->minmax_filter, f12.bufferDeviceAddress, en.shaderInt64, f12.shaderFloat16);
-    VKLOG("if the GPU stops responding: checkpoints %s, the driver's fault report %s", h->checkpoints == 2 ? "before every dispatch and draw" : h->checkpoints ? "before every dispatch" : "off",
-          h->device_fault ? "on" : "not available");
+    int ckl = h->checkpoints ? h->checkpoints : h->buffer_marker;
+    VKLOG("if the GPU stops responding: %s %s, the driver's fault report %s", h->buffer_marker ? "AMD buffer markers" : "checkpoints",
+          ckl == 2 ? "before every dispatch and draw" : ckl ? "before every dispatch" : "off", h->device_fault ? "on" : "not available");
     for (uint32_t i = 0; i < g_vk.memp.memoryHeapCount; i++)
         VKLOG("memory heap %u: %.0f MB%s", i, g_vk.memp.memoryHeaps[i].size / 1048576.0, g_vk.memp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT ? " device local" : "");
     // What the translated corpus declares (docs/m5-record-shaders.md section 7, track A's 3,967 modules): DrawParameters, GroupNonUniformBallot / Vote / Shuffle,
@@ -294,6 +300,7 @@ void vk_dev_close(void) {
     if (!g_vk.dev) return;
     AcquireSRWLockExclusive(&g_vk.qlock); vkDeviceWaitIdle(g_vk.dev); ReleaseSRWLockExclusive(&g_vk.qlock);
     vk_retire_poll();
+    void vk_markers_free(void); vk_markers_free();
     void vk_alloc_shutdown(void); vk_alloc_shutdown();
     if (g_vk.tl) vkDestroySemaphore(g_vk.dev, g_vk.tl, NULL);
     vkDestroyDevice(g_vk.dev, NULL);
@@ -441,15 +448,46 @@ int vk_tl_wait(uint64_t value, uint64_t timeout_ns) {
 enum { CK_N = 4096 };
 static struct { uint64_t seq; char kind, indirect, key[17], has_cw; uint32_t x, y, z, cw[16]; } g_ck[CK_N];
 static _Atomic uint64_t g_ck_seq;
+// AMD (VK_AMD_buffer_marker): each checkpoint's number written into host memory twice, as the GPU's front reaches it (word 0: started) and once all the work
+// before it has finished (word 1); the checkpoint ring above names them. The memory stays readable after the device is lost
+static struct { VkBuffer buf; vk_alloc mem; } g_mk;
+static int markers_make(void) {
+    VkBufferCreateInfo bci = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, 0, 64, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_SHARING_MODE_EXCLUSIVE, 0, NULL};
+    if (!vkCmdWriteBufferMarkerAMD || vkCreateBuffer(g_vk.dev, &bci, NULL, &g_mk.buf) != VK_SUCCESS) return -1;
+    VkMemoryRequirements mr; vkGetBufferMemoryRequirements(g_vk.dev, g_mk.buf, &mr);
+    if (vk_alloc_mem(&mr, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0, &g_mk.mem) || !g_mk.mem.map) {
+        vkDestroyBuffer(g_vk.dev, g_mk.buf, NULL); g_mk.buf = VK_NULL_HANDLE; return -1;
+    }
+    vkBindBufferMemory(g_vk.dev, g_mk.buf, g_mk.mem.mem, g_mk.mem.off);
+    memset(g_mk.mem.map, 0, 64);
+    return 0;
+}
 
 void vk_checkpoint(VkCommandBuffer cb, char kind, const char *key, uint32_t x, uint32_t y, uint32_t z, int indirect, const uint32_t *cw) {
-    if (!vkCmdSetCheckpointNV || g_vk.has.checkpoints < (kind == 'd' ? 2 : 1)) return;
+    int level = kind == 'd' ? 2 : 1, nv = vkCmdSetCheckpointNV && g_vk.has.checkpoints >= level, amd = g_mk.buf && g_vk.has.buffer_marker >= level;
+    if (!nv && !amd) return;
     uint64_t s = atomic_fetch_add(&g_ck_seq, 1) + 1;
     g_ck[s % CK_N].seq = s; g_ck[s % CK_N].kind = kind; g_ck[s % CK_N].indirect = (char)indirect;
     g_ck[s % CK_N].x = x; g_ck[s % CK_N].y = y; g_ck[s % CK_N].z = z;
     g_ck[s % CK_N].has_cw = cw != NULL; if (cw) memcpy(g_ck[s % CK_N].cw, cw, sizeof g_ck[0].cw);
     snprintf(g_ck[s % CK_N].key, sizeof g_ck[0].key, "%s", key ? key : "?");
-    vkCmdSetCheckpointNV(cb, (const void *)(uintptr_t)s);
+    if (nv) vkCmdSetCheckpointNV(cb, (const void *)(uintptr_t)s);
+    else {
+        vkCmdWriteBufferMarkerAMD(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g_mk.buf, 0, (uint32_t)s);
+        vkCmdWriteBufferMarkerAMD(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_mk.buf, 4, (uint32_t)s);
+    }
+}
+void vk_markers_free(void) { if (g_mk.buf) vkDestroyBuffer(g_vk.dev, g_mk.buf, NULL); memset(&g_mk, 0, sizeof g_mk); }   // the memory goes with the allocator's
+// A marker's 32 bits as the checkpoint number they were cut from (the newest one with those bits)
+static uint64_t marker_seq(uint32_t m) {
+    uint64_t top = atomic_load(&g_ck_seq), s = (top & ~0xffffffffull) | m;
+    return !m ? 0 : s > top && s >= 0x100000000ull ? s - 0x100000000ull : s;
+}
+uint64_t vk_markers_now(uint64_t *finished) {   // the markers as they stand (tests): the last checkpoint started, *finished the last everything before had finished
+    if (!g_mk.buf) { if (finished) *finished = 0; return 0; }
+    const volatile uint32_t *m = g_mk.mem.map;
+    if (finished) *finished = marker_seq(m[1]);
+    return marker_seq(m[0]);
 }
 
 static const char *ck_text(uint64_t s, char *out, size_t n) {
@@ -483,7 +521,15 @@ void vk_lost(const char *where, VkResult r) {
         }
         if (!n) VKRED("  no checkpoint was reached");
         for (uint64_t s = lo + 1; lo && s <= hi && s <= lo + 8; s++) VKRED("  in flight: %s", ck_text(s, t, sizeof t));
-    } else VKRED("  (no checkpoints on this GPU: they need NVIDIA's VK_NV_device_diagnostic_checkpoints)");
+    } else if (g_mk.buf) {   // AMD's markers: the same two places, from host memory
+        uint64_t lo = 0, hi = vk_markers_now(&lo);
+        if (!hi) VKRED("  no marker was reached");
+        else {
+            VKRED("  the GPU started %s (AMD buffer marker)", ck_text(hi, t, sizeof t));
+            if (lo) VKRED("  the GPU finished everything before %s", ck_text(lo, t, sizeof t));
+            for (uint64_t s = lo + 1; lo && s <= hi && s <= lo + 8; s++) VKRED("  in flight: %s", ck_text(s, t, sizeof t));
+        }
+    } else VKRED("  (no checkpoints on this GPU: they need NVIDIA's VK_NV_device_diagnostic_checkpoints or AMD's VK_AMD_buffer_marker)");
     if (g_vk.has.device_fault && vkGetDeviceFaultInfoEXT) {
         VkDeviceFaultCountsEXT c = {VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT};
         VkDeviceFaultAddressInfoEXT ai[8]; VkDeviceFaultVendorInfoEXT vi[8];

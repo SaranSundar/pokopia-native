@@ -12,6 +12,12 @@ void front_sdl_event(const SDL_Event *e);   // every event the window thread pum
 void front_sdl_tick(void);                  // every turn of the window thread's loop (at least every 50 ms): rumble kept going, the controller check's title
 void front_sdl_lock(void);
 void front_sdl_unlock(void);
+void front_sdl_hints(void);                 // before the controller subsystem starts: the HIDAPI drivers (the Steam Controller's)
+
+// The controllers as the in-game menu's Controls tab sees them (any thread): connected ones, their player (0 = player 1, -1 none) and SDL's GUID as text
+typedef struct { uint32_t id; int player, type; char name[64], guid[40]; } front_pad_info;
+int front_sdl_pads(front_pad_info *out, int max);
+void front_sdl_player1(uint32_t id);        // that controller made player 1 (on the window thread, soon after); the one that was swaps places with it
 
 #ifdef __cplusplus
 }

@@ -80,12 +80,19 @@ set_tests_properties(scripts.play_defaults PROPERTIES SKIP_RETURN_CODE 77)
 # Co-op step 1b: the hooks route to the coop module (off: the offline answers; host / join: a node through the hooks with one made directly), one process each
 nxrt_executable(nxrt-tests-coop tests/test_coop.c)
 target_link_libraries(nxrt-tests-coop PRIVATE coop)
-foreach(m off host join)
+foreach(m off host join remake)
   add_test(NAME nxrt.coop_${m} COMMAND nxrt-tests-coop ${m})
   set_tests_properties(nxrt.coop_${m} PROPERTIES TIMEOUT 60)
 endforeach()
+# The in-game Link Play tab's words for each way of playing (front/linkplay.c) and its settings (linkplay_prefs.c: linkplay.json, the environment, when a
+# change applies): no SDL, no game
+add_executable(nxrt-tests-linkplay tests/test_linkplay.c front/linkplay.c front/linkplay_prefs.c)
+target_include_directories(nxrt-tests-linkplay PRIVATE front)
+target_link_libraries(nxrt-tests-linkplay PRIVATE coop)
+set_target_properties(nxrt-tests-linkplay PROPERTIES C_STANDARD 11)
+add_test(NAME nxrt.linkplay COMMAND nxrt-tests-linkplay)
 foreach(t nxrt.addrspace nxrt.svc nxrt.threads nxrt.adapters nxrt.dump nxrt.gamedll nxrt.boot_order nxrt.nvn nxrt.audio nxrt.save nxrt.nvn_rec nxrt.save_rt
-          nxrt.coop_off nxrt.coop_host nxrt.coop_join)
+          nxrt.coop_off nxrt.coop_host nxrt.coop_join nxrt.coop_remake)
   set_tests_properties(${t} PROPERTIES ENVIRONMENT "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs")
 endforeach()
 

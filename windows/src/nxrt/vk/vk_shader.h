@@ -27,6 +27,7 @@ typedef struct {
 typedef struct vks_shader {
     char key[17]; int stage, set;
     VkShaderModule mod;
+    VkShaderModule mod_plain;                               // a loop-guarded compute shader's module as translated (vk_pipe.c: when the guarded one cannot be made)
     VkDescriptorSetLayout dsl;
     int nb; vks_bind *b;
     int nin; struct { uint8_t loc, ct, ncomp; } in[32];   // vertex inputs: location = NVN vertex attribute
@@ -90,6 +91,10 @@ int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env);
 // comparisons get min(count, the items tex_var holds, stride texels each), the unsigned minimum for a count read as unsigned. The new word count (*words replaced)
 // and *limited comparisons, nwords when nothing changed
 size_t vkspv_limit_count(uint32_t **words, size_t nwords, const char *count_var, uint32_t word, const char *tex_var, uint32_t stride, int *limited);
+// A loop bound kept in function variable `var` (2cb5df5cb96b324e's count read from a data texture, Styphix's hang on 1.3.3): the value stored into it becomes
+// min(value, cap), unsigned. Only when var is a uint function variable stored once and read by an unsigned `i >= bound`. The new word count (*words
+// replaced) and *capped (1 done), nwords when nothing changed
+size_t vkspv_cap_bound(uint32_t **words, size_t nwords, uint32_t var, uint32_t cap, int *capped);
 // Whether that guard applies: NVIDIA's GPUs only, where the hang was seen (AMD's Windows driver crashed making the guarded pipeline on 1.3.1); env,
 // NXRT_VK_LOOP_GUARD, decides when given: 0 off, anything else on
 int vkspv_loop_guard_wanted(uint32_t vendor, const char *env);

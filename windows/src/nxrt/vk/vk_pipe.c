@@ -2,6 +2,7 @@
 // Vulkan meet; the enumerant values are the NVN header's and the Vulkan specification's.
 #include "vk_pipe.h"
 #include "vk_hmap.h"
+#include <malloc.h>
 #include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,57 @@ static SRWLOCK g_pl = SRWLOCK_INIT;
 static __thread int t_prewarm;   // this thread is a prewarm thread: its pipelines count apart and are not listed again
 static void manifest_note_gfx(const vkp_gkey *k);
 static void manifest_note_cs(const vks_shader *cs);
+
+// ---------- A driver that crashes making a pipeline ----------
+// AMD's Windows driver crashed in its shader compiler making a pipeline: 634565ab's table-size guard on 1.3.1 (on a prewarm thread), fragment shader
+// b1f4b2d7c3863ab0 on an RX 6750 XT in 1.3.4 (on the game's thread, at its first draw). The crash is caught around the call: the pipeline counts as one that
+// could not be made (its draws or dispatches are left out; a loop-guarded compute shader is made again as translated) and the game goes on. Whatever the
+// driver held when it crashed is lost with it; later pipelines it then cannot make are left out the same way. NXRT_VK_TEST_PIPE_FAULT=<key> makes such a crash
+// for pipelines with that shader (tests)
+static __thread DWORD t_fault_code; static __thread void *t_fault_at;
+static int pipe_fault_filter(EXCEPTION_POINTERS *ep) {
+    DWORD c = ep->ExceptionRecord->ExceptionCode;
+    if (c != EXCEPTION_ACCESS_VIOLATION && c != EXCEPTION_ILLEGAL_INSTRUCTION && c != EXCEPTION_PRIV_INSTRUCTION && c != EXCEPTION_INT_DIVIDE_BY_ZERO &&
+        c != EXCEPTION_STACK_OVERFLOW && c != EXCEPTION_IN_PAGE_ERROR) return EXCEPTION_CONTINUE_SEARCH;
+    t_fault_code = c; t_fault_at = ep->ExceptionRecord->ExceptionAddress;
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+static int test_fault(const vks_shader *a, const vks_shader *b) {
+    const char *e = getenv("NXRT_VK_TEST_PIPE_FAULT");
+    return e && *e && ((a && !strcmp(a->key, e)) || (b && !strcmp(b->key, e)));
+}
+// The staged crash happens in a call, as the driver's does: clang's __try covers faults in the functions it calls (without -fasync-exceptions, not its own stores)
+static __declspec(noinline) void staged_fault(void) { *(volatile int *)(uintptr_t)8 = 0; }   // the write AMD's compiler made
+static VkResult make_graphics(const VkGraphicsPipelineCreateInfo *ci, VkPipeline *p, int fault, int *faulted) {
+    VkResult r = VK_ERROR_UNKNOWN; *faulted = 0;
+    __try {
+        if (fault) staged_fault();
+        r = vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, ci, NULL, p);
+    } __except (pipe_fault_filter(GetExceptionInformation())) {
+        if (t_fault_code == EXCEPTION_STACK_OVERFLOW) _resetstkoflw();
+        *faulted = 1; *p = VK_NULL_HANDLE; r = VK_ERROR_UNKNOWN;
+    }
+    return r;
+}
+static VkResult make_compute(const VkComputePipelineCreateInfo *ci, VkPipeline *p, int fault, int *faulted) {
+    VkResult r = VK_ERROR_UNKNOWN; *faulted = 0;
+    __try {
+        if (fault) staged_fault();
+        r = vkCreateComputePipelines(g_vk.dev, g_vk.pcache, 1, ci, NULL, p);
+    } __except (pipe_fault_filter(GetExceptionInformation())) {
+        if (t_fault_code == EXCEPTION_STACK_OVERFLOW) _resetstkoflw();
+        *faulted = 1; *p = VK_NULL_HANDLE; r = VK_ERROR_UNKNOWN;
+    }
+    return r;
+}
+static const char *fault_text(char *out, size_t n) {   // the caught crash: its exception and where, as a module and offset
+    HMODULE m = NULL; char path[MAX_PATH] = "";
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)t_fault_at, &m) && m && GetModuleFileNameA(m, path, sizeof path)) {
+        const char *b = strrchr(path, '\\');
+        snprintf(out, n, "exception %#lx at %s+%#llx", t_fault_code, b ? b + 1 : path, (unsigned long long)((uintptr_t)t_fault_at - (uintptr_t)m));
+    } else snprintf(out, n, "exception %#lx at %p", t_fault_code, t_fault_at);
+    return out;
+}
 
 // ---------- Translation ----------
 VkCompareOp vkp_compare(int f) { return f >= 1 && f <= 8 ? (VkCompareOp)(f - 1) : VK_COMPARE_OP_ALWAYS; }
@@ -290,13 +342,15 @@ VkPipeline vkp_graphics(const vkp_gkey *k, VkPipelineLayout *layout) {
     VkPipelineRenderingCreateInfo ri = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, NULL, 0, k->ncolor, cf,
                                         k->has_depth ? (VkFormat)k->dfmt : VK_FORMAT_UNDEFINED, k->has_stencil ? (VkFormat)k->dfmt : VK_FORMAT_UNDEFINED};
     VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &ri, 0, ns, st, g_vkp_dyn.vertex_input ? NULL : &vi, &ia, k->sh[3] ? &ts : NULL, &vp, &rs, &ms, &ds, &cb, &dy, *layout, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, -1};
-    VkPipeline p = VK_NULL_HANDLE;
-    VkResult r = *layout ? vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &ci, NULL, &p) : VK_ERROR_INITIALIZATION_FAILED;
+    VkPipeline p = VK_NULL_HANDLE; int faulted = 0;
+    VkResult r = *layout ? make_graphics(&ci, &p, test_fault(k->sh[0], k->sh[1]), &faulted) : VK_ERROR_INITIALIZATION_FAILED;
     note_time(t0);
     if (r != VK_SUCCESS) {
-        g_st.failed++;
-        VKRED("graphics pipeline (vertex %s fragment %s geometry %s, %u colour targets) could not be created (%d): its draws are skipped",
-              k->sh[0] ? k->sh[0]->key : "-", k->sh[1] ? k->sh[1]->key : "-", k->sh[2] ? k->sh[2]->key : "-", k->ncolor, r);
+        g_st.failed++; char ft[400];
+        if (faulted) VKRED("the graphics driver crashed making the pipeline of vertex %s fragment %s geometry %s (%s): its draws are left out and the game goes on",
+                           k->sh[0] ? k->sh[0]->key : "-", k->sh[1] ? k->sh[1]->key : "-", k->sh[2] ? k->sh[2]->key : "-", fault_text(ft, sizeof ft));
+        else VKRED("graphics pipeline (vertex %s fragment %s geometry %s, %u colour targets) could not be created (%d): its draws are skipped",
+                   k->sh[0] ? k->sh[0]->key : "-", k->sh[1] ? k->sh[1]->key : "-", k->sh[2] ? k->sh[2]->key : "-", k->ncolor, r);
         put_first(&g_gfx, k, VK_NULL_HANDLE); return VK_NULL_HANDLE;
     }
     VkPipeline q = put_first(&g_gfx, k, p);
@@ -313,10 +367,22 @@ VkPipeline vkp_compute(const vks_shader *cs, VkPipelineLayout *layout) {
     VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, NULL, 0,
                                       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_COMPUTE_BIT, cs->mod, "main", NULL}, *layout, VK_NULL_HANDLE, -1};
     VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rq; sg32(&ci.stage, cs, &rq);
-    VkPipeline p = VK_NULL_HANDLE;
-    VkResult r = *layout ? vkCreateComputePipelines(g_vk.dev, g_vk.pcache, 1, &ci, NULL, &p) : VK_ERROR_INITIALIZATION_FAILED;
+    VkPipeline p = VK_NULL_HANDLE; int faulted = 0; char ft[400];
+    VkResult r = *layout ? make_compute(&ci, &p, test_fault(cs, NULL), &faulted) : VK_ERROR_INITIALIZATION_FAILED;
+    if (r != VK_SUCCESS && *layout && cs->mod_plain) {   // a loop-guarded shader the driver cannot make: the shader as translated
+        if (faulted) VKRED("the graphics driver crashed making compute pipeline %s with its loop guard (%s): making it as translated", cs->key, fault_text(ft, sizeof ft));
+        else VKRED("compute pipeline %s could not be made with its loop guard (%d): making it as translated", cs->key, r);
+        ci.stage.module = cs->mod_plain;
+        r = make_compute(&ci, &p, 0, &faulted);
+        if (r == VK_SUCCESS) VKLOG("compute pipeline %s made as translated (without its loop guard)", cs->key);
+    }
     note_time(t0);
-    if (r != VK_SUCCESS) { g_st.failed++; VKRED("compute pipeline %s could not be created (%d): its dispatches are skipped", cs->key, r); put_first(&g_cs, &cs, VK_NULL_HANDLE); return VK_NULL_HANDLE; }
+    if (r != VK_SUCCESS) {
+        g_st.failed++;
+        if (faulted) VKRED("the graphics driver crashed making compute pipeline %s (%s): its dispatches are left out and the game goes on", cs->key, fault_text(ft, sizeof ft));
+        else VKRED("compute pipeline %s could not be created (%d): its dispatches are skipped", cs->key, r);
+        put_first(&g_cs, &cs, VK_NULL_HANDLE); return VK_NULL_HANDLE;
+    }
     VkPipeline q = put_first(&g_cs, &cs, p);
     if (q == p) { if (t_prewarm) g_st.prewarmed++; else { g_st.compute++; manifest_note_cs(cs); } vkpc_note_created(1); }
     return q;

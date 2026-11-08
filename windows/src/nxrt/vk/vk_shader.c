@@ -314,11 +314,14 @@ size_t vkspv_ballot_per_lane(uint32_t **pw, size_t n, int *rewritten) {
 }
 
 int vkspv_ballot_fix_wanted(uint32_t vendor, const char *env) { return env ? *env != '0' : vendor == 0x10de; }
-int vkspv_loop_guard_wanted(uint32_t vendor, const char *env) { return env ? *env != '0' : vendor == 0x10de; }
+// The loop guards: 1 the table-size guards (NVIDIA, where D-1's and D-11's hangs were), 2 constant caps of 16384 (other GPUs: AMD's Windows driver crashed making
+// 634565ab's table-size guard, an edit that queries the table's size; a cap is a plain minimum), 0 none. NXRT_VK_LOOP_GUARD: 0 none, cap the caps, else the table guards
+int vkspv_loop_guard_wanted(uint32_t vendor, const char *env) { if (env) return *env == '0' ? 0 : !strcmp(env, "cap") ? 2 : 1; return vendor == 0x10de ? 1 : 2; }
 
 // A loop over the items of a table whose count is a constant buffer's first word (shader 634565ab77c61463: D-1's hang on 1.3.0, a count that was not the
 // game's runs the loop for seconds): in integer comparisons, count_var's [0][0].x read as an integer becomes min(count, the items tex_var holds). The table is
-// NVN's texel buffer as the translator lays it out (rows of 16384 texels; stride texels an item). The new word count (*pw replaced) and *limited comparisons
+// NVN's texel buffer as the translator lays it out (rows of 16384 texels; stride texels an item). Without tex_var the count is capped at 16384 instead (no
+// size query; stride unused). The new word count (*pw replaced) and *limited comparisons
 size_t vkspv_limit_count(uint32_t **pw, size_t n, const char *count_var, uint32_t word, const char *tex_var, uint32_t stride, int *limited) {
     enum { L_NAME = 5, L_EXT_IMPORT = 11, L_EXT_INST = 12, L_CAPABILITY = 17, CAP_IMAGE_QUERY = 50, L_TYPE_INT = 21, L_TYPE_VECTOR = 23, L_TYPE_SAMPLED_IMAGE = 27, L_TYPE_POINTER = 32, L_CONSTANT = 43,
            L_FUNCTION = 54, L_VARIABLE = 59, L_LOAD = 61, L_ACCESS_CHAIN = 65, L_COMPOSITE_EXTRACT = 81, L_IMAGE = 100, L_QUERY_SIZE_LOD = 103, L_BITCAST = 124,
@@ -333,7 +336,7 @@ size_t vkspv_limit_count(uint32_t **pw, size_t n, const char *count_var, uint32_
     for (size_t i = 5; i < n; ) {
         uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
         if (!wc || i + wc > n) goto none;
-        if (op == L_NAME && wc >= 3 && w[i + 1] < bound) { const char *s = (const char *)(w + i + 2); if (!strcmp(s, count_var)) cv = w[i + 1]; else if (!strcmp(s, tex_var)) tv = w[i + 1]; }
+        if (op == L_NAME && wc >= 3 && w[i + 1] < bound) { const char *s = (const char *)(w + i + 2); if (!strcmp(s, count_var)) cv = w[i + 1]; else if (tex_var && !strcmp(s, tex_var)) tv = w[i + 1]; }
         if (op == L_EXT_IMPORT && wc >= 3 && !strcmp((const char *)(w + i + 2), "GLSL.std.450")) glsl = w[i + 1];
         if (op == L_CAPABILITY && wc == 2 && w[i + 1] == CAP_IMAGE_QUERY) query = 1;
         if ((op == L_TYPE_POINTER || op == L_TYPE_SAMPLED_IMAGE) && wc >= 3 && w[i + 1] < bound) def[w[i + 1]] = (uint32_t)i;
@@ -362,12 +365,12 @@ size_t vkspv_limit_count(uint32_t **pw, size_t n, const char *count_var, uint32_
     uint32_t sit = 0, it = 0;
     if (tv && def[tv]) { uint32_t pt = w[def[tv] + 1]; if (pt < bound && def[pt] && (w[def[pt]] & 0xffff) == L_TYPE_POINTER) sit = w[def[pt] + 3]; }
     if (sit && sit < bound && def[sit] && (w[def[sit]] & 0xffff) == L_TYPE_SAMPLED_IMAGE) it = w[def[sit] + 2];
-    if (!glsl || !ti || !it || !first_fn) goto none;
+    if (!glsl || !ti || (tex_var && !it) || !first_fn) goto none;
     int any = 0; for (uint32_t k = 0; k < bound; k++) any |= bc[k];
     if (!any) goto none;
     wbuf o = {0};
     wput(&o, w, 5);
-    if (!query) { uint32_t cap[2] = {2u << 16 | L_CAPABILITY, CAP_IMAGE_QUERY}; wput(&o, cap, 2); }   // the table's size is queried (the translator's modules declare it)
+    if (!query && tex_var) { uint32_t cap[2] = {2u << 16 | L_CAPABILITY, CAP_IMAGE_QUERY}; wput(&o, cap, 2); }   // the table's size is queried (the translator's modules declare it)
     uint32_t *nid = calloc(bound, sizeof *nid);   // each count read's limited value
     for (size_t i = 5; i < n; ) {
         uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
@@ -382,13 +385,16 @@ size_t vkspv_limit_count(uint32_t **pw, size_t n, const char *count_var, uint32_
             wput(&o, x, 5); (*limited)++; i += wc; continue;
         }
         wput(&o, w + i, wc);
-        if (op == L_BITCAST && wc == 4 && w[i + 2] < bound && bc[w[i + 2]]) {   // the count read: min(count, ((rows - 1) * 16384 + width + stride - 1) / stride)
-            uint32_t tex = bound++, img = bound++, sz = bound++, wd = bound++, ht = bound++, hm = bound++, rows = bound++, tot = bound++, tr = bound++, cap = bound++, lim = bound++;
-            uint32_t s[] = {4u << 16 | L_LOAD, sit, tex, tv,   4u << 16 | L_IMAGE, it, img, tex,   5u << 16 | L_QUERY_SIZE_LOD, v2, sz, img, c[0],
-                            5u << 16 | L_COMPOSITE_EXTRACT, ti, wd, sz, 0,   5u << 16 | L_COMPOSITE_EXTRACT, ti, ht, sz, 1,   5u << 16 | L_ISUB, ti, hm, ht, c[1],
-                            5u << 16 | L_IMUL, ti, rows, hm, c[2],   5u << 16 | L_IADD, ti, tot, rows, wd,   5u << 16 | L_IADD, ti, tr, tot, c[3],
-                            5u << 16 | L_SDIV, ti, cap, tr, cst};
-            wput(&o, s, sizeof s / 4);
+        if (op == L_BITCAST && wc == 4 && w[i + 2] < bound && bc[w[i + 2]]) {   // the count read: min(count, ((rows - 1) * 16384 + width + stride - 1) / stride), or min(count, 16384)
+            uint32_t cap = c[2], lim = bound++;
+            if (tex_var) {
+                uint32_t tex = bound++, img = bound++, sz = bound++, wd = bound++, ht = bound++, hm = bound++, rows = bound++, tot = bound++, tr = bound++; cap = bound++;
+                uint32_t s[] = {4u << 16 | L_LOAD, sit, tex, tv,   4u << 16 | L_IMAGE, it, img, tex,   5u << 16 | L_QUERY_SIZE_LOD, v2, sz, img, c[0],
+                                5u << 16 | L_COMPOSITE_EXTRACT, ti, wd, sz, 0,   5u << 16 | L_COMPOSITE_EXTRACT, ti, ht, sz, 1,   5u << 16 | L_ISUB, ti, hm, ht, c[1],
+                                5u << 16 | L_IMUL, ti, rows, hm, c[2],   5u << 16 | L_IADD, ti, tot, rows, wd,   5u << 16 | L_IADD, ti, tr, tot, c[3],
+                                5u << 16 | L_SDIV, ti, cap, tr, cst};
+                wput(&o, s, sizeof s / 4);
+            }
             if (bc[w[i + 2]] == 1) { uint32_t m[] = {7u << 16 | L_EXT_INST, ti, lim, glsl, GLSL_SMIN, w[i + 2], cap}; wput(&o, m, 7); }
             else {   // an unsigned count (compared as one): the cap as unsigned, the unsigned minimum (a garbage count of 0xffffffff is no negative number)
                 uint32_t cu = bound++, m[] = {4u << 16 | L_BITCAST, tu, cu, cap,   7u << 16 | L_EXT_INST, tu, lim, glsl, GLSL_UMIN, w[i + 2], cu};
@@ -407,6 +413,52 @@ size_t vkspv_limit_count(uint32_t **pw, size_t n, const char *count_var, uint32_
 none:
     free(def); free(kval); free(isk); free(i32); free(ac); free(ld); free(bc);
     return n;
+}
+
+size_t vkspv_cap_bound(uint32_t **pw, size_t n, uint32_t var, uint32_t cap, int *capped) {
+    enum { C_EXT_IMPORT = 11, C_EXT_INST = 12, C_TYPE_INT = 21, C_TYPE_POINTER = 32, C_CONSTANT = 43, C_FUNCTION = 54, C_VARIABLE = 59, C_LOAD = 61, C_STORE = 62,
+           C_UGE = 174, GLSL_UMIN = 38, SC_FUNCTION = 7 };
+    uint32_t *w = *pw; *capped = 0;
+    if (!spv_ok(w, n) || !var || var >= w[3]) return n;
+    uint32_t bound = w[3], glsl = 0, tu = 0, kcap = 0, vt = 0, nstore = 0, uge = 0;
+    size_t first_fn = 0, store_at = 0;
+    uint32_t *ptr_sc = calloc(bound, sizeof *ptr_sc), *ptr_to = calloc(bound, sizeof *ptr_to); uint8_t *ld = calloc(bound, 1);
+    for (size_t i = 5; i < n; ) {
+        uint32_t wc = w[i] >> 16, op = w[i] & 0xffff;
+        if (!wc || i + wc > n) { nstore = 0; break; }
+        if (op == C_EXT_IMPORT && wc >= 3 && !strcmp((const char *)(w + i + 2), "GLSL.std.450")) glsl = w[i + 1];
+        if (op == C_TYPE_INT && wc == 4 && w[i + 2] == 32 && w[i + 3] == 0 && !tu) tu = w[i + 1];
+        if (op == C_CONSTANT && wc == 4 && tu && w[i + 1] == tu && w[i + 3] == cap && !kcap) kcap = w[i + 2];
+        if (op == C_TYPE_POINTER && wc == 4 && w[i + 1] < bound) { ptr_sc[w[i + 1]] = w[i + 2]; ptr_to[w[i + 1]] = w[i + 3]; }
+        if (op == C_VARIABLE && wc >= 4 && w[i + 2] == var) vt = w[i + 1];
+        if (op == C_FUNCTION && !first_fn) first_fn = i;
+        if (op == C_STORE && wc >= 3 && w[i + 1] == var) { nstore++; store_at = i; }
+        if (op == C_LOAD && wc >= 4 && w[i + 3] == var && w[i + 2] < bound) ld[w[i + 2]] = 1;
+        if (op == C_UGE && wc == 5 && w[i + 4] < bound && ld[w[i + 4]]) uge++;
+        i += wc;
+    }
+    int ok = glsl && tu && vt && vt < bound && ptr_sc[vt] == SC_FUNCTION && ptr_to[vt] == tu && nstore == 1 && uge && first_fn && store_at > first_fn;
+    free(ptr_sc); free(ptr_to); free(ld);
+    if (!ok) return n;
+    wbuf o = {0};
+    wput(&o, w, 5);
+    for (size_t i = 5; i < n; ) {
+        uint32_t wc = w[i] >> 16;
+        if (i == first_fn && !kcap) { kcap = bound++; uint32_t k[4] = {4u << 16 | C_CONSTANT, tu, kcap, cap}; wput(&o, k, 4); }
+        if (i == store_at && wc <= 8) {   // the bound stored: min(bound, cap)
+            uint32_t lim = bound++, m[7] = {7u << 16 | C_EXT_INST, tu, lim, glsl, GLSL_UMIN, w[i + 2], kcap}, st[8];
+            memcpy(st, w + i, wc * 4); st[2] = lim;
+            wput(&o, m, 7); wput(&o, st, wc);
+            *capped = 1; i += wc; continue;
+        }
+        wput(&o, w + i, wc);
+        i += wc;
+    }
+    if (!*capped) { free(o.w); return n; }
+    o.w[3] = bound;
+    free(w);
+    *pw = o.w;
+    return o.n;
 }
 
 int vkspv_reads_member(const uint32_t *w, size_t n, uint32_t binding, uint32_t member) {
@@ -793,6 +845,7 @@ static int ct_of(const char *t) { return !t ? VKS_CT_FLOAT : !strcmp(t, "uint") 
 void vksh_free(vks_shader *s) {
     if (!s || s == &g_failed_mark) return;
     if (s->mod) vkDestroyShaderModule(g_vk.dev, s->mod, NULL);
+    if (s->mod_plain) vkDestroyShaderModule(g_vk.dev, s->mod_plain, NULL);
     for (int i = 0; i < s->nvar; i++) if (s->var[i].s != s) vksh_free(s->var[i].s);   // a variant that could not be made is the shader itself
     if (s->dsl && !s->base) vkDestroyDescriptorSetLayout(g_vk.dev, s->dsl, NULL);
     if (!s->base) free(s->b);
@@ -827,24 +880,37 @@ vks_shader *vksh_make(const char *key, const uint8_t *spv, size_t spv_size, cons
         int nb = 0; size_t bn = vkspv_ballot_per_lane(&w, nw, &nb);
         if (nb) { nw = bn; VKLOG("shader %s: %d subgroup ballot%s for a counter made per lane (NVIDIA hang after early returns: #12, D-1)", key, nb, nb > 1 ? "s" : ""); }
     }
-    static int loop_guard = -1;   // decided at the first shader, as the ballot rewrite
+    static int loop_guard = -1;   // decided at the first shader, as the ballot rewrite (vkspv_loop_guard_wanted: 1 table-size guards, 2 constant caps, 0 none)
     if (loop_guard < 0) {
         const char *e = getenv("NXRT_VK_LOOP_GUARD");
         loop_guard = vkspv_loop_guard_wanted(g_vk.props.vendorID, e);
-        if (e) VKLOG("634565ab's item loop guard %s (NXRT_VK_LOOP_GUARD=%s)", loop_guard ? "on" : "off", e);
-        else if (!loop_guard) VKLOG("634565ab's item loop left as translated: its guard is for NVIDIA's GPUs (AMD's Windows driver crashed making it; NXRT_VK_LOOP_GUARD=1 makes it anyway)");
+        const char *what = loop_guard == 1 ? "kept to the items their tables hold" : loop_guard == 2 ? "capped at 16384" : "off";
+        if (e) VKLOG("the loop guards (634565ab, 560a0262, 2cb5df5c): %s (NXRT_VK_LOOP_GUARD=%s)", what, e);
+        else if (loop_guard == 2) VKLOG("the loop guards (634565ab, 560a0262, 2cb5df5c): %s (not NVIDIA: AMD's Windows driver crashed making the table-size guard; NXRT_VK_LOOP_GUARD=1 makes those, 0 none)", what);
+        else VKLOG("the loop guards (634565ab, 560a0262, 2cb5df5c): %s", what);
     }
+    // A guarded module keeps the module as translated beside it (vk_pipe.c: a driver that cannot make the guarded pipeline gets that one)
+    int guarded = loop_guard && (!strcmp(key, "634565ab77c61463") || !strcmp(key, "560a0262fe47818a") || !strcmp(key, "2cb5df5cb96b324e"));
+    uint32_t *w_plain = guarded ? malloc(nw * 4) : NULL; size_t n_plain = nw;
+    if (w_plain) memcpy(w_plain, w, nw * 4);
+    const char *table = loop_guard == 1 ? "kept to the items its table holds" : "capped at 16384";
     if (loop_guard && !strcmp(key, "634565ab77c61463")) {   // D-1's hang on 1.3.0: a nearest-item search whose count is a constant buffer word (8 items in play)
-        int nl = 0; size_t ln = vkspv_limit_count(&w, nw, "cp_c3", 0, "cp_t_tcb_10", 5, &nl);
-        if (nl) { nw = ln; VKLOG("shader %s: its item loop kept to the items its table holds (%d comparison%s; a GPU hang on D-1's RTX 3050)", key, nl, nl > 1 ? "s" : ""); }
+        int nl = 0; size_t ln = vkspv_limit_count(&w, nw, "cp_c3", 0, loop_guard == 1 ? "cp_t_tcb_10" : NULL, loop_guard == 1 ? 5 : 1, &nl);
+        if (nl) { nw = ln; VKLOG("shader %s: its item loop %s (%d comparison%s; a GPU hang on D-1's RTX 3050)", key, table, nl, nl > 1 ? "s" : ""); }
         else VKRED("shader %s: its item loop could not be limited (the module is not as expected)", key);
     }
     if (loop_guard && !strcmp(key, "560a0262fe47818a")) {   // D-11's hang on 1.3.1: per-cluster light lists, two loops over texel tables (one texel an item) whose counts are c3's words 12 and 13
-        int n1 = 0, n2 = 0; size_t ln = vkspv_limit_count(&w, nw, "cp_c3", 12, "cp_t_tcb_10", 1, &n1); if (n1) nw = ln;
-        ln = vkspv_limit_count(&w, nw, "cp_c3", 13, "cp_t_tcb_12", 1, &n2); if (n2) nw = ln;
-        if (n1 && n2) VKLOG("shader %s: its two light loops kept to the lights their tables hold (%d + %d comparisons; a GPU hang on D-11's GTX 1650)", key, n1, n2);
+        int n1 = 0, n2 = 0; size_t ln = vkspv_limit_count(&w, nw, "cp_c3", 12, loop_guard == 1 ? "cp_t_tcb_10" : NULL, 1, &n1); if (n1) nw = ln;
+        ln = vkspv_limit_count(&w, nw, "cp_c3", 13, loop_guard == 1 ? "cp_t_tcb_12" : NULL, 1, &n2); if (n2) nw = ln;
+        if (n1 && n2) VKLOG("shader %s: its two light loops %s (%d + %d comparisons; a GPU hang on D-11's GTX 1650)", key, loop_guard == 1 ? "kept to the lights their tables hold" : table, n1, n2);
         else VKRED("shader %s: its light loops could not both be limited (%d + %d comparisons; the module is not as expected)", key, n1, n2);
     }
+    if (loop_guard && !strcmp(key, "2cb5df5cb96b324e")) {   // Styphix's hang on 1.3.3: a loop over a list whose count is a word of the game's data texture (variable %2154)
+        int c = 0; size_t ln = vkspv_cap_bound(&w, nw, 2154, 16384, &c);
+        if (c) { nw = ln; VKLOG("shader %s: its list loop kept to at most 16384 entries (a GPU hang on 1.3.3)", key); }
+        else VKRED("shader %s: its list loop could not be capped (the module is not as expected)", key);
+    }
+    if (w_plain && n_plain == nw && !memcmp(w_plain, w, nw * 4)) { free(w_plain); w_plain = NULL; }   // nothing was changed
     // bindings
     const vj *bs = vj_get(j, "bindings");
     s->nb = bs ? bs->n : 0; s->b = calloc(s->nb ? s->nb : 1, sizeof *s->b);
@@ -853,8 +919,8 @@ vks_shader *vksh_make(const char *key, const uint8_t *spv, size_t spv_size, cons
         const vj *e = vj_at(bs, i), *nv = vj_get(e, "nvn"); vks_bind *b = &s->b[i];
         b->binding = (uint32_t)vj_int(vj_get(e, "binding"), 0); b->count = (uint32_t)vj_int(vj_get(e, "count"), 1);
         b->type = desc_type(vj_str(vj_get(e, "descriptor"), ""));
-        if (vj_int(vj_get(e, "set"), 0) != 0) { *why = "a descriptor outside set 0"; free(w); free(lb); goto fail; }
-        if (b->type == VK_DESCRIPTOR_TYPE_MAX_ENUM) { *why = "an unknown descriptor type"; free(w); free(lb); goto fail; }
+        if (vj_int(vj_get(e, "set"), 0) != 0) { *why = "a descriptor outside set 0"; free(w); free(w_plain); free(lb); goto fail; }
+        if (b->type == VK_DESCRIPTOR_TYPE_MAX_ENUM) { *why = "an unknown descriptor type"; free(w); free(w_plain); free(lb); goto fail; }
         const char *k = vj_str(vj_get(nv, "kind"), "?");
         b->reg = (int16_t)vj_int(vj_get(nv, "reg"), 0); b->bank = (uint8_t)vj_int(vj_get(nv, "bank"), 0);
         b->kind = !strcmp(k, "support") ? VKB_SUPPORT : !strcmp(k, "cbuf") ? VKB_CBUF : !strcmp(k, "c1") ? VKB_C1 : !strcmp(k, "drvcb") ? VKB_DRV : !strcmp(k, "sbuf") ? VKB_SBUF :
@@ -914,6 +980,11 @@ vks_shader *vksh_make(const char *key, const uint8_t *spv, size_t spv_size, cons
     // Vulkan objects
     VkShaderModuleCreateInfo mci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, NULL, 0, nw * 4, w};
     VkResult r = vkCreateShaderModule(g_vk.dev, &mci, NULL, &s->mod);
+    if (w_plain && r == VK_SUCCESS) {
+        VkShaderModuleCreateInfo pci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, NULL, 0, n_plain * 4, w_plain};
+        if (vkCreateShaderModule(g_vk.dev, &pci, NULL, &s->mod_plain) != VK_SUCCESS) s->mod_plain = VK_NULL_HANDLE;
+    }
+    free(w_plain);
     if (s->stage == VKS_VS || s->stage == VKS_FS) { s->words = w; s->nwords = nw; } else free(w);   // the sources of their variants
     if (r != VK_SUCCESS) { free(lb); *why = "vkCreateShaderModule failed"; goto fail; }
     VkDescriptorSetLayoutCreateInfo dci = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, NULL, 0, (uint32_t)s->nb, lb};

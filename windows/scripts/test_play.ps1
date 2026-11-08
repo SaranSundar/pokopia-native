@@ -80,6 +80,19 @@ Check-Display "the wide view (experimental)" "-Ask" "NXRT_FPS_COUNTER= NXRT_VK_W
 Check-Display "an older size keeps its string" "-Ask" "NXRT_VK_RESOLUTION=5760x3240 "
 Check-Display "-Window from outside wins" "-Ask -Window 1920x1080" "NXRT_VK_WINDOW=1920x1080 NXRT_VK_FULLSCREEN= "
 Check-Display "nothing without -Ask or -Config" "" "DM_OPMODE= NXRT_VK_SCALE= NXRT_VK_RESOLUTION= NXRT_VK_WINDOW= NXRT_VK_FULLSCREEN= NXRT_VK_UPSCALE= NXRT_VK_SHARPNESS= DM_FPS= NXRT_VK_PRESENT= NXRT_FPS_COUNTER="
+# linkplay.json as the in-game Link Play settings write it (front/linkplay_prefs.c: no UTF-8 mark, keys it doesn't know kept): -Ask starts the remembered way
+function Check-LinkPlay($name, $json, $want) {
+    [System.IO.File]::WriteAllText("$t\settings\linkplay.json", $json)
+    $o = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$play' $a -Ask" 2>&1
+    $l = ($o | Where-Object { $_ -like "link play:*" }) -join ""
+    if ($l -notlike "*$want*") { Write-Host "FAIL: linkplay.json, $name`n  got:  $l`n  want: $want"; $script:fail++ } else { Write-Host "ok: linkplay.json, $name" }
+}
+Check-LinkPlay "visiting over the internet, both mods" "{`n    `"ask`":  false,`n    `"mode`":  `"visit`",`n    `"join`":  `"26.139.206.94`",`n    `"room`":  `"7K3M-9QXA-2B4C-HJ6N`",`n    `"host_room`":  `"`",`n    `"keep_room`":  false,`n    `"interact`":  true,`n    `"story`":  true`n}`n" `
+    "DM_COOP=auto DM_COOP_INTERACT=1 DM_COOP_STORY=1 DM_COOP_JOIN=26.139.206.94 DM_COOP_INTERNET=1 DM_COOP_ROOM=7K3M-9QXA-2B4C-HJ6N"
+Check-LinkPlay "hosting over the internet, the code kept" "{`n    `"ask`":  false,`n    `"mode`":  `"host`",`n    `"join`":  `"`",`n    `"room`":  `"`",`n    `"host_room`":  `"ABCD-EFGH-JKMN-PQRS`",`n    `"keep_room`":  true,`n    `"interact`":  false,`n    `"story`":  false`n}`n" `
+    "DM_COOP=auto DM_COOP_INTERACT= DM_COOP_STORY= DM_COOP_JOIN= DM_COOP_INTERNET=1 DM_COOP_ROOM=ABCD-EFGH-JKMN-PQRS"
+Check-LinkPlay "this network" "{`n    `"ask`":  false,`n    `"mode`":  `"lan`",`n    `"interact`":  true,`n    `"story`":  false`n}`n" "DM_COOP=auto DM_COOP_INTERACT=1 DM_COOP_STORY= DM_COOP_JOIN= DM_COOP_INTERNET= "
+Remove-Item "$t\settings\linkplay.json"
 Remove-Item env:POKOPIA_SETTINGS_DIR
 # A dump folder whose name has [ ] in it (wildcards to PowerShell, D-4): its ExeFS is still found
 $bt = Join-Path $t "dump[Base_Game_and_Update]"; [System.IO.Directory]::CreateDirectory("$bt\ExeFS") | Out-Null

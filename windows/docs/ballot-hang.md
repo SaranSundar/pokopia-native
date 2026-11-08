@@ -112,3 +112,70 @@ rows, the edited module valid, the guard on by default only for NVIDIA; `test_gu
 walk the table's items; on the real `634565ab` two comparisons limited, on the real `560a0262` four, spirv-val passes, decompiled only those lines differ);
 `t_vk_ballot` 16 of 16; the 2.0.1 route with validation on, `NXRT_VK_SUBGROUP32=1` and the guard: 0 errors, pictures right. **Not checked:** an AMD or
 Intel GPU (only santriman on 1.3.1, or a Steam Deck tester), a real lost device's new report line.
+
+## After 1.3.3: a list loop whose length is data (Styphix)
+
+**On 1.3.3** (most likely NVIDIA, about 3.3 GB of video memory; the log's header was cut off), after about 30 minutes of Link Play online, the GPU hung
+in a one-group dispatch of `2cb5df5cb96b324e`. The driver gave no description; its fault was an unknown instruction pointer, which means a timeout
+rather than a bad access.
+- **What the shader does:** one 64-lane group walks a list of entries in the game's data texture (`cp_t_tcb_C`, rows of 16384 words). Each entry's
+  high half picks a case of a switch: the inner `do … while` loops end within two passes, and the case draws random numbers or writes results.
+- **The only unbounded loop** is the walk itself: `do { …; i++; } while (!(i >= count))`. `count` is a word of the same texture at the list's start,
+  made the same for every lane (ballot, lowest lane, shuffle) and kept in function variable `%2154`. A huge `count` (stale data, a ring's
+  write-minus-read gone negative, a start that points at the wrong place) runs it for billions of passes.
+- **The guard:** `vkspv_cap_bound` puts min(count, 16384) in that variable's one store, as an unsigned minimum. It checks the module first: a uint
+  function variable, stored once, read by an unsigned `i >= bound`; otherwise it logs in red and changes nothing.
+  - It is NVIDIA only by default and switched with the other guards by `NXRT_VK_LOOP_GUARD`.
+  - Why 16384: the card's whole frame took about 7 ms of GPU time, so real lists are short, and 16384 passes of one group cost tens of milliseconds at
+    worst.
+- **Not known:** what made `count` huge, and whether it happens outside Link Play.
+
+**Checked here** (RTX 4070 Ti): `t_vk_guard` 23 of 23. `test_guard_v.comp` has 2cb5df5c's shape: a count of 0xffffffff stops at the cap, sane counts are
+unchanged, and a variable stored twice is left alone. The real `2cb5df5c`, capped through `NXRT_TEST_SPV`, passes spirv-val. In the game, the cap is
+applied after the ballot rewrite, and the prewarm makes its pipeline. The shader is not dispatched in single-player village play, so the capped loop
+itself has not run here.
+
+## After 1.3.4: the same hang offline, AMD's hangs, and a driver that crashes making a pipeline
+
+**The 2cb5df5c hang without Link Play.** A GTX 1650 player (D-11's) on 1.3.4: after about an hour of single-player play the GPU hung in a one-group
+dispatch of `2cb5df5cb96b324e`, the same as Styphix's. So it is not Link Play's. The cap above covers it on NVIDIA.
+
+**AMD hangs after about an hour** (a Radeon 890M player, the D-8 one): a lost device 3 s after an autosave, with nothing to say which shader, because
+NVIDIA's checkpoints do not exist there. Two changes:
+- **The loop guards on every GPU.** On NVIDIA they stay the table-size guards. Elsewhere `634565ab`'s and `560a0262`'s loops are capped at 16384
+  instead: `vkspv_limit_count` without a table is a plain minimum, with no size query (the edit AMD's compiler crashed on in 1.3.1). `2cb5df5c`'s cap
+  was a plain minimum already.
+  - `NXRT_VK_LOOP_GUARD`: `1` the table-size guards, `cap` the caps, `0` none, on any GPU.
+  - Each guarded shader keeps its module as translated beside the guarded one. If the driver cannot make the guarded pipeline, it is made from that
+    module (below).
+- **AMD's buffer markers** (`VK_AMD_buffer_marker`) where there are no checkpoints, at the same places. Each marker writes the checkpoint's number into
+  host memory twice: once as the GPU's front reaches it, and once everything before it has finished. A lost device then names what was started and
+  what was in flight, with the dispatch's constants, as on NVIDIA. The stats lines show the markers moving. `NXRT_VK_CHECKPOINTS=markers` takes them
+  instead of NVIDIA's checkpoints (tests), and `=0` turns both off.
+
+**A driver that crashes making a pipeline** (an RX 6750 XT on 1.3.4): AMD's Windows driver crashed in its compiler (a write to 0x8 in amdvlk64.dll)
+making fragment shader `b1f4b2d7c3863ab0`'s pipeline, at the same spot every time.
+- **What is known about the trigger:** nothing in that shader is unusual. Every operation, image type and capability it uses also appears in shaders
+  that driver made in the same session. Its interface matches its vertex shader. Its binding count and size are matched by siblings that worked
+  (`6e582a8105e0c915` is nearly the same shader). Without AMD's compiler here the trigger is not known.
+- **The catch:** `vkCreateGraphicsPipelines` and `vkCreateComputePipelines` run inside a structured exception handler (vk_pipe.c). It covers an
+  access violation, an illegal instruction, a division by zero, a stack overflow and a page error.
+  - A crash there counts as a pipeline that could not be made. Its draws or dispatches are left out, the log says where the driver crashed, and the
+    game goes on.
+  - A loop-guarded compute shader is made again from its module as translated.
+  - What the driver held when it crashed is lost. If that leaves it unable to make later pipelines, those are left out the same way.
+  - `NXRT_VK_TEST_PIPE_FAULT=<key>` makes such a crash for pipelines with that shader (tests).
+- **Until then:** `NXRT_VK_SKIP=b1f4b2d7c3863ab0` leaves that shader's draws out before its pipeline is made.
+
+**Checked here** (RTX 4070 Ti): `t_vk_guard` 33 of 33, with validation on and no validation errors. The new checks:
+- **The caps:** they limit both test shaders' comparisons without a size query. Sane counts are unchanged; a count of 0xffffffff or 1.0f walks
+  16384 items.
+- **The catch:** through the real `vksh_make` and `vkp_compute`, a crash staged while making 634565ab's guarded pipeline is caught, and the
+  pipeline is made from the module as translated. A shader with nothing to fall back to is left out, and stays out.
+- **AMD's buffer markers:** NVIDIA's driver has the extension too. A marker's number comes back as started and finished.
+- **In the game** (2.0.1, the play save, 130 s) with `NXRT_VK_LOOP_GUARD=cap` and `NXRT_VK_CHECKPOINTS=markers`:
+  - the caps applied to the real `560a0262` (2 + 2 comparisons), `634565ab` (2) and `2cb5df5c`;
+  - the markers moved with every stats line;
+  - a crash staged while making the beam effect's pipeline (vertex `47ce9f1d88b72b56`, fragment `7760d1202244455a`) was caught at 1.4 s, and the game
+    ran on to 7800 frames at 60 fps.
+- **Not run:** on an AMD GPU. The full ctest passes (61 of 61).

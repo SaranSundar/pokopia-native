@@ -25,10 +25,11 @@ nothing is committed in either repository, nothing is published, no relay runs a
 Everyone needs the same build of this app, the same game version and the same cheats (as on the LAN), and **their own save**. Internet play is an
 explicit switch; with it on, every link must prove the room code, LAN visitors too.
 
-**1. The room code.** The host's log (Windows: the run's log; iPhone: `Documents/log.txt`) shows a new code each session:
+**1. The room code.** On Windows (and Linux) the in-game menu's **Link Play** tab (F1) shows it with a **Copy** button, the addresses to give and
+who is connected (docs/in-game-menu.md). The host's log (Windows: the run's log; iPhone: `Documents/log.txt`) shows a new code each session:
 `internet play: this session's room code is XXXX-XXXX-XXXX-XXXX; visitors need it`. To keep one code, set it (`DM_COOP_ROOM`, or the launcher's
 **Room code**) on the host too. The code is 16 letters and digits; case, dashes and spaces don't matter, and O / I / L read as 0 / 1. Use a code
-the module made (`coop_room_new`): a code a person makes up is easy to guess.
+the module made (`coop_room_new`): a code a person makes up is easy to guess. A code the host was given (DM_COOP_ROOM, the launchers) is logged by its first group only (`7K3M-****-****-****`): players attach their logs to bug reports.
 
 **2a. Port forwarding** (the host's router forwards a port to it):
 

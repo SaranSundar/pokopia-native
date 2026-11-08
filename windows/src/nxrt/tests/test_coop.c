@@ -333,6 +333,34 @@ static void mode_join(void) {
     coop_destroy(H);
 }
 
+int dm_coop_remake(void);   /* hle_offline.c */
+/* The in-game Link Play settings (front/menu_linkplay.c): the node made again from DM_COOP* while the game's Link Play is closed, never while it is open */
+static void mode_remake(void) {
+    _putenv("DM_COOP=auto"); _putenv("DM_COOP_INTERNET="); _putenv("DM_COOP_ROOM="); _putenv("DM_COOP_JOIN="); _putenv("DM_COOP_DISCOVERY=0");
+    coop_node *a = dm_coop();
+    T(a != NULL);
+    if (!a) return;
+    coop_info i; coop_get_info(a, &i); T_EQ(i.internet, 0); T_EQ(i.role, COOP_ROLE_AUTO);
+    _putenv("DM_COOP_INTERNET=1"); _putenv("DM_COOP_ROOM=7K3M-9QXA-2B4C-HJ6N");
+    T_EQ(dm_coop_remake(), 1);
+    coop_node *b = dm_coop();
+    T(b != NULL && b != a);
+    if (!b) return;
+    coop_get_info(b, &i); T_EQ(i.internet, 1); T(!strcmp(i.room, "7K3M-9QXA-2B4C-HJ6N"));
+    T_EQ(hc(PCTL_IS, 0) & 0xff, 1);   /* Link Play stays allowed */
+    T_EQ((uint32_t)hc(LDN_INIT, 0), 0);   /* the game opens Link Play: not while it is open */
+    _putenv("DM_COOP_INTERNET="); _putenv("DM_COOP_ROOM=");
+    T_EQ(dm_coop_remake(), 0); T(dm_coop() == b);
+    hc(LDN_FINI, 0);   /* closed again */
+    _putenv("DM_COOP_JOIN=26.139.206.94");   /* a VPN's address without internet play: no node, the old one stays */
+    T_EQ(dm_coop_remake(), -1); T(dm_coop() == b);
+    _putenv("DM_COOP_JOIN=192.168.1.20");
+    T_EQ(dm_coop_remake(), 1);
+    coop_node *c = dm_coop();
+    T(c != NULL && c != b);
+    if (c) { coop_get_info(c, &i); T_EQ(i.internet, 0); T_EQ(i.join_ip, 0xC0A80114u); T_EQ(i.role, COOP_ROLE_JOIN); }
+}
+
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     const char *mode = argc > 1 ? argv[1] : "off";
@@ -340,7 +368,8 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "off")) mode_off();
     else if (!strcmp(mode, "host")) mode_host();
     else if (!strcmp(mode, "join")) mode_join();
-    else { printf("usage: nxrt-tests-coop off|host|join\n"); return 2; }
+    else if (!strcmp(mode, "remake")) mode_remake();
+    else { printf("usage: nxrt-tests-coop off|host|join|remake\n"); return 2; }
     printf("nxrt.coop_%s: %d checks, %s\n", mode, g_checks, g_fail ? "FAILED" : "ok");
     return g_fail;
 }

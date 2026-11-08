@@ -33,13 +33,27 @@ static uint64_t coop_hmods(void *u, char *what, size_t n) {
     return h;
 }
 static void coop_hstate(void *u, int st) { (void)u; (void)st; void *e = atomic_load(&g_ldn_attached); if (e) hle_signal_bound_system_event(e); }
+static const coop_hooks g_coop_hooks = {NULL, coop_hlog, coop_hsleep, coop_hstate, coop_hbuild, coop_hmods};
+static coop_node *_Atomic g_coop_node; static _Atomic int g_coop_done;
 coop_node *dm_coop(void) {   // the process's coop node when DM_COOP is set and valid, else NULL (hle_net.c, hle_misc.c and hle_account.c ask too)
-    static coop_node *_Atomic node; static _Atomic int done;
-    if (atomic_load(&done)) return atomic_load(&node);
-    static const coop_hooks h = {NULL, coop_hlog, coop_hsleep, coop_hstate, coop_hbuild, coop_hmods};
-    coop_node *n = coop_env_node(&h);
-    atomic_store(&node, n); atomic_store(&done, 1);
+    if (atomic_load(&g_coop_done)) return atomic_load(&g_coop_node);
+    coop_node *n = coop_env_node(&g_coop_hooks);
+    atomic_store(&g_coop_node, n); atomic_store(&g_coop_done, 1);
     return n;
+}
+void dm_coop_quit(void) {   // the window closes: a port the router forwards for hosting is given back (coop_nat.c; ExitProcess runs no atexit)
+    if (atomic_load(&g_coop_done)) coop_nat_quit(atomic_load(&g_coop_node));
+}
+// The in-game Link Play settings (front/menu_linkplay.c, after they set DM_COOP*): the node made again while the game's Link Play is closed (nn::ldn not
+// initialized). 1 made again, 0 not now (Link Play open, or this game started without it), -1 those settings make no node (the log says why). The old
+// node stays allocated: a game thread may still be holding it for a moment
+int dm_coop_remake(void) {
+    coop_node *old = dm_coop();
+    if (!old || coop_ldn_state(old) != COOP_LS_NONE) return 0;
+    coop_node *n = coop_env_make(&g_coop_hooks);
+    if (!n) return -1;
+    atomic_store(&g_coop_node, n);
+    return 1;
 }
 #define COOP(call) do { coop_node *c_ = dm_coop(); if (c_) return call; } while (0)
 HLE_FORCE("_ZN2nn3ldn10InitializeEv", "local wireless: the coop module (DM_COOP), else cut: initialization fails", Result, h_ldn_Init, void) { COOP(coop_ldn_initialize(c_)); return RES_FAIL; }
