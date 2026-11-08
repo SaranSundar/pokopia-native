@@ -23,6 +23,10 @@ int main(void) {
     if (rc) return rc;
     CHECK(!vkr_init(), "replay started");
     CHECK(vkt_scale() == 2.0f, "resolution x2 from NXRT_VK_SCALE");
+    int menu_fit_16x9_h(int w, int h);   // "Default: your monitor": the tallest 16:9 picture inside it
+    CHECK(menu_fit_16x9_h(1920, 1200) == 1080 && menu_fit_16x9_h(1280, 800) == 720 && menu_fit_16x9_h(2560, 1600) == 1440 && menu_fit_16x9_h(1920, 1080) == 1080 &&
+          menu_fit_16x9_h(3440, 1440) == 1440 && menu_fit_16x9_h(3840, 2160) == 2160 && menu_fit_16x9_h(0, 1200) == 1200,
+          "16:10 monitors get the 16:9 picture that fits inside (1920x1200: %d tall)", menu_fit_16x9_h(1920, 1200));
 
     enum { PSZ = 1 << 21, TW = 128, TH = 64 };
     uint8_t *mem = VirtualAlloc(NULL, PSZ, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);

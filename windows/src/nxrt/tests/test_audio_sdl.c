@@ -3,13 +3,14 @@
    1. it opens 48 kHz PCM16 only, pulls whole frames at about 48,000 frames a second on SDL's thread, and none after stop returns; it starts again after a stop;
    2. hle_audio.c with DM_AUDIO=1 plays a host output through it: 5 ms blocks kept queued are released at the sound card's rate (48,000 frames a second within
       2 %), in order; the device's callbacks are counted (dm_audio_render_calls), so the silent sink did not stand in.
-   3. a device that asks for a whole period of 1024 frames at once (as PipeWire does), with fewer frames than that kept queued (Pokopia: 3 blocks of 320):
-      without the reserve (NXRT_AUDIO_RESERVE=0) a large share of the pulls finds the queue empty; with it none does once playing, at the same rate.
+   3. a device that asks for a whole period of 1024 frames at once (as PipeWire does at SDL's default), with fewer frames than that kept queued (Pokopia: 3 blocks
+      of 320): without the reserve (NXRT_AUDIO_RESERVE=0) a large share of the pulls finds the queue empty; with it none does once playing, at the same rate.
    SDL_AUDIO_DRIVER=dummy is set here; no game data. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <SDL3/SDL.h>
 #include "nxrt/runtime.h"
 #include "audio_out.h"
 
@@ -35,17 +36,20 @@ static void count_pull(void *ctx, uint8_t *dst, uint64_t n) {
 }
 
 typedef struct { void *ptr; uint64_t cap, size; } gbuf;
-/* As test_audio.c: frames released per second with nbuf blocks of `frames` frames kept queued; *under: pulls that found the queue empty */
-static double run_output(int ch, int nbuf, unsigned frames, double secs, int *order_ok, uint64_t *under) {
+/* As test_audio.c: frames released per second with nbuf blocks of `frames` frames kept queued, counted from the first release `warm` seconds in (a reserve hands
+   over its first fill at once); *under: pulls that found the queue empty */
+static double run_output(int ch, int nbuf, unsigned frames, double secs, double warm, int *order_ok, uint64_t *under) {
     void *out = dm_pcmout_open(ch);
     gbuf *b = calloc((size_t)nbuf, sizeof *b);
     for (int i = 0; i < nbuf; i++) { b[i].cap = b[i].size = frames * 2u * (unsigned)ch; b[i].ptr = calloc(1, (size_t)b[i].cap); dm_pcmout_append(out, &b[i]); }
     dm_pcmout_start(out);
-    uint64_t t0 = 0, released = 0, end = 0, tw = now_ns(); int next = 0; *order_ok = 1;
+    uint64_t t0 = 0, released = 0, end = 0, tw = now_ns(), ts = 0; int next = 0; *order_ok = 1;
     for (;;) {
         gbuf *r = dm_pcmout_released(out);
         if (!r) { if (now_ns() - tw > 5000000000ull) break; dm_pcmout_wait(out, 10); continue; }
         uint64_t now = now_ns();
+        if (!ts) ts = now;
+        if (now - ts < (uint64_t)(warm * 1e9)) { *order_ok &= r == &b[next]; next = (next + 1) % nbuf; dm_pcmout_append(out, r); continue; }
         if (!t0) t0 = now; else released++;
         *order_ok &= r == &b[next]; next = (next + 1) % nbuf;
         if (now - t0 >= (uint64_t)(secs * 1e9)) { end = now; break; }
@@ -87,22 +91,22 @@ int main(void) {
     /* 2. through hle_audio.c */
     _putenv_s("DM_AUDIO", "1");
     uint64_t rc0 = dm_audio_render_calls(); int order = 0;
-    double r2 = run_output(2, 6, 240, 2.0, &order, NULL);
+    double r2 = run_output(2, 6, 240, 2.0, 0.5, &order, NULL);
     printf("stereo output through hle_audio.c on the device backend, 6 blocks of 5 ms kept queued: %.0f frames/s (want 48000), %llu device callbacks\n", r2,
            (unsigned long long)(dm_audio_render_calls() - rc0));
-    T(r2 > 47040 && r2 < 48960 && order);
+    T(r2 > 45600 && r2 < 50400 && order);   /* the dummy driver's whole milliseconds, as in 1 (a 21.3 ms period waits 21) */
     T(dm_audio_render_calls() - rc0 > 50);
     /* 3. whole periods of 1024 frames asked at once, 960 frames kept queued */
-    _putenv_s("SDL_AUDIO_DEVICE_SAMPLE_FRAMES", "1024");
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");   /* read when the device opens; the environment is read once, at SDL's start */
     for (int reserve = 0; reserve < 2; reserve++) {
         _putenv_s("NXRT_AUDIO_RESERVE", reserve ? "1" : "0");
         uint64_t under = 0; rc0 = dm_audio_render_calls();
-        double r3 = run_output(2, 3, 320, 2.0, &order, &under);
+        double r3 = run_output(2, 3, 320, 2.0, 0.5, &order, &under);
         uint64_t pulls = dm_audio_render_calls() - rc0;
         printf("1024-frame periods, 3 blocks of 320 frames kept queued, %s: %.0f frames/s, %llu pulls, %llu of them found the queue empty\n",
                reserve ? "with the reserve" : "without the reserve", r3, (unsigned long long)pulls, (unsigned long long)under);
         T(order && pulls > 50);
-        if (reserve) T(under <= 2 && r3 > 47040 && r3 < 48960);   /* at most the first request runs dry, before the reserve has filled */
+        if (reserve) T(under <= 2 && r3 > 45600 && r3 < 50400);   /* at most the first request runs dry, before the reserve has filled; the rate as in 2 */
         else T(under * 4 > pulls);   /* the case reproduces: a large share of the pulls ran dry (and the padding slows the releases) */
     }
     printf("nxrt.audio_sdl: %s\n", g_fail ? "FAIL" : "ok");

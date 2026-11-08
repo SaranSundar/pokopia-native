@@ -242,3 +242,14 @@ runtime still turns co-op off on a build it has no sites for). Checked in WSL on
 DLLs): both loaders start and draw; `NXRT_VK_SUBGROUP32=1` on lavapipe logs that its 8 lanes can't be raised; the sound at 1024-frame periods,
 beta 3 and beta 4 back to back twice: beta 3 0 and 2, beta 4 3 and 0 underruns of 6,000 (one earlier beta 4 run had 29 in its first 4,000, after three
 game starts in a row); at 2048, 0 of 6,000.
+
+### Beta 5 (2026-11-08, on beta 4)
+
+From Apocal's tests on an Intel Arc 140V (1920x1200, PipeWire), checked in his report archives: the sparkles on characters' edges were the
+fractional render scale, since "Default: your monitor" took the monitor's height alone (2133x1200 on 1920x1200, drawn at x1.111 and shrunk);
+`menu_fit_16x9_h` now gives the tallest 16:9 picture inside the monitor (1920x1080 at x1 there). The frame-rate swings were the 64 MB staging
+ring overflowing (11,931 overflows, 477 waits in one session; none at 256 MB): integrated GPUs get 256 MB. A 480-frame sound default (to end
+the reserve's 21 ms bursts) underran on real PipeWire (498 of 8,000 callbacks) and did not change the trembling, so it was undone before
+release; the trembling is open. The loop guards cannot be made on Mesa ANV (-13) and stay NVIDIA-only. The installer side: report.sh finds the
+build folder (#34), the builder's desktop dialogs, DPI and a centred column, and a Tk 9.0.4 built with Xft (installer-linux
+linux/appimage/build_tk_xft.sh) preloaded over python-build-standalone's, which draws only the bitmap "fixed".

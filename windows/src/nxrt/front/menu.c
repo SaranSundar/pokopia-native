@@ -75,10 +75,13 @@ static int base_h(void) { return 1080; }
 // "default" keeps to 2560x1440 on a GPU with 4 GB of its own memory or less (a 4 GB laptop card on a 4K monitor would run out at 3840x2160); the menu shows
 // the size it picked
 uint64_t vk_vram_bytes(void);
+// The tallest 16:9 picture inside a monitor: a 16:10 one (1920x1200) gets 1080. Its height alone made 2133x1200, wider than the screen, drawn at
+// x1.111 and shrunk to fit, which made thin bright edges sparkle on Intel graphics (Apocal's finding on an Arc 140V)
+int menu_fit_16x9_h(int w, int h) { return w > 0 && (int64_t)w * 9 < (int64_t)h * 16 ? w * 9 / 16 : h; }
 static int monitor_h(void) {
     int w = 0, h = 0, b = base_h(), top = 2160; uint64_t v = vk_vram_bytes();
     if (v && v <= (4608ull << 20)) top = 1440;   // 4 GB cards report about 4096 MB
-    vkw_desktop_size(&w, &h);
+    vkw_desktop_size(&w, &h); h = menu_fit_16x9_h(w, h);
     static int told; if (top < 2160 && h > top && !told) { told = 1; LOG("[menu] Default resolution kept to 2560x1440: the GPU has %llu MB of its own memory", (unsigned long long)(v >> 20)); }
     return h < b ? b : h > top ? top : h;
 }
