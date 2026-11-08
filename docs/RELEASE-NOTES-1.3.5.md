@@ -49,7 +49,7 @@ As always: **your own copy, your own dump.** Neither download contains anything 
 
 ### Linux
 
-- **Linux and the Steam Deck:** the open beta's current release is still **v1.3.3-linux-beta.4**. The next beta brings 1.3.5, with a clearer builder window, a report tool that finds your build by itself, and a fix for crackling sound.
+- **Linux and the Steam Deck:** the open beta's current release is **[v1.3.3-linux-beta.5](https://github.com/xFractals/pokopia-native/releases/tag/v1.3.3-linux-beta.5)** (1.3.3 with a fix for sparkles on 16:10 screens, a steadier frame rate on integrated graphics, a clearer builder window and a report tool that finds your build by itself). A later beta brings 1.3.5.
 
 ### Getting it
 
