@@ -532,7 +532,7 @@ warm. `DM_RENDER_SCALE=0.8` is the first thing to try if that bothers you.
 ## Licences and credits
 
 Everything here is MIT except `ampere-lower/`, which is Eden-NS2 code and stays GPL-3.0-or-later (its own `LICENSE` and
-`NOTICE.md` are in that folder). The Windows download's prebuilt tools carry LLVM, SDL3, astc-encoder, bc7enc_rdo and
+`NOTICE.md` are in that folder). The Windows download's prebuilt tools carry LLVM, SDL3, SDL_GameControllerDB's controller mappings, astc-encoder, bc7enc_rdo and
 SPIRV-Tools under their own licences, listed in its `windows/bin/THIRD-PARTY-NOTICES.txt`. The nxnative and Ryujinx code that `host/` modifies and builds keeps their MIT notices,
 reproduced in [host/NOTICE.md](host/NOTICE.md). [LEGAL.md](LEGAL.md) is the full statement of what this repository
 contains and never will, what the tool does not do (no decryption, no keys), and the trademark note: Pokémon and

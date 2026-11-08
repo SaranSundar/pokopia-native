@@ -170,12 +170,14 @@ def win_tools():
     kit = pathlib.Path(os.environ['NXW_TOOLS']) if os.environ.get('NXW_TOOLS') else WIN_KIT
     if (kit / 'nxrt.exe').is_file():
         t = {n: kit / n for n in WIN_KIT_FILES}; t['dir'] = kit
+        t['gamecontrollerdb.txt'] = kit / 'gamecontrollerdb.txt'   # SDL_GameControllerDB's controller mappings: copied beside nxrt.exe when the kit has them
     else:
         src = HERE / 'windows'; rel = src / 'build' / 'Release'
         t = {n: rel / 'bin' / n for n in ('nxanalyze.exe', 'nxlift.exe', 'nxrt.exe', 'SDL3.dll')}
         t.update({'nxrt.lib': rel / 'lib' / 'nxrt.lib', 'hle_inventory.tsv': src / 'src/nxrt/gen/out/hle_inventory.tsv', 'play.ps1': src / 'scripts/play.ps1',
                   'nxshader/nxshader.py': src / 'src/nxshader/nxshader.py', 'nxshader/dmsh_abi.h': src / 'src/nxrt/gfx/dmsh_abi.h',
                   'lld-link.exe': llvm_tool('lld-link'), 'dir': rel / 'bin'})
+        t['gamecontrollerdb.txt'] = src / 'src/nxrt/front/third_party/SDL_GameControllerDB/gamecontrollerdb.txt'
         vk = [pathlib.Path(v) / 'Bin' for v in (os.environ.get('VULKAN_SDK'),) if v] + sorted(pathlib.Path('C:/VulkanSDK').glob('*/Bin'))[-1:]
         for n in ('spirv-opt.exe', 'spirv-val.exe'): t[n] = next((d / n for d in vk if (d / n).is_file()), None)
     t['missing'] = [n for n in WIN_KIT_FILES if not (t.get(n) and pathlib.Path(t[n]).is_file())]
@@ -1118,6 +1120,7 @@ def st_win_play(b, t):
     %APPDATA%\\Pokopia Native\\<version>\\save, created empty the first time (nxs2.py import-save brings an existing one)."""
     rt = b.win / 'runtime'
     for n in ('nxrt.exe', 'SDL3.dll', 'play.ps1', 'spirv-opt.exe', 'spirv-val.exe'): copy_if_changed(t[n], rt / n)
+    if t.get('gamecontrollerdb.txt') and pathlib.Path(t['gamecontrollerdb.txt']).is_file(): copy_if_changed(t['gamecontrollerdb.txt'], rt / 'gamecontrollerdb.txt')   # nxrt reads it beside itself
     nxs = pathlib.Path(t['nxshader/nxshader.py']).parent
     for f in sorted(nxs.glob('*.py')): copy_if_changed(f, rt / 'nxshader' / f.name)
     copy_if_changed(next(p for p in (nxs / 'dmsh_abi.h', nxs.parent / 'nxrt/gfx/dmsh_abi.h') if p.is_file()), rt / 'nxshader' / 'dmsh_abi.h')

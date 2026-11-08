@@ -81,6 +81,9 @@ def kit_files(src, bld, a):
     k['nxshader/dmsh_abi.h'] = (src / 'src/nxrt/gfx/dmsh_abi.h', 'windows-native source (the shader ABI nxshader reflects against)')
     k['lld-link.exe'] = (pathlib.Path(a.lld), 'LLVM for Windows')
     for n in ('spirv-opt.exe', 'spirv-val.exe'): k[n] = (pathlib.Path(a.spirv_tools) / n, 'Vulkan SDK (SPIRV-Tools)')
+    gc = src / 'src/nxrt/front/third_party/SDL_GameControllerDB/gamecontrollerdb.txt'   # SDL_GameControllerDB's mappings, read by nxrt beside itself (a source from before them has none)
+    if gc.is_file(): k['gamecontrollerdb.txt'] = (gc, 'SDL_GameControllerDB (windows-native source, src/nxrt/front/third_party/SDL_GameControllerDB/README.md names its commit)')
+    else: print('note: no gamecontrollerdb.txt in the windows-native source: the kit goes without the extra controller mappings')
     if a.vc_redist:
         for n in VC_RUNTIME: k[n] = (pathlib.Path(a.vc_redist) / n, 'Visual Studio 2022 redistributable (for spirv-opt and spirv-val)')
     return k
@@ -101,6 +104,8 @@ def notices(src, a):
         ('LLVM 23.1.4 (linked into nxlift.exe; lld-link.exe is its linker)', 'Apache-2.0 WITH LLVM-exception', 'https://llvm.org',
          'The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:\n\n' + apache + '\n\n' + LLVM_EXCEPTION),
         ('SDL 3.4.18 (SDL3.dll: window, input, sound)', 'zlib', 'https://libsdl.org', rd(sdl) if sdl.is_file() else 'zlib licence, Copyright (C) 1997-2026 Sam Lantinga'),
+        *([('SDL_GameControllerDB (gamecontrollerdb.txt: controller mappings, read by nxrt)', 'zlib', 'https://github.com/mdqinc/SDL_GameControllerDB',
+            rd(src / 'src/nxrt/front/third_party/SDL_GameControllerDB/LICENSE'))] if (src / 'src/nxrt/front/third_party/SDL_GameControllerDB/LICENSE').is_file() else []),
         ('astc-encoder 5.7.0 (ASTC to BC7 transcoding), in nxrt', 'Apache-2.0', 'https://github.com/ARM-software/astc-encoder', apache),
         ('bc7enc_rdo (BC7 encoding), in nxrt', 'MIT or public domain (Unlicense), at your choice', 'https://github.com/richgel999/bc7enc_rdo',
          rd(src / 'src/nxrt/vk/third_party/bc7enc/LICENSE')),
