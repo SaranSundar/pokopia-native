@@ -31,10 +31,11 @@ runtime, the Linux tools and nxnative): no terminal steps, no Python packages, n
    the one-screen view with every button.
 
 The game itself is still built on your computer from your own dump, into the build folder; the AppImage carries nothing of the game. To play from
-Steam (Game Mode), add the game's launcher `<build folder>/out/play-pokopia-<game version>.sh` as a non-Steam game, as below, not the AppImage.
-The report (the last section) is `~/Downloads/Pokopia-Native-Builder-*.AppImage report <build folder>` in a terminal. If the AppImage does not
+Steam (Game Mode), add the game's launcher (`out/play-pokopia-2.0.1.sh` in your build folder) as a non-Steam game, as below, not the AppImage.
+The report (the last section) is `~/Downloads/Pokopia-Native-Builder-*.AppImage report` in a terminal: it finds your build folder by itself. If the AppImage does not
 start at all, run it in a terminal with `--appimage-extract-and-run` after its name (a system without FUSE), and say so in the report.
-The window looks plain (one basic font): its own Tk draws with the X server's fonts. To remove the builder, delete the AppImage and
+The window draws with your desktop's fonts and dialogs (on a system older than 2022, glibc 2.35, it falls back to one plain bitmap font; to force
+that, start it with `POKOPIA_TK=x11`). To remove the builder, delete the AppImage and
 `~/.local/share/pokopia-native/builder`; your builds and saves are elsewhere and stay.
 
 Everything below is the same build without the AppImage, from the "for Linux" zip and a terminal.
@@ -165,14 +166,23 @@ Please keep recordings short (a few minutes each) and do not record anything per
 
 ## The report
 
-When you are done, or when something goes wrong:
+When you are done, or when something goes wrong, open a terminal (Konsole on the Steam Deck) and run the report. With the AppImage:
 
 ```bash
-~/pokopia-native-*/linux/report.sh ~/Games/Pokopia_native
+~/Downloads/Pokopia-Native-Builder-*.AppImage report
 ```
 
+With the zip:
+
+```bash
+~/pokopia-native-*/linux/report.sh
+```
+
+It finds your build folder by itself (the builder's last one, or one in your home folder or on an SD card) and says which one it took. To name
+another, put its path after the command as it is, without `<` `>` around it: `~/pokopia-native-*/linux/report.sh /run/media/deck/MyCard/Pokopia`.
+
 It collects the game's logs, the build's logs and facts about your computer (CPU, GPU, driver and Mesa version, SteamOS or distribution version,
-memory, display) into one `pokopia-report-<date>.tar.gz` in your home folder. **It never includes your save, the game's files, shader files or your
+memory, display) into one `pokopia-report-<date>.tar.gz` in your home folder, and its last line says where it is. **It never includes your save, the game's files, shader files or your
 dump**, and it replaces your home folder, user name and computer name with placeholders. It lists every file and asks before it writes the archive,
 so you can read them first.
 
@@ -190,14 +200,19 @@ the archive directly.
 - **`doctor` says the CPU lacks AVX2**: the recompiled game needs it; that CPU cannot run it.
 - **The game closes by itself, or the picture breaks up, when a new place loads**: start it once with the driver's bounds checks on and say in the
   report whether that helped: `NXRT_VK_ROBUST=1 ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`
-- **AMD or Intel graphics: bright sparkles on edges, or the game freezes (often in conversations)**: the game's graphics programs were written
-  for groups of 32 (NVIDIA's); AMD runs 64 and Intel 8 to 32. Start the game once in the 32-lane test mode and say in the report whether it
-  helped (a screenshot of the same place with and without helps most): `NXRT_VK_SUBGROUP32=1 ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`.
-  The log then says "made with 32 lanes" and for which stages.
+- **Bright sparkles on characters' edges (seen on Intel graphics)**: the picture is drawn at an uneven size for your screen (the log says
+  "resolution x1.11111", for example). Since beta 5 a 16:10 screen such as 1920x1200 gets the game's own 1920x1080 by default, which fits it
+  exactly. If you chose a size yourself, **F1 → Resolution → 1920x1080 (the game's own)** or 3840x2160 (exactly twice) avoids it. Thanks to
+  Apocal for finding it.
+- **AMD or Intel graphics: the game freezes (often in conversations)**: the game's graphics programs were written for groups of 32 (NVIDIA's);
+  AMD runs 64 and Intel 8 to 32. Start the game once in the 32-lane test mode and say in the report whether it helped:
+  `NXRT_VK_SUBGROUP32=1 ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`. The log then says "made with 32 lanes" and for which stages.
 - **The build stops with "shorter than its own header says"**: the dump's `exefs` was copied in text mode; copy it again in binary mode.
 - **The frame rate swings (30 to 45 fps on a Steam Deck) and it feels laggy**: in the game, **F1 → Frame rate → 30 fps** gives a steady 30
-  instead. The Deck runs the game close to its processor's limit, so the frame rate does not change with the Resolution setting. A report after
-  5 minutes in your town (below) shows us where the time goes.
+  instead. The Deck runs the game close to its processor's limit, so the frame rate does not change with the Resolution setting. Since beta 5
+  the Deck and other integrated graphics (Intel and AMD laptops) get a 4 times larger upload buffer, which removed most dips on an Intel
+  laptop; on beta 4 the same is `NXRT_VK_STAGING_MB=256` in front of the launcher. A report after 5 minutes in your town (below) shows us where
+  the time goes.
 - **The sound crackles**: start the game once with SDL's PulseAudio driver (PipeWire answers it too, through pipewire-pulse) and say in the
   report whether that helped: `SDL_AUDIO_DRIVER=pulseaudio ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`. The log's `audio #0 device
   callbacks` lines count the underruns.

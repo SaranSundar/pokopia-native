@@ -2,6 +2,8 @@
 # make_appimage.sh: Pokopia-Native-Builder-<version>-x86_64.AppImage from the "for Linux" download (docs/LINUX.md). Runs on Linux (or WSL).
 #   make_appimage.sh --zip <Pokopia-Native-for-Linux(-beta).zip> --tools <folder> --dotnet <.NET root> --rules <rules.tsv> --out <folder> [--work <folder>]
 #                    [--version <v>]: the builder's version (its name, VERSION, its folder); default TOOL_VERSION, with "-beta" for a beta zip
+#                    [--tk-xft <folder>]: build_tk_xft.sh's out/: a Tk 9.0.4 built with Xft (libtcl9tk9.0.so), libXft.so.2 and their licences, beside python-build-standalone's
+#                    own Tk (which draws with X11 bitmap fonts only) in python/lib/tk-xft; AppRun uses it when it loads, else the bundled Tk
 # --tools holds the downloads, each checked against its publisher's sha256 before use: python-build-standalone's
 # cpython-3.12.16+20261026-x86_64-unknown-linux-gnu-install_only.tar.gz, AppImage's appimagetool-x86_64.AppImage and its static type-2 runtime
 # runtime-x86_64 (no libfuse2 needed). --dotnet is a .NET 10 runtime install (dotnet-install.sh --runtime dotnet). The contents (payload/):
@@ -11,9 +13,10 @@
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1   # no .pyc from this build in the contents: they would name the folder it ran in
 HERE=$(cd "$(dirname "$0")" && pwd)
-ZIP= TOOLS= DOTNET= RULES= OUT= VER= WORK=${TMPDIR:-/tmp}/pokopia-appimage
+ZIP= TOOLS= DOTNET= RULES= OUT= VER= TKXFT= WORK=${TMPDIR:-/tmp}/pokopia-appimage
 while [ $# -gt 0 ]; do
   case $1 in --zip) ZIP=$2 ;; --tools) TOOLS=$2 ;; --dotnet) DOTNET=$2 ;; --rules) RULES=$2 ;; --out) OUT=$2 ;; --work) WORK=$2 ;; --version) VER=$2 ;;
+    --tk-xft) TKXFT=$2 ;;
     *) echo "make_appimage.sh: unknown $1" >&2; exit 2 ;; esac
   shift 2
 done
@@ -38,6 +41,14 @@ PY=$P/python/bin/python3
 # what a player's Python never needs: the test suite, IDLE, headers, manuals; scripts whose first line names this build folder
 rm -rf "$P/python/lib/python3.12/test" "$P/python/lib/python3.12/idlelib" "$P/python/include" "$P/python/share"
 find "$P/python/bin" -mindepth 1 ! -name 'python3' ! -name 'python3.12' ! -name 'python' -delete
+if [ -n "$TKXFT" ]; then
+  say "Tk with Xft: $TKXFT (beside the bundled Tk; AppRun takes it where it loads)"
+  for f in libtcl9tk9.0.so libXft.so.2 TK-LICENSE.terms LIBXFT-COPYRIGHT; do [ -f "$TKXFT/$f" ] || { echo "make_appimage.sh: $TKXFT/$f is missing" >&2; exit 1; }; done
+  mkdir -p "$P/python/lib/tk-xft" && cp "$TKXFT"/{libtcl9tk9.0.so,libXft.so.2,TK-LICENSE.terms,LIBXFT-COPYRIGHT} "$P/python/lib/tk-xft/"
+  if [ -n "${DISPLAY:-}" ]; then   # the same Tk as the bundled one, and drawing with Xft (preloaded as AppRun does: _tkinter's RPATH names the bundled one)
+    LD_PRELOAD="$P/python/lib/tk-xft/libtcl9tk9.0.so" "$PY" -c 'import tkinter as t; r = t.Tk(); r.withdraw(); print("Tk", r.call("info", "patchlevel"), "font system", r.call("::tk::pkgconfig", "get", "fontsystem")); r.destroy()'
+  fi
+fi
 
 say "the .NET runtime: $DOTNET"
 mkdir -p "$P/dotnet" && cp -a "$DOTNET/dotnet" "$DOTNET/host" "$DOTNET/shared" "$DOTNET/LICENSE.txt" "$DOTNET/ThirdPartyNotices.txt" "$P/dotnet/"
@@ -58,7 +69,8 @@ rm -rf "$NX/docs" "$NX/dm/tools/fuzz" "$NX/dm/tools/tests" "$NX/AGENTS.md" "$NX"
 find "$P/installer" -name __pycache__ -type d -prune -exec rm -rf {} +
 
 echo "$VER" > "$P/VERSION"
-{ sha256sum "$ZIP" | cut -d' ' -f1; echo "$PBS"; ls "$P/dotnet/shared/Microsoft.NETCore.App"; cat "$WORK/python-modules.txt"; } | sha256sum | cut -c1-16 > "$P/ID"
+{ sha256sum "$ZIP" | cut -d' ' -f1; echo "$PBS"; ls "$P/dotnet/shared/Microsoft.NETCore.App"; cat "$WORK/python-modules.txt"
+  [ -z "$TKXFT" ] || sha256sum "$P/python/lib/tk-xft/libtcl9tk9.0.so" | cut -d' ' -f1; } | sha256sum | cut -c1-16 > "$P/ID"
 cp "$HERE/AppRun" "$A/AppRun" && chmod +x "$A/AppRun"
 cp "$HERE/pokopia-native-builder.desktop" "$A/"
 "$PY" "$HERE/make_icon.py" "$A/pokopia-native-builder.png" "$(fc-match -f '%{file}' 'DejaVu Sans:bold')"

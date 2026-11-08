@@ -147,9 +147,10 @@ body:
       label: Files
       description: |
         Drag files into this box.
-        1. **The report file (please always):** in a terminal, run
-           `~/pokopia-native-*/linux/report.sh <your build folder>`, check the list it shows, and attach the
-           `pokopia-report-<date>.tar.gz` it puts in your home folder. It holds logs and facts about your computer, no game files.
+        1. **The report file (please always):** in a terminal (Konsole on the Steam Deck), run
+           `~/Downloads/Pokopia-Native-Builder-*.AppImage report` (the AppImage) or `~/pokopia-native-*/linux/report.sh` (the zip).
+           It finds your build folder by itself; check the list it shows, answer `y`, and attach the `pokopia-report-….tar.gz` its last line
+           names (in your home folder). It holds logs and facts about your computer, no game files.
         2. **Screenshots** of anything that looks wrong.
         3. **A short screen recording** if you made one. Files over 10 MB won't attach here: link it instead (an unlisted video).
     validations:

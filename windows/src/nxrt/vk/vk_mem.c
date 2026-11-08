@@ -604,6 +604,9 @@ int vkm_init(void) {
     e = getenv("NXRT_VK_WB_RECOPY"); g_wb_keep = !(e && atoi(e) > 0);
     e = getenv("NXRT_VK_HOT_EVERY_USE"); g_hot_once = !(e && atoi(e) > 0);
     VkDeviceSize ring = g_budget < (16u << 20) ? (16u << 20) : g_budget > (256u << 20) ? (256u << 20) : g_budget;
+    // Integrated GPUs (the Steam Deck, Intel and AMD laptops) finish frames later, so more of them still read the ring, and its memory is the same RAM
+    // either way: 256 MB. 64 overflowed about once a frame on an Arc 140V, each overflow a wait; 256 none (Apocal's measurements)
+    if (g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU && ring < (256u << 20)) ring = 256u << 20;
     e = getenv("NXRT_VK_STAGING_MB"); if (e && atoi(e) > 0) ring = (VkDeviceSize)atoi(e) << 20;
     g_usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |

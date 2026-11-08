@@ -12,6 +12,7 @@ import argparse, json, os, pathlib, queue, re, shutil, subprocess, sys, threadin
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog as tk_filedialog, messagebox as tk_messagebox   # Tk's own, behind the Linux dialogs (NativeDialogs)
 
 HERE = pathlib.Path(__file__).resolve().parent
 NXS2 = HERE / 'nxs2.py'
@@ -20,6 +21,10 @@ NAME = 'Pokemon Pokopia'
 MAC = sys.platform == 'darwin'
 WIN = sys.platform == 'win32'
 LINUX = sys.platform.startswith('linux')
+if LINUX and os.environ.get('POKOPIA_TK_XFT'):   # the AppImage's Tk with Xft is loaded by now: what this window starts (games, nxs2.py, dialogs) goes without it
+    keep = [p for p in re.split(r'[ :]', os.environ.get('LD_PRELOAD', '')) if p and p != os.environ['POKOPIA_TK_XFT']]
+    if keep: os.environ['LD_PRELOAD'] = ' '.join(keep)
+    else: os.environ.pop('LD_PRELOAD', None)
 SETTINGS = pathlib.Path.home() / ('.nxs2_gui.json')
 LOG = HERE / 'builder-log.txt'   # Windows: the launcher's start-up checks and the window's own errors, for a report
 DISCORD = 'https://discord.gg/Aj9GqxZj8V'   # the community server: install help, bug reports, co-op partners
@@ -58,10 +63,123 @@ C = {'bg': '#FAF8FF', 'edge': '#C8BAF6', 'title': '#423680', 'text': '#403C60', 
      'sel': '#FFDE46', 'sel_hi': '#F5D02A', 'seltext': '#463400', 'light': '#FFF4C4', 'card': '#FFFFFF', 'ok': '#0F6E56', 'bad': '#A32D2D',
      'badbg': '#FCEBEB', 'warn': '#854F0B', 'log': '#403C60', 'logtext': '#EEE9FD'}
 FAMILY = 'Segoe UI' if WIN else 'Helvetica Neue' if MAC else 'DejaVu Sans'
+MONO = 'Menlo' if MAC else 'Consolas' if WIN else 'DejaVu Sans Mono'
+SCALE = 1.0   # Linux: the desktop's scale (its DPI / 96), for the window's size and the walkthrough's width
 
 
 def F(size, bold=False):   # Tk on macOS counts a point as one pixel, Windows as 4/3: the same size on screen
     return (FAMILY, round(size * 1.3) if MAC else size, 'bold' if bold else 'normal')
+
+
+def desktop_dpi():
+    """Linux: the DPI the desktop draws its own text at (Xft.dpi, which KDE and GNOME set), else from GDK_SCALE / QT_SCALE_FACTOR; None if unknown"""
+    try:
+        m = re.search(r'^Xft\.dpi:\s*([\d.]+)', subprocess.run(['xrdb', '-query'], capture_output=True, text=True, timeout=3).stdout, re.M)
+        if m: return float(m.group(1))
+    except (OSError, subprocess.SubprocessError): pass
+    for k in ('GDK_SCALE', 'QT_SCALE_FACTOR'):
+        try: v = float(os.environ.get(k, ''))
+        except ValueError: continue
+        if v > 0: return 96 * v
+    return None
+
+
+def linux_look(root):
+    """Linux: a family Tk can really draw (a Tk without Xft has only the bitmap "fixed"), the desktop's DPI as tk scaling (not the X server's
+    millimetres, which Xwayland and gamescope make up), and Tk's own named fonts (ttk, entries, dialogs) in the same family"""
+    global FAMILY, MONO, SCALE
+    have = set(tkfont.families(root))
+    pick = lambda wanted, named: next((f for f in wanted if f in have), tkfont.nametofont(named, root).actual('family'))
+    FAMILY = pick(('Noto Sans', 'Cantarell', 'Inter', 'Ubuntu', 'DejaVu Sans', 'Liberation Sans', 'Open Sans', 'FreeSans'), 'TkDefaultFont')
+    MONO = pick(('Noto Sans Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Liberation Mono', 'FreeMono'), 'TkFixedFont')
+    dpi = min(max(desktop_dpi() or 96.0, 72.0), 288.0)
+    root.tk.call('tk', 'scaling', dpi / 72.0)
+    SCALE = max(1.0, dpi / 96.0)
+    for n in ('TkDefaultFont', 'TkTextFont', 'TkMenuFont', 'TkTooltipFont', 'TkIconFont', 'TkSmallCaptionFont'):
+        tkfont.nametofont(n, root).configure(family=FAMILY, size=10)
+    tkfont.nametofont('TkHeadingFont', root).configure(family=FAMILY, size=10, weight='bold')
+    tkfont.nametofont('TkCaptionFont', root).configure(family=FAMILY, size=12, weight='bold')
+    tkfont.nametofont('TkFixedFont', root).configure(family=MONO, size=10)
+    return dpi
+
+
+class NativeDialogs:
+    """Linux: tkinter's messagebox and filedialog calls shown by the desktop's own dialogs: kdialog on KDE (the Steam Deck's desktop), else zenity,
+    else the other one; Tk's X11 dialogs only when neither is installed. Pickers open in the given folder, else the home folder (never "/")."""
+    def __init__(self, root_fn):
+        self.root_fn = root_fn
+        kde = 'KDE' in os.environ.get('XDG_CURRENT_DESKTOP', '').upper()
+        order = ('kdialog', 'zenity') if kde else ('zenity', 'kdialog')
+        self.tool = next((t for t in order if shutil.which(t)), None)
+
+    def run(self, cmd):   # the dialog runs on its own; this window keeps redrawing (input waits until the dialog is answered)
+        root = self.root_fn()
+        try: p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except OSError: return None
+        while p.poll() is None:
+            if root:
+                try: root.update_idletasks()
+                except tk.TclError: pass
+            time.sleep(0.03)
+        return p.returncode, (p.stdout.read() if p.stdout else '').rstrip('\n')
+
+    @staticmethod
+    def esc(text): return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    def message(self, kind, title, message):
+        if self.tool == 'kdialog':
+            return self.run(['kdialog', '--title', title, {'info': '--msgbox', 'warning': '--sorry', 'error': '--error'}[kind],
+                             '<qt>' + self.esc(message).replace('\n', '<br>') + '</qt>'])
+        return self.run(['zenity', f'--{kind}', '--title', title, '--width', '460', '--text', self.esc(message)])
+
+    def ask(self, title, message, cancel):   # True, False, or None (cancelled or closed)
+        if self.tool == 'kdialog':
+            r = self.run(['kdialog', '--title', title, '--yesnocancel' if cancel else '--yesno', '<qt>' + self.esc(message).replace('\n', '<br>') + '</qt>'])
+            return None if r is None else {0: True, 1: False}.get(r[0], None if cancel else False)
+        cmd = ['zenity', '--question', '--title', title, '--width', '460', '--text', self.esc(message), '--ok-label', 'Yes']
+        cmd += ['--cancel-label', 'Cancel', '--extra-button', 'No'] if cancel else ['--cancel-label', 'No']
+        r = self.run(cmd)
+        if r is None: return None
+        if r[0] == 0: return True
+        if cancel: return False if r[1] == 'No' else None
+        return False
+
+    def start(self, initialdir):
+        d = pathlib.Path(initialdir).expanduser() if initialdir else pathlib.Path.home()
+        return str(d if d.is_dir() else d.parent if d.parent.is_dir() else pathlib.Path.home())
+
+    def pick(self, title, initialdir, directory, filetypes=()):
+        start = self.start(initialdir)
+        if self.tool == 'kdialog':
+            filt = '\n'.join(f'{pat}|{name}' for name, pat in filetypes if pat not in ('*', '*.*'))
+            cmd = ['kdialog', '--title', title, '--getexistingdirectory', start] if directory else ['kdialog', '--title', title, '--getopenfilename', start] + ([filt] if filt else [])
+        else:
+            cmd = ['zenity', '--file-selection', '--title', title, '--filename', start.rstrip('/') + '/'] + (['--directory'] if directory else [])
+            for name, pat in filetypes: cmd += ['--file-filter', f'{name} | {"*" if pat == "*.*" else pat}']
+        r = self.run(cmd)
+        return r[1] if r and r[0] == 0 else ''
+
+    # tkinter's names, so the calls below stay as they are on Windows and the Mac
+    def showinfo(self, title=None, message=None, **kw): self.message('info', title or '', message or '')
+    def showwarning(self, title=None, message=None, **kw): self.message('warning', title or '', message or '')
+    def showerror(self, title=None, message=None, **kw): self.message('error', title or '', message or '')
+    def askyesno(self, title=None, message=None, **kw): return bool(self.ask(title or '', message or '', False))
+    def askyesnocancel(self, title=None, message=None, **kw): return self.ask(title or '', message or '', True)
+    def askdirectory(self, title='', initialdir=None, **kw): return self.pick(title, initialdir, True)
+    def askopenfilename(self, title='', initialdir=None, filetypes=(), **kw): return self.pick(title, initialdir, False, filetypes)
+
+
+class TkDialogs:   # Linux without kdialog and zenity: Tk's own, opened in the home folder rather than the working folder
+    def __getattr__(self, name):
+        f = getattr(tk_messagebox if hasattr(tk_messagebox, name) else tk_filedialog, name)
+        if name.startswith('ask') and name.endswith(('directory', 'filename')):
+            return lambda **kw: f(**{'initialdir': str(pathlib.Path.home()), **{k: v for k, v in kw.items() if v}})
+        return f
+
+
+def linux_dialogs(root_fn):
+    d = NativeDialogs(root_fn)
+    return d if d.tool else TkDialogs()
 
 
 def rrect(cv, x0, y0, x1, y1, r, **kw):
@@ -161,7 +279,13 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f'Pokopia Native Builder {tool_version()}')
-        self.configure(bg=C['bg']); self.minsize(820, 600); self.geometry('900x760')
+        if LINUX:
+            global messagebox, filedialog
+            linux_look(self); messagebox = filedialog = linux_dialogs(lambda: self)
+            # the desktop's scale, but never taller than the screen less a panel (a Steam Deck's desktop is 1280x800)
+            w, h = round(900 * SCALE), min(round(760 * SCALE), self.winfo_screenheight() - 90)
+            self.configure(bg=C['bg']); self.minsize(min(round(820 * SCALE), w), min(round(600 * SCALE), h)); self.geometry(f'{w}x{h}')
+        else: self.configure(bg=C['bg']); self.minsize(820, 600); self.geometry('900x760')
         self.proc = None; self.q = queue.Queue(); self.t0 = None; self.running = None; self.last_stage = ''; self.result = {}
         self.wiz = None; self.lines = []; self.wlog = None; self.details = False; self.dump_info = None
         self.checks = []; self.prog = None; self.bar = None; self.space_ok = True
@@ -255,7 +379,7 @@ class App(tk.Tk):
 
         self.status = tk.StringVar(value='')
         ttk.Label(f, textvariable=self.status, font=('', 11)).grid(row=11, column=0, columnspan=3, sticky='w', padx=8, pady=(6, 2))
-        self.log = tk.Text(f, height=18, wrap='none', font=('Menlo' if MAC else 'Consolas' if WIN else 'DejaVu Sans Mono', 10), state='disabled')
+        self.log = tk.Text(f, height=18, wrap='none', font=(MONO, 10), state='disabled')
         self.log.grid(row=12, column=0, columnspan=3, sticky='nsew', padx=8, pady=(0, 4))
         sb = ttk.Scrollbar(f, orient='vertical', command=self.log.yview); sb.grid(row=12, column=3, sticky='ns'); self.log['yscrollcommand'] = sb.set
         f.columnconfigure(0, weight=1); f.rowconfigure(12, weight=1)
@@ -499,6 +623,9 @@ class App(tk.Tk):
     # ---------------------------------------------------------------- the walkthrough: frame, pages, pieces
     def build_walk(self):
         w = self.walk
+        if LINUX:   # one centred column at most 980 px wide (times the desktop's scale): a maximised window keeps lines short instead of stretching
+            w = tk.Frame(self.walk, bg=C['bg']); cap = round(980 * SCALE)
+            self.walk.bind('<Configure>', lambda e: w.place(relx=0.5, y=0, anchor='n', width=min(e.width, cap), height=e.height))
         top = tk.Frame(w, bg=C['bg']); top.pack(fill='x', padx=28, pady=(18, 0))
         label(top, 'Pokopia Native', 20, True, C['title'], wrap=False).pack(side='left')
         label(top, f'builder {tool_version()}', 10, fg=C['soft'], wrap=False).pack(side='left', padx=(10, 0), pady=(10, 0))
@@ -622,7 +749,7 @@ class App(tk.Tk):
             self.wlog = None
             Pill(holder, 'Hide details' if self.details else 'Show details', toggle, size=10).pack(anchor='w')
             if self.details:
-                t = tk.Text(holder, height=10, wrap='none', font=('Consolas' if WIN else 'Menlo' if MAC else 'DejaVu Sans Mono', F(9)[1]), bg=C['log'],
+                t = tk.Text(holder, height=10, wrap='none', font=(MONO, F(9)[1]), bg=C['log'],
                             fg=C['logtext'], relief='flat', bd=0, padx=8, pady=6)
                 t.pack(fill='both', expand=True, pady=(6, 0)); t.insert('end', '\n'.join(self.lines[-300:]) + '\n'); t.see('end'); t.configure(state='disabled')
                 self.wlog = t
