@@ -7675,10 +7675,10 @@ index 0000000..5f2fa0d
 +    cnode_unlock(n);
 +}
 diff --git a/dm/host/hle_hid.c b/dm/host/hle_hid.c
-index 768a357..ea501c3 100644
+index 768a357..24610fb 100644
 --- a/dm/host/hle_hid.c
 +++ b/dm/host/hle_hid.c
-@@ -58,6 +58,159 @@ void dm_pad_set_player(int p, uint64_t buttons, int32_t lx, int32_t ly, int32_t
+@@ -58,6 +58,174 @@ void dm_pad_set_player(int p, uint64_t buttons, int32_t lx, int32_t ly, int32_t
      if (!p) shake_note();
  }
  void dm_pad_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) { dm_pad_set_player(0, buttons, lx, ly, rx, ry); }
@@ -7800,6 +7800,17 @@ index 768a357..ea501c3 100644
 +    dm_guest_write_prepare(py, sizeof *py); *py = (float)y;
 +    dm_guest_write_prepare(pp, sizeof *pp); *pp = (float)p;
 +}
++// The game's follow camera ("Camera - Auto Follow" in its settings) turns the camera while the player moves sideways, over what direct look writes (#31). It counts as on
++// when the camera turned between two frames of moving sideways that had no stick turn of ours, and stays on for 600 frames after the last such turn: only then does moving
++// sideways take the stick path. With it off, direct look stays on while strafing, which the stick path's steps made stuttery (1.3.4)
++static struct { float yaw; uint64_t frame; int side, stick, left; } g_fw;
++static void look_follow_seen(const uint8_t *cam, uint64_t f, int side) {
++    int was = g_fw.left > 0;
++    double d = fabs(remainder((double)*(const float *)(cam + g_lc.yaw) - g_fw.yaw, 2 * M_PI));
++    if (g_fw.frame + 1 == f && g_fw.side && side && !g_fw.stick && d > 1e-5) g_fw.left = 600;
++    else if (g_fw.left > 0) g_fw.left--;
++    if (was != (g_fw.left > 0)) LOG("look: the game's follow camera %s: moving sideways uses %s", g_fw.left > 0 ? "turns the camera" : "has been still for 600 frames", g_fw.left > 0 ? "the stick path" : "direct look");
++}
 +static void look_apply(int32_t *rx, int32_t *ry, int32_t lx) {   // player 1's read: this frame's look (the camera written directly, or a tilt that wins over a resting right stick)
 +    if (!dm_look_on()) return;
 +    pthread_mutex_lock(&g_look_mu);
@@ -7809,9 +7820,12 @@ index 768a357..ea501c3 100644
 +        g_look_frame = f; g_look_t = now; look_stats_frame(f, now);
 +        g_look_axes[0] = g_look_axes[1] = 0;
 +        static int strafe = -1; if (strafe < 0) { const char *e = getenv("DM_LOOK_STRAFE"); strafe = !(e && *e && !atoi(e)); }
-+        uint8_t *cam = look_cam(), *side = NULL;
-+        if (cam && strafe && abs(lx) > DM_STICK_MAX / 5) { side = cam; cam = NULL; }   // moving sideways: the stick path, its overflow written (above)
++        uint8_t *cam = look_cam(), *side = NULL, *seen;
++        int sideways = abs(lx) > DM_STICK_MAX / 5;
++        if (cam) look_follow_seen(cam, f, sideways);
++        if (cam && strafe && sideways && g_fw.left > 0) { side = cam; cam = NULL; }   // moving sideways while the follow camera turns it: the stick path, its overflow written (above)
 +        g_look_direct = cam != NULL || side != NULL;
++        seen = cam ? cam : side;
 +        if (cam) {   // direct: the pointer's movement up to a steady delay before this read (look_pos_at), in this frame's camera update
 +            double mx, my; look_pos_at(now - fmin(g_lr_gap + 0.004, 0.04), &mx, &my);
 +            double dx = mx - g_lr_ax, dy = my - g_lr_ay; g_lr_ax = mx; g_lr_ay = my; g_look_acc[0] = g_look_acc[1] = 0;
@@ -7831,6 +7845,7 @@ index 768a357..ea501c3 100644
 +            g_look_acc[0] = g_look_acc[1] = 0;
 +        }
 +        }
++        if (seen) { g_fw.yaw = *(float *)(seen + g_lc.yaw); g_fw.frame = f; g_fw.side = sideways; g_fw.stick = g_look_axes[0] || g_look_axes[1]; }   // the camera as this frame leaves it
 +    }
 +    if (g_look_axes[0] || g_look_axes[1]) { *rx = g_look_axes[0]; *ry = g_look_axes[1]; }
 +    pthread_mutex_unlock(&g_look_mu);
@@ -7838,7 +7853,7 @@ index 768a357..ea501c3 100644
  static void script_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
      uint64_t old = atomic_exchange(&g_sc_btn, buttons); atomic_fetch_or(&g_sc_latch, buttons & ~old); atomic_store(&g_sc_axes, pack(lx, ly, rx, ry));
      shake_note();
-@@ -229,6 +382,13 @@ static void *ctl_main(void *arg) {
+@@ -229,6 +397,13 @@ static void *ctl_main(void *arg) {
                  if (!strncmp(line, "env ", 4)) { char *eq = strchr(line + 4, '='); if (eq) { *eq = 0; setenv(line + 4, eq + 1, 1); LOG("DM_CTL: env %s=%s", line + 4, eq + 1); } continue; }
                  if (!strncmp(line, "texdump ", 8)) { void dm_gfx_texdump_next(const char *path); dm_gfx_texdump_next(line + 8); LOG("DM_CTL: colour targets of the next frame → %s (as DM_NVN_TEXDUMP)", line + 8); continue; }
                  if (!strncmp(line, "passdump ", 9)) { void dm_gfx_passdump_next(long n); dm_gfx_passdump_next(atol(line + 9)); LOG("DM_CTL: passes of the next %ld frames (as DM_NVN_PASSDUMP)", atol(line + 9)); continue; }
@@ -7852,7 +7867,7 @@ index 768a357..ea501c3 100644
                  if (!strncmp(line, "drag ", 5)) {   // one finger, a step every 8 ms
                      float x0, y0, x1, y1, s = 0.3f; if (sscanf(line + 5, "%f %f %f %f %f", &x0, &y0, &x1, &y1, &s) < 4) { LOG("[RED] DM_CTL drag wants x0 y0 x1 y1 [seconds]"); continue; }
                      int n = (int)(s / 0.008f); if (n < 2) n = 2;
-@@ -427,6 +587,7 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
+@@ -427,6 +602,7 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
          if (atomic_load_explicit(&g_rec_on, memory_order_relaxed)) rec_read((b & 0xffffull) | ((atomic_load(&g_btn) | atomic_load(&g_pad_btn[0])) & DM_BTN_SHAKE), a);
          b |= atomic_load(&g_sc_btn) | atomic_exchange(&g_sc_latch, 0);
          uint64_t c = atomic_load(&g_sc_axes); for (int i = 0; i < 4; i++) a[i] = pick(a[i], ax(c, i));
