@@ -153,6 +153,20 @@ CHECK_NAMES = ((r'^Windows on x64', 'Windows (64-bit)'), (r'^Python 3', 'Python'
                (r'^xcodegen', 'XcodeGen (the iPhone app)'), (r'^LLVM|^Metal Developer Tools|^ldid|^rcodesign', 'The iPhone app tools'))
 
 
+def fix_text(hints):
+    """One card's fix from its checks' hints: pip installs merged into one command, the same hint once (a Mac's own environment fixes every
+    missing module). Returns (what the card shows, what Copy copies: only the commands after "in Terminal: ")."""
+    pips, other = [], []
+    for h in hints:
+        m = re.match(r'^(.+?) -m pip install (".+")$', h)
+        if m: pips.append(m)
+        elif h not in other: other.append(h)
+    lines = ([f'{pips[0].group(1)} -m pip install ' + ' '.join(m.group(2) for m in pips)] if pips else []) + other
+    fix = '\n'.join(lines)
+    if any(' -m venv ' in l for l in other): fix += '\nThen quit the builder (⌘Q) and open it again: it uses that environment by itself.'
+    return fix, '\n'.join(l.split('in Terminal: ', 1)[1] if 'in Terminal: ' in l else l for l in lines)
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -726,13 +740,8 @@ class App(tk.Tk):
                 tk.Label(grid, text='✓  ' + n, font=F(11), fg=C['ok'], bg=r.fill, anchor='w').grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 24), pady=2)
             grid.columnconfigure(0, weight=1); grid.columnconfigure(1, weight=1)
         for nice, (st, hints) in rows.items():
-            pips, other = [], []
-            for h in hints:
-                m = re.match(r'^(.+?) -m pip install (".+")$', h)
-                if m: pips.append(m)
-                else: other.append(h)
-            fix = '\n'.join(([f'{pips[0].group(1)} -m pip install ' + ' '.join(m.group(2) for m in pips)] if pips else []) + other)
-            if st != 'ok': self.row(box, nice, st, hint=f'To fix: {fix}' if fix else '', copy=fix if fix else None)
+            fix, cmd = fix_text(hints)
+            if st != 'ok': self.row(box, nice, st, hint=f'To fix: {fix}' if fix else '', copy=cmd or None)
         for w in warns: self.row(box, 'Heads-up', 'warn', 'worth reading', hint=w)
         if not rows: self.row(box, f'Your {PC}', 'bad', 'the check did not run', hint='\n'.join(self.lines[-6:]))
         bad = not rows or any(st == 'bad' for st, _ in rows.values())
