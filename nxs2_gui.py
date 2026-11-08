@@ -21,6 +21,10 @@ NAME = 'Pokemon Pokopia'
 MAC = sys.platform == 'darwin'
 WIN = sys.platform == 'win32'
 LINUX = sys.platform.startswith('linux')
+if LINUX and os.environ.get('POKOPIA_TK_XFT'):   # the AppImage's Tk with Xft is loaded by now: what this window starts (games, nxs2.py, dialogs) goes without it
+    keep = [p for p in os.environ.get('LD_LIBRARY_PATH', '').split(':') if p and p != os.environ['POKOPIA_TK_XFT']]
+    if keep: os.environ['LD_LIBRARY_PATH'] = ':'.join(keep)
+    else: os.environ.pop('LD_LIBRARY_PATH', None)
 SETTINGS = pathlib.Path.home() / ('.nxs2_gui.json')
 LOG = HERE / 'builder-log.txt'   # Windows: the launcher's start-up checks and the window's own errors, for a report
 DISCORD = 'https://discord.gg/Aj9GqxZj8V'   # the community server: install help, bug reports, co-op partners
