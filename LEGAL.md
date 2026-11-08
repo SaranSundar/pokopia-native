@@ -58,7 +58,7 @@ tool cannot read it and will not try.
   specification of the layout and verified bit for bit against the game's textures. It replaces the earlier code,
   which followed Eden-NS2's GPL-3.0-or-later code; none of that remains in the patch.
 - `windows/`: MIT; the components it builds in or ships beside it are listed with their licences in
-  `windows/bin/THIRD-PARTY-NOTICES.txt` of the Windows download (LLVM: Apache-2.0 with LLVM exception; SDL3: zlib;
+  `windows/bin/THIRD-PARTY-NOTICES.txt` of the Windows download (LLVM: Apache-2.0 with LLVM exception; SDL3 and SDL_GameControllerDB: zlib;
   astc-encoder and SPIRV-Tools: Apache-2.0; bc7enc_rdo: MIT; nxnative: MIT).
 - `nupread.py`: this project's own MIT code, written from the NUP format specification (github.com/a55uka/nup,
   `SPEC.md`, MIT). It only reads containers of already-decrypted dumps; no keys are involved.
