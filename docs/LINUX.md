@@ -34,7 +34,8 @@ The game itself is still built on your computer from your own dump, into the bui
 Steam (Game Mode), add the game's launcher (`out/play-pokopia-2.0.1.sh` in your build folder) as a non-Steam game, as below, not the AppImage.
 The report (the last section) is `~/Downloads/Pokopia-Native-Builder-*.AppImage report` in a terminal: it finds your build folder by itself. If the AppImage does not
 start at all, run it in a terminal with `--appimage-extract-and-run` after its name (a system without FUSE), and say so in the report.
-The window looks plain (one basic font): its own Tk draws with the X server's fonts. To remove the builder, delete the AppImage and
+The window draws with your desktop's fonts and dialogs (on a system older than 2022, glibc 2.35, it falls back to one plain bitmap font; to force
+that, start it with `POKOPIA_TK=x11`). To remove the builder, delete the AppImage and
 `~/.local/share/pokopia-native/builder`; your builds and saves are elsewhere and stay.
 
 Everything below is the same build without the AppImage, from the "for Linux" zip and a terminal.

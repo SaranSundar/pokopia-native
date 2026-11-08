@@ -34,11 +34,12 @@ unset PYTHONHOME PYTHONPATH
 cd "$DEST/installer"
 if [ "${1:-}" = report ]; then shift; exec bash linux/report.sh "$@"; fi   # the tester's report (docs/LINUX.md, "The report")
 if [ $# -gt 0 ]; then exec "$DEST/python/bin/python3" -s nxs2.py "$@"; fi
-# The window's Tk: the one built with Xft (the desktop's fonts) when it loads and opens here, else python-build-standalone's own (X11 bitmap fonts);
-# POKOPIA_TK=x11 keeps the bundled one. The window takes its folder off LD_LIBRARY_PATH again for what it starts.
-TKX="$DEST/python/lib/tk-xft"
-if [ -f "$TKX/libtcl9tk9.0.so" ] && [ "${POKOPIA_TK:-}" != x11 ] && LD_LIBRARY_PATH="$TKX${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-     "$DEST/python/bin/python3" -s -c 'import tkinter as t; r = t.Tk(); r.withdraw(); r.destroy()' 2>/dev/null; then
-  export LD_LIBRARY_PATH="$TKX${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" POKOPIA_TK_XFT="$TKX"
+# The window's Tk: the one built with Xft (the desktop's fonts) when it loads and draws with Xft here, else python-build-standalone's own (X11
+# bitmap fonts); POKOPIA_TK=x11 keeps the bundled one. _tkinter's RPATH names the bundled Tk, so the Xft one is preloaded (its soname stands in;
+# a machine that cannot load it skips the preload); the window takes it off LD_PRELOAD again for what it starts.
+TKX="$DEST/python/lib/tk-xft/libtcl9tk9.0.so"
+if [ -f "$TKX" ] && [ "${POKOPIA_TK:-}" != x11 ] && LD_PRELOAD="$TKX${LD_PRELOAD:+ $LD_PRELOAD}" "$DEST/python/bin/python3" -s -c \
+     'import tkinter as t; r = t.Tk(); r.withdraw(); x = r.call("::tk::pkgconfig", "get", "fontsystem"); r.destroy(); raise SystemExit(x != "xft")' 2>/dev/null; then
+  export LD_PRELOAD="$TKX${LD_PRELOAD:+ $LD_PRELOAD}" POKOPIA_TK_XFT="$TKX"
 fi
 exec "$DEST/python/bin/python3" -s nxs2_gui.py

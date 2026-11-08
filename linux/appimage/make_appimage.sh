@@ -2,7 +2,7 @@
 # make_appimage.sh: Pokopia-Native-Builder-<version>-x86_64.AppImage from the "for Linux" download (docs/LINUX.md). Runs on Linux (or WSL).
 #   make_appimage.sh --zip <Pokopia-Native-for-Linux(-beta).zip> --tools <folder> --dotnet <.NET root> --rules <rules.tsv> --out <folder> [--work <folder>]
 #                    [--version <v>]: the builder's version (its name, VERSION, its folder); default TOOL_VERSION, with "-beta" for a beta zip
-#                    [--tk-xft <folder>]: a Tk 9.0.4 built with Xft (libtcl9tk9.0.so), libXft.so.2 and their licences, put beside python-build-standalone's
+#                    [--tk-xft <folder>]: build_tk_xft.sh's out/: a Tk 9.0.4 built with Xft (libtcl9tk9.0.so), libXft.so.2 and their licences, beside python-build-standalone's
 #                    own Tk (which draws with X11 bitmap fonts only) in python/lib/tk-xft; AppRun uses it when it loads, else the bundled Tk
 # --tools holds the downloads, each checked against its publisher's sha256 before use: python-build-standalone's
 # cpython-3.12.16+20261026-x86_64-unknown-linux-gnu-install_only.tar.gz, AppImage's appimagetool-x86_64.AppImage and its static type-2 runtime
@@ -45,8 +45,8 @@ if [ -n "$TKXFT" ]; then
   say "Tk with Xft: $TKXFT (beside the bundled Tk; AppRun takes it where it loads)"
   for f in libtcl9tk9.0.so libXft.so.2 TK-LICENSE.terms LIBXFT-COPYRIGHT; do [ -f "$TKXFT/$f" ] || { echo "make_appimage.sh: $TKXFT/$f is missing" >&2; exit 1; }; done
   mkdir -p "$P/python/lib/tk-xft" && cp "$TKXFT"/{libtcl9tk9.0.so,libXft.so.2,TK-LICENSE.terms,LIBXFT-COPYRIGHT} "$P/python/lib/tk-xft/"
-  if [ -n "${DISPLAY:-}" ]; then   # the same Tk as the bundled one, and drawing with Xft
-    LD_LIBRARY_PATH="$P/python/lib/tk-xft" "$PY" -c 'import tkinter as t; r = t.Tk(); r.withdraw(); print("Tk", r.call("info", "patchlevel"), "font system", r.call("::tk::pkgconfig", "get", "fontsystem")); r.destroy()'
+  if [ -n "${DISPLAY:-}" ]; then   # the same Tk as the bundled one, and drawing with Xft (preloaded as AppRun does: _tkinter's RPATH names the bundled one)
+    LD_PRELOAD="$P/python/lib/tk-xft/libtcl9tk9.0.so" "$PY" -c 'import tkinter as t; r = t.Tk(); r.withdraw(); print("Tk", r.call("info", "patchlevel"), "font system", r.call("::tk::pkgconfig", "get", "fontsystem")); r.destroy()'
   fi
 fi
 
