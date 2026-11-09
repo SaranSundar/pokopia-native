@@ -21,6 +21,7 @@ games on Apple systems, with this project's Switch 2 changes), the game's shader
   nxs2.py sign <build dir> --team-id ID     archive and export the development IPA from the prepared Xcode project
   nxs2.py status <build dir>                what the build folder holds and what it still lacks
   nxs2.py import-save <build dir> <folder>  Windows and Linux: a save from Eden, the phone or a Mac (a folder with B00, G00, S00) becomes the one the game plays
+  nxs2.py import-dlc <build dir> <folder>   Windows and Linux: your own DLC, the folder your dumping tool made from add-on content you bought
 
 Needs: a Mac with Apple silicon, Xcode (27.x) with its command line tools (an iPhone build also needs the iOS
 platform), Python 3.12 or newer with capstone (5.x), lz4 and fontTools, the .NET 10 runtime (the shader
@@ -1182,7 +1183,7 @@ def st_win_play(b, t):
     cfg = {'pokopia_native': TOOL_VERSION, 'game_version': b.version, 'exe': r'runtime\nxrt.exe', 'exefs': r'..\extract\ExeFS', 'dll': 'game.dll',
            'romfs': r'..\extract\RomFS.img', 'save': rf'{SAVES_ROOT}\{b.version}\save', 'work': rf'{WORK_ROOT}\{b.version}', 'shaders': 'shaders',
            'shader_build': '..', 'fonts': 'fonts', 'pipeline_seed': 'pipelines-seed.tsv' if seed.is_file() else '', 'python': PY,
-           'shader_tool': r'runtime\nxshader\nxshader.py', 'installer': r'runtime\installer', 'spirv_tools': 'runtime'}
+           'shader_tool': r'runtime\nxshader\nxshader.py', 'installer': r'runtime\installer', 'spirv_tools': 'runtime', 'dlc': r'..\dlc'}
     old = b.win / 'play.json'
     if old.is_file():   # a save or work folder the player chose stays
         prev = json.loads(old.read_text(encoding='utf-8')); cfg.update({k: prev[k] for k in ('save', 'work') if prev.get(k)})
@@ -1390,7 +1391,7 @@ def st_lin_play(b, t):
     cfg = {'pokopia_native': TOOL_VERSION, 'game_version': b.version, 'exe': 'runtime/nxrt', 'exefs': '../extract/ExeFS', 'game': 'game.so',
            'romfs': '../extract/RomFS.img', 'save': save, 'work': work, 'shaders': 'shaders', 'shader_build': '..', 'fonts': 'fonts',
            'pipeline_seed': 'pipelines-seed.tsv' if seed.is_file() else '', 'python': PY, 'shader_tool': 'runtime/nxshader/nxshader.py',
-           'installer': 'runtime/installer', 'spirv_tools': 'runtime', 'dotnet': str(dotnet_root() or '')}   # the translator's .NET for shaders made in play
+           'installer': 'runtime/installer', 'spirv_tools': 'runtime', 'dotnet': str(dotnet_root() or ''), 'dlc': '../dlc'}   # the translator's .NET for shaders made in play
     old = b.lin / 'play.json'
     if old.is_file():   # a save or work folder the player chose stays
         prev = json.loads(old.read_text(encoding='utf-8')); cfg.update({k: prev[k] for k in ('save', 'work') if prev.get(k)})
@@ -1479,6 +1480,40 @@ def import_save(args):
         if (src / d).is_dir(): shutil.copytree(src / d, dst / d)
     n = sum(1 for f in dst.rglob('*') if f.is_file())
     say(f'imported {src} -> {dst} ({n} files). Each player needs a save of their own for Link Play: the game refuses a second copy of the host\'s save.')
+
+
+DLC_BASE = 0x0400A3A01EE4D000   # Pokopia's add-on content: this ID plus the DLC's number (0400A3A01EE4D001 is number 1)
+
+def import_dlc(args):
+    """Your own DLC: the folder your dumping tool made from add-on content you bought (its RomFS), copied into <build folder>/dlc/<number>.
+    The Windows and Linux games find it there (play.json's dlc; play.ps1 and play.sh pass it on as DM_AOC_DIR). Nothing is made up here and
+    nothing is downloaded: without your folder the game owns no add-on content. The source is only read. Never share the folder."""
+    b = Build(args.build); root = b.out / 'dlc'
+    if args.remove:
+        dst = root / str(args.number or 1)
+        if not dst.is_dir(): raise Fail(f'no DLC {args.number or 1} in {root}')
+        shutil.rmtree(dst); say(f'removed {dst}: the game owns no add-on content {args.number or 1} from its next start'); return
+    if not args.folder: raise Fail('give the folder your dumping tool made from the DLC you bought (its RomFS)')
+    src = pathlib.Path(args.folder).expanduser().resolve()
+    for sub in ('romfs', 'RomFS'):
+        if (src / sub).is_dir(): src = src / sub; break
+    if not src.is_dir(): raise Fail(f'{src} is not a folder: give the folder your dumping tool made from the DLC you bought (its RomFS)')
+    files = [f for f in src.rglob('*') if f.is_file()]
+    if not files: raise Fail(f'{src} is empty: give the folder your dumping tool made from the DLC you bought (its RomFS)')
+    if len(files) > 5000 or sum(f.stat().st_size for f in files) > 2 << 30:
+        raise Fail(f"{src} looks like the game itself, not its DLC: give the DLC's own folder")
+    m = re.search(r'0400A3A01EE4D([0-9A-F]{3})', str(src), re.I)
+    n = args.number or (int(m.group(1), 16) if m else 1)
+    if not 1 <= n <= 2000: raise Fail(f'DLC number {n}: it is between 1 and 2000')
+    if src == root or root in src.parents: raise Fail(f'{src} is the copy in your build folder already')
+    dst = root / str(n)
+    if dst.exists(): shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    for cfg, rel in ((b.win / 'play.json', '..\\dlc'), (b.lin / 'play.json', '../dlc')):   # a build made before this learns where the DLC is
+        if cfg.is_file():
+            c = json.loads(cfg.read_text(encoding='utf-8'))
+            if c.get('dlc') != rel: c['dlc'] = rel; cfg.write_text(json.dumps(c, indent=1) + '\n', encoding='utf-8')
+    say(f'your DLC {n}: {len(files)} file(s) from {src} -> {dst}. The game owns it from its next start. It is yours: never share it.')
 
 
 def run_windows(args):
@@ -1778,6 +1813,10 @@ def main():
     s.add_argument('build'); s.add_argument('folder', nargs='?', help='a folder holding B00, G00 and S00 (or a save/ folder with them)')
     s.add_argument('--eden', action='store_true', help="Eden's own save of this game (read only)"); s.add_argument('--force', action='store_true')
     s.set_defaults(f=import_save)
+    s = sub.add_parser('import-dlc', help='Windows and Linux: your own DLC (the folder your dumping tool made from add-on content you bought) for the game')
+    s.add_argument('build'); s.add_argument('folder', nargs='?', help="your DLC's RomFS folder, as your dumping tool made it")
+    s.add_argument('--number', type=int, help="the DLC's number (default: from a 0400A3A01EE4Dxxx ID in the folder's path, else 1)")
+    s.add_argument('--remove', action='store_true', help='take that DLC out of the build again'); s.set_defaults(f=import_dlc)
     s = sub.add_parser('sign'); s.add_argument('build'); s.add_argument('--team-id', help='Xcode signing: your Apple developer team ID')
     s.add_argument('--method', default='debugging', help='Xcode export method: debugging (default), ad-hoc, release-testing')
     s.add_argument('--p12', help='without Xcode: your Apple Development certificate and key (.p12)'); s.add_argument('--profile', help='without Xcode: the development provisioning profile (.mobileprovision)')

@@ -105,6 +105,7 @@ The builder checks all of this for you and tells you what to install.
 | **Story co-op** | ✓ | ✓ | ✓ | Not yet | ✓ |
 | **Auto port forwarding** | ✓ | By hand | By hand | — | ✓ |
 | **Import a save** | ✓ | By hand | By hand | Not yet | ✓ |
+| **Your own DLC** | ✓ | Soon | Soon | — | ✓ |
 
 Link Play is for up to four players; Story co-op is experimental. Saves move between a PC, a Mac and an iPhone ([how](docs/SAVES.md)).
 

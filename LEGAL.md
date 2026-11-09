@@ -9,6 +9,7 @@ does not contain, and must never be made to contain, any part of the game.
 - The game's executable (`main`, `sdk`, the other ExeFS modules), in original, rewritten or recompiled form (the
   Windows build's `game.dll`, its objects and its `program.db` included).
 - The game's data (`RomFS`, `romfs.img`, any file extracted from it).
+- The game's DLC (add-on content) in any form. A build only ever uses the player's own dump of DLC they bought.
 - The game's shaders in any form: the shader containers from the game files, runtime shader dumps, lowered
   (Maxwell) programs, translated Metal source, compiled Metal libraries, Vulkan SPIR-V, pipeline caches, or shader
   packages built from them.
@@ -53,6 +54,9 @@ PC from your own dump, into your build folder, as the Mac and iPhone builds do.
 It decrypts nothing and bypasses nothing. It takes a dump that is already plain files, made by you from your own
 console with your own tools, and needs no keys, tickets or certificates. If your dump is encrypted or packaged, this
 tool cannot read it and will not try.
+
+It never makes, downloads or unlocks DLC (add-on content). The game sees DLC only when you give the builder your own dump of DLC you
+bought; without it, the game has none.
 
 ## Free, forever
 

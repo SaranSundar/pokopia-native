@@ -378,7 +378,7 @@ class App(tk.Tk):
         self.buttons = {}
         for key, text, cmd in (('doctor', 'Check tools', self.do_doctor), ('setup', 'Setup', self.do_setup), ('build', 'Build', self.do_build)) + \
                               ((('refresh', 'Refresh shaders', self.do_refresh), ('sign', 'Sign IPA', self.do_sign)) if not LINUX else ()) + \
-                              ((('play', 'Play', self.do_play), ('import', 'Import save…', self.do_import)) if WIN or LINUX else ()):
+                              ((('play', 'Play', self.do_play), ('import', 'Import save…', self.do_import), ('dlc', 'DLC…', self.do_dlc)) if WIN or LINUX else ()):
             self.buttons[key] = ttk.Button(b, text=text, command=cmd); self.buttons[key].pack(side='left', padx=(0, 6))
         self.stop_btn = ttk.Button(b, text='Stop', command=self.do_stop, state='disabled'); self.stop_btn.pack(side='left', padx=(0, 6))
         ttk.Button(b, text='Open build folder', command=self.open_out).pack(side='right')
@@ -805,12 +805,16 @@ class App(tk.Tk):
         if 'windows' in built:
             n += 1; self.step_card(pg, n, 'Bring your save (optional)', 'From Eden, your iPhone or a Mac, so you carry on where you were. Skip it to '
                                    'start a new game. The save the game has now is kept beside it, not deleted.', [('Bring my save', self.wiz_import, 'plain')])
+            n += 1; self.step_card(pg, n, 'Your DLC (optional)', 'If you bought the game\'s DLC, give the folder your dumping tool made from it: '
+                                   'the game finds it from its next start. Only your own, and never share it.', [('Add my DLC', self.wiz_dlc, 'plain')])
             n += 1; self.step_card(pg, n, 'Play', 'The first minutes can hitch while the game prepares its graphics; it gets smooth after that. '
                                    'F11 or Alt+Enter switches to full screen. "Pokopia Settings" in your build folder changes the window, the controls '
                                    'and Link Play.', [('Play', self.do_play, kind)])
         if 'linux' in built:
             n += 1; self.step_card(pg, n, 'Bring your save (optional)', 'From Eden, your iPhone or a Mac, so you carry on where you were. Skip it to '
                                    'start a new game. The save the game has now is kept beside it, not deleted.', [('Bring my save', self.wiz_import, 'plain')])
+            n += 1; self.step_card(pg, n, 'Your DLC (optional)', 'If you bought the game\'s DLC, give the folder your dumping tool made from it: '
+                                   'the game finds it from its next start. Only your own, and never share it.', [('Add my DLC', self.wiz_dlc, 'plain')])
             n += 1; self.step_card(pg, n, 'Play', 'The first minutes can hitch while the game prepares its graphics; it gets smooth after that. F11 '
                                    'switches to full screen. To play from Steam (Game Mode on a Steam Deck), add out/play-pokopia-<version>.sh from your '
                                    'build folder as a non-Steam game. pokopia-settings-<version>.sh beside it asks the Link Play choice again.',
@@ -1145,6 +1149,19 @@ class App(tk.Tk):
                      'Places you have not been to yet still need recording. After playing further, refresh again.')
         self.navb(nxt=self.home, text='Done')
 
+    def do_dlc(self):
+        b = self.build_dir()
+        game = 'linux' if LINUX else 'windows'
+        if not b or not (b / game / 'play.json').is_file():
+            return messagebox.showwarning('Your DLC', f'Build the {"Linux" if LINUX else "Windows"} game first: the DLC goes beside it.')
+        if not messagebox.askokcancel('Your DLC', 'Choose the folder your dumping tool made from the DLC you bought (its RomFS).\n\n'
+                                      'It is only read, and copied into your build folder. Only your own DLC: never share it.'): return
+        d = filedialog.askdirectory(title="Your DLC's folder, as your dumping tool made it")
+        if not d: return
+        self.last_stage = 'starting'; self.start('Your DLC', ['import-dlc', str(b), d])
+    def wiz_dlc(self):
+        self.run_wiz(self.do_dlc, done=lambda rc: messagebox.showinfo('Your DLC', 'Your DLC is in place: the game finds it from its next start.')
+                     if rc == 0 else messagebox.showerror('Your DLC', self.result.get('fail') or f'exit code {rc}'))
     def wiz_import(self):
         self.run_wiz(self.do_import, done=lambda rc: messagebox.showinfo('Your save', 'Your save is in place. Press Play to carry on where you were.')
                      if rc == 0 else messagebox.showerror('Your save', self.result.get('fail') or f'exit code {rc}'))

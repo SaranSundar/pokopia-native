@@ -27,7 +27,7 @@ runtime, the Linux tools and nxnative): no terminal steps, no Python packages, n
 2. **Double-click it.** The first start unpacks the builder to `~/.local/share/pokopia-native/builder/<version>` (about 1 GB, once per version;
    the games you build use its Python and .NET from there), then the window opens.
 3. The window walks you through it, one page at a time: what to make (the game for this computer), a check of your computer, your game files,
-   the build, then **Play**. **Bring my save** on the last page brings your save from Eden, the phone or a Mac. **Advanced** (top right) has
+   the build, then **Play**. **Bring my save** on the last page brings your save from Windows, the phone or a Mac. **Advanced** (top right) has
    the one-screen view with every button.
 
 The game itself is still built on your computer from your own dump, into the build folder; the AppImage carries nothing of the game. To play from
@@ -122,9 +122,13 @@ start translates the shaders the game makes while it runs: for about a minute th
   keys. Changes apply at once (Console mode from the next start) and are kept in `~/.config/pokopia-native/` for the next start.
 - **On a Steam Deck the game starts in its handheld mode**: its own lighter settings (about a quarter less graphics work). **F1 → Console mode →
   Docked (TV)** switches back from the next start, and that choice is kept.
-- **Your save**: `~/.local/share/pokopia-native/<version>/save`. To bring your save from Eden, a Mac or the phone:
-  `~/pokopia-venv/bin/python nxs2.py import-save ~/Games/Pokopia_native <the folder with B00, G00 and S00>` (`--eden` finds Eden's own).
+- **Your save**: `~/.local/share/pokopia-native/<version>/save`. To bring your save from Windows, a Mac or the phone:
+  `~/pokopia-venv/bin/python nxs2.py import-save ~/Games/Pokopia_native <the folder with B00, G00 and S00>`.
   The save that was there is kept beside it.
+- **Your DLC**: if you bought the game's DLC, give the builder your own dump of it, made the same way as your dump of the game: **Add my
+  DLC** on the builder's last page, or `~/pokopia-venv/bin/python nxs2.py import-dlc ~/Games/Pokopia_native <your DLC folder>` (its RomFS,
+  or the folder holding it). It's copied into the build folder, and the game finds it from its next start. **Only your own DLC:**
+  Pokopia Native never downloads, makes or unlocks DLC, and you should never share your DLC folder.
 
 ### Game Mode (play from the Steam Deck's own interface)
 

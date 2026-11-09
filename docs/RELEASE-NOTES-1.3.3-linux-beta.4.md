@@ -74,7 +74,7 @@ better or worse for you than beta 3, please say so in **#linux-beta**, with your
 2. Double-click it. The first start unpacks the builder to `~/.local/share/pokopia-native/builder/1.3.3-beta.4` (about 1 GB, once; an earlier
    beta's copy in `builder/` can be deleted once your game is built again).
 3. The window walks you through it: your game files, the build (the first one takes a while: the game's code is recompiled for your CPU), then
-   **Play**. **Bring my save** on the last page brings your save from Eden, the phone or a Mac.
+   **Play**. **Bring my save** on the last page brings your save from Windows, the phone or a Mac.
 
 **Steam Deck Game Mode:** add `<your build folder>/out/play-pokopia-2.0.1.sh` to Steam as a non-Steam game (not the AppImage). A new game asks
 for your character's name: if no box shows in Game Mode, press **A** and the name is "Player" (to choose one, start the new game in Desktop Mode).

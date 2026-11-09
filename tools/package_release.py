@@ -30,7 +30,7 @@ NOT_LINUX = ('windows/bin/', 'ampere-lower/windows/', 'Pokopia Native Builder.cm
              'host/windows/build_app.patch', 'host/windows/fork-extras.patch')
 ELF_OK = re.compile(r'^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|libpthread\.so\.0|librt\.so\.1|ld-linux-x86-64\.so\.2|libSDL3\.so\.0|libgcc_s\.so\.1|libstdc\+\+\.so\.6|libz\.so\.1)$')   # zlib: LLVM's lld; every distribution and SteamOS have it
 NEVER = ('.github/workflows/', '.github/ISSUE_TEMPLATE/', 'linux/appimage/')   # the CI files, issue forms and the AppImage's making are the repository's, not the players'
-GAME_DERIVED = re.compile(r'(^|/)(_local|extract|shader/corpus|shader/maxwell|shdump|dumps|objcache)(/|$)|\.(nso|img|nca|nsp|xci|bin\.patched)$|(^|/)(main|sdk|subsdk0|rtld)$', re.I)
+GAME_DERIVED = re.compile(r'(^|/)(_local|extract|dlc|aoc|shader/corpus|shader/maxwell|shdump|dumps|objcache)(/|$)|\.(nso|img|nca|nsp|xci|bin\.patched)$|(^|/)(main|sdk|subsdk0|rtld)$', re.I)
 VC_RUNTIME = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')   # the SPIRV-Tools of the Vulkan SDK are built with the DLL runtime: app-local copies
 LLVM_EXCEPTION = '''---- LLVM Exceptions to the Apache 2.0 License ----
 

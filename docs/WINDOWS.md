@@ -153,6 +153,17 @@ folder: Windows saves load on the Mac and the iPhone. [Saves](SAVES.md) has more
 Link Play needs a matching pokopia-native version on every device, so update them all. The iPhone app needs a refresh
 and a new signature after an update ([below](#sign-and-install)).
 
+### Your DLC
+
+If you bought the game's DLC, the Windows game can use it too, from your own dump of it, made the same way as your dump of the game:
+
+- In the builder, press **Add my DLC** on its last page (or **DLC…** in Advanced) and choose the folder your dumping tool made from your
+  DLC: its RomFS, or the folder holding it. From a terminal: `python nxs2.py import-dlc "<build folder>" "<your DLC folder>"`.
+- It's copied into your build folder's `dlc` folder, and the game finds it from its next start. Your folder is only read.
+  `python nxs2.py import-dlc "<build folder>" --remove` takes it out again.
+- **Only your own DLC.** Pokopia Native never downloads, makes or unlocks DLC: without your dump of it, the game has none. Never share
+  your DLC folder, or a build folder that holds one.
+
 ### Link Play (co-op) between our builds
 
 Link Play → **Local connection** in the game works with the Mac and iPhone apps and other Windows PCs

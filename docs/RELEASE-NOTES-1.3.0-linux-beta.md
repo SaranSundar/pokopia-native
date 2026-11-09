@@ -54,7 +54,7 @@ controller, Story co-op and Link Play from Linux.
    **Permissions** → tick **Is executable**; or in a terminal `chmod +x Pokopia-Native-Builder-1.3.0-beta-x86_64.AppImage`.
 2. Double-click it. The first start unpacks the builder to `~/.local/share/pokopia-native/builder/1.3.0-beta` (about 1 GB, once).
 3. The window walks you through it: your game files, the build (the first one takes a while: the game's code is recompiled for your CPU), then
-   **Play**. **Bring my save** on the last page brings your save from Eden, the phone or a Mac.
+   **Play**. **Bring my save** on the last page brings your save from Windows, the phone or a Mac.
 
 Already built with 1.2.6? Open the new AppImage and **Build** again with the same build folder: only what changed is redone.
 
