@@ -1,6 +1,7 @@
 # What this repository contains, and what it never contains
 
-This project lets you run a game you own natively on your own Mac, iPhone or Windows PC. It ships **tools only**. It
+This project lets you run a game you own natively on your own Mac, iPhone or Windows PC, and, in open betas, on Linux
+(the Steam Deck included) and Android. It ships **tools only**. It
 does not contain, and must never be made to contain, any part of the game.
 
 ## Never in this repository, never in a release
@@ -40,7 +41,11 @@ Each release has one download per computer, made by `tools/package_release.py` f
   Visual C++ runtime files those two need. `windows/bin/MANIFEST.txt` lists every file with its checksum and origin,
   `windows/bin/THIRD-PARTY-NOTICES.txt` their licences.
 
-Neither contains anything of the game. On Windows the game's code is recompiled, and its shaders translated, on your
+The open betas have downloads of their own, released from the `linux-beta` and `android-beta` branches: **for Linux**
+(and the Steam Deck), whose tools are in `linux/bin` (`linux/bin/MANIFEST.txt` lists them, `THIRD-PARTY-NOTICES.txt`
+beside it their licences), and **for Android**, which makes the Android app on a Windows PC.
+
+None of them contains anything of the game. On Windows the game's code is recompiled, and its shaders translated, on your
 PC from your own dump, into your build folder, as the Mac and iPhone builds do.
 
 ## What the tool does not do
