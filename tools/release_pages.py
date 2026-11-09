@@ -15,6 +15,9 @@ ANDROID_GUIDE = REPO + '/blob/android-beta/docs/ANDROID.md'
 
 # tag: (title, one-line summary)
 PAGES = {
+    'v1.4.0': ('Pokopia Native 1.4.0: Linux and the Steam Deck out of beta, and your own DLC',
+               'Linux and the Steam Deck as a full release, your own DLC on Windows and Linux, smoother edges, a smoother frame rate when the '
+               'processor is the limit, split-screen co-op on one PC (experimental), and a Play Pokopia program you can pin or add to Steam.'),
     'v1.3.5': ('Pokopia Native 1.3.5: controller rebinding, Link Play in the game, automatic port forwarding',
                'Change your controller buttons and run Link Play from inside the game on Windows, with automatic port forwarding when you host, '
                'many more controllers, NVIDIA and AMD freeze fixes, and a smoother camera while walking sideways.'),
@@ -67,23 +70,26 @@ PAGES = {
 }
 
 # The overarching features: (area, the version it arrived in, what it is). "This version at a glance" lists what a version has.
-FEATURES = [
-    ('Devices', '1.0.0', 'Mac and iPhone'), ('Devices', '1.1.0', 'Windows, recompiled natively'),
+FEATURES = [   # {W} reads "Windows" before 1.4.0 and "Windows and Linux" from 1.4.0, when Linux left beta with the Windows game's features
+    ('Devices', '1.0.0', 'Mac and iPhone'), ('Devices', '1.1.0', 'Windows, recompiled natively'), ('Devices', '1.4.0', 'Linux and the Steam Deck'),
     ('Playing together', '1.1.0', 'Link Play between Windows, Mac and iPhone, up to four players'),
     ('Playing together', '1.2.0', 'Interact everywhere (experimental)'), ('Playing together', '1.3.0', 'Story co-op (experimental)'),
     ('Playing together', '1.3.3', 'co-op on game version 1.0.5 too'),
-    ('Playing together', '1.3.5', 'Link Play settings and Copy invite in the game (Windows)'),
-    ('Playing together', '1.3.5', 'automatic port forwarding (Windows)'),
-    ('Graphics', '1.2.3', 'sharp upscaling and display settings (Windows)'),
-    ('Graphics', '1.3.0', 'up to 4K, with settings in the game on F1 (Windows)'), ('Graphics', '1.3.4', 'Wide view for 21:9 (experimental, Windows)'),
-    ('Controls', '1.0.0', 'drag to look (Mac and iPhone)'), ('Controls', '1.1.0', 'mouse look and controllers (Windows)'),
-    ('Controls', '1.2.0', 'keyboard rebinding (Windows)'), ('Controls', '1.3.5', 'controller rebinding and player 1 choice (Windows)'),
-    ('Controls', '1.3.5', "many more controllers, through SDL's community list (Windows)"),
+    ('Playing together', '1.3.5', 'Link Play settings and Copy invite in the game ({W})'),
+    ('Playing together', '1.3.5', 'automatic port forwarding ({W})'),
+    ('Playing together', '1.4.0', 'split screen on one PC (experimental, Windows)'),
+    ('Graphics', '1.2.3', 'sharp upscaling and display settings ({W})'),
+    ('Graphics', '1.3.0', 'up to 4K, with settings in the game on F1 ({W})'), ('Graphics', '1.3.4', 'Wide view for 21:9 (experimental, Windows)'),
+    ('Graphics', '1.4.0', 'anti-aliasing, SMAA or FXAA ({W})'), ('Graphics', '1.4.0', 'a graphics thread for a smoother frame rate ({W})'),
+    ('Controls', '1.0.0', 'drag to look (Mac and iPhone)'), ('Controls', '1.1.0', 'mouse look and controllers ({W})'),
+    ('Controls', '1.2.0', 'keyboard rebinding ({W})'), ('Controls', '1.3.5', 'controller rebinding and player 1 choice ({W})'),
+    ('Controls', '1.3.5', "many more controllers, through SDL's community list ({W})"),
     ('Builder and saves', '1.0.0', 'built from your own dump'), ('Builder and saves', '1.0.0', 'the iPhone app from a Mac or a Windows PC'),
-    ('Builder and saves', '1.1.0', 'bring your save over (Windows)'), ('Builder and saves', '1.1.1', '.nup dumps'),
-    ('Builder and saves', '1.3.0', 'a step-by-step builder'),
+    ('Builder and saves', '1.1.0', 'bring your save over ({W})'), ('Builder and saves', '1.1.1', '.nup dumps'),
+    ('Builder and saves', '1.3.0', 'a step-by-step builder'), ('Builder and saves', '1.4.0', 'your own DLC ({W})'),
+    ('Builder and saves', '1.4.0', 'Play Pokopia as a program to pin or add to Steam (Windows)'),
 ]
-LINUX_SKIP = ('Mac and iPhone', 'drag to look', 'the iPhone app', 'Link Play settings', 'automatic port forwarding')
+LINUX_SKIP = ('Mac and iPhone', 'drag to look', 'the iPhone app', 'Link Play settings', 'automatic port forwarding', 'Wide view')
 
 def ver(s): return tuple(int(x) for x in re.match(r'v?(\d+)\.(\d+)\.(\d+)', s).groups())
 
@@ -131,7 +137,8 @@ def assets_of(body):
 
 def downloads(tag, names):
     cards, extra = [], []
-    for n in sorted(names, key=lambda n: not n.endswith('.AppImage')):   # on Linux the AppImage is the main download
+    order = lambda n: 0 if 'Windows' in n else 1 if 'Mac' in n else 2 if n.endswith('.AppImage') else 3   # Windows, Mac, then Linux's AppImage first
+    for n in sorted(names, key=order):
         url = f'{REPO}/releases/download/{tag}/{n}'
         if n == 'Pokopia-Native-for-Windows.zip': cards.append(card('windows', url, 'Download for Windows'))
         elif n == 'Pokopia-Native-for-Mac.zip': cards.append(card('mac', url, 'Download for Mac and iPhone'))
@@ -152,7 +159,8 @@ def glance(v, linux=False):
         got = [(s, f) for a, s, f in FEATURES if a == area and ver(s) <= v and not (linux and any(k in f for k in LINUX_SKIP))]
         if linux and area == 'Devices': got = [('0.0.0', 'Linux and the Steam Deck (beta)')]
         if not got: continue
-        items = [f'**new:** {f}' if ver(s) == v and not linux else f for s, f in got]
+        where = 'Linux' if linux else 'Windows and Linux' if v >= (1, 4, 0) else 'Windows'
+        items = [(f'**new:** {f}' if ver(s) == v and not linux else f).replace('{W}', where) for s, f in got]
         lines.append(f'- **{area}:** ' + '; '.join(items) + '.')
     if linux: lines.append('- Link Play on Linux joins a host by its address; finding hosts on the same network comes later.')
     return '\n'.join(lines)
@@ -182,14 +190,20 @@ def page(tag, summary, cards, new_title, new_md, glance_md, more, checksums):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--releases', required=True); ap.add_argument('--notes', required=True)
-    ap.add_argument('--android'); ap.add_argument('--android-tag'); ap.add_argument('--out', required=True); a = ap.parse_args()
+    ap.add_argument('--android'); ap.add_argument('--android-tag'); ap.add_argument('--out', required=True)
+    ap.add_argument('--new-tag', help='a release not published yet (its page from --notes)'); ap.add_argument('--new-assets', nargs='*', default=[])
+    ap.add_argument('--new-sums', help="its SHA256SUMS.txt, once the downloads are packaged"); a = ap.parse_args()
     rel = json.loads(pathlib.Path(a.releases).read_text(encoding='utf-8'))
     notes = sections(pathlib.Path(a.notes).read_text(encoding='utf-8').replace('\r', ''))
-    newest_stable = max((r['tag_name'] for r in rel if not r.get('prerelease')), key=ver)
+    stable = [r['tag_name'] for r in rel if not r.get('prerelease')] + ([a.new_tag] if a.new_tag else [])
+    newest_stable = max(stable, key=ver)
     newest_linux = max((r['tag_name'] for r in rel if 'linux-beta' in r['tag_name']), key=lambda t: (ver(t), t))
     out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True); index = []
     items = [(r['tag_name'], (r.get('body') or '').replace('\r', ''), r.get('published_at', '')[:10], bool(r.get('prerelease'))) for r in rel]
     if a.android: items.insert(0, (a.android_tag, pathlib.Path(a.android).read_text(encoding='utf-8').replace('\r', ''), '', True))
+    if a.new_tag:   # its downloads and checksums go in the body the way the published pages carry them
+        sums = pathlib.Path(a.new_sums).read_text(encoding='utf-8').strip() if a.new_sums else '\n'.join(f'{"0" * 64}  {n}' for n in a.new_assets)
+        items.insert(0, (a.new_tag, f'## Checksums (SHA-256)\n\n```\n{sums}\n```\n', '', False))
     for tag, body, date, pre in items:
         title, summary = PAGES[tag]; checksums, names = assets_of(body); v = ver(tag); bs = sections(body)
         num = '.'.join(map(str, v))

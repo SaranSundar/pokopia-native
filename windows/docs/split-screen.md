@@ -49,7 +49,7 @@ Window 2 takes no keyboard or mouse input. In split mode play.ps1 starts the gam
 - `nxrt.pad_sdl_split` (virtual controllers, DM_SPLIT=2): only the second controller plays, as player 1, also out of focus; the first, the keyboard and the
   mouse do nothing; detached, nothing stays pressed. `nxrt.pad_sdl` (one window as before) still passes.
 - **The game**, copies of a Level 2 save (test copies only): `split.ps1 -Story` made the split save, both windows opened side by side (each 1920x1080 on a
-  3840x2160 display at 150%), window 1 hosted, window 2 found it ("Demomax, Withered Wasteland") and **arrived** (no 9005); both screens show both
+  3840x2160 display at 150%), window 1 hosted, window 2 found it (the host's name and Withered Wasteland) and **arrived** (no 9005); both screens show both
   characters. Closing window 1 closed window 2 within a second.
 - **Not tested:** two real controllers (none could be connected here: the controller split is covered only by the virtual test), sound from window 1
   with window 2 muted (the switches are play.ps1's own -Silent), a long session, the second player's save after a session.
@@ -71,7 +71,7 @@ What a PC needs, by these numbers (only this PC was measured): memory is the lim
 
 - The second player is a **visitor**: the host's town, the host's story. Story co-op's limits apply (docs/story-coop.md): what the visitor does in the
   world counts for the host, story steps only through the host (the story-host branch fixes the host's own story while a session is open).
-- The second player starts as a **copy of the first character**: the same name and look (both are "Demomax" in the test). Changing them needs the
+- The second player starts as a **copy of the first character**: the same name and look. Changing them needs the
   compressed CMNDAT.BIN (not done).
 - Both players go through the game's own Link Play menus each time (host, then visit). Automating that is open.
 - Window 2's first start copies window 1's shader cache, so it does not compile from nothing.
