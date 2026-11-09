@@ -139,7 +139,8 @@ In the game: the PC in your house → **Link Play** → **Local connection**. Mo
 **MIT licence** for Pokopia Native's own code. It also carries third-party components under their own licences, all listed in
 [LEGAL.md](LEGAL.md).
 
-- **NxNative**, the host the Mac and iPhone apps run on.
+- **NxNative**, the host the Mac and iPhone apps run on; the Windows, Linux and Android runtime's Switch services are ported from
+  it.
 - **@Quantumenis**, for the Windows CPU work and the RTX 50 freeze fix.
 - **@Shabbypenguin**, for the builder's copyable install command.
 - **Testers on the Discord**, who find what we can't.
