@@ -33,6 +33,19 @@ static void refresh_size(void) {
     atomic_store(&g_w.fullscreen, (SDL_GetWindowFlags(g_w.win) & SDL_WINDOW_FULLSCREEN) != 0);
 }
 
+// Split screen (DM_SPLIT=1 or 2, docs/split-screen.md): the window takes its half of the main display's usable area, 16:9 and centred in it, without a frame;
+// window 2 never takes the focus (window 1 keeps the keyboard). DM_SPLIT_LAYOUT=stack puts the halves above each other
+static int split_window(void) { const char *e = getenv("DM_SPLIT"); int k = e ? atoi(e) : 0; return k == 1 || k == 2 ? k : 0; }
+static void split_place(int k) {
+    SDL_Rect r; if (!SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &r)) { VKLOG("split screen: no display bounds (%s)", SDL_GetError()); return; }
+    const char *l = getenv("DM_SPLIT_LAYOUT"); int stack = l && !strcmp(l, "stack");
+    int cw = stack ? r.w : r.w / 2, ch = stack ? r.h / 2 : r.h, w = cw, h = cw * 9 / 16;
+    if (h > ch) { h = ch; w = ch * 16 / 9; }
+    int x = r.x + (stack ? 0 : (k - 1) * cw) + (cw - w) / 2, y = r.y + (stack ? (k - 1) * ch : 0) + (ch - h) / 2;
+    SDL_SetWindowSize(g_w.win, w, h); SDL_SetWindowPosition(g_w.win, x, y); SDL_SyncWindow(g_w.win);
+    VKLOG("split screen: window %d at %d,%d, %dx%d (%s)", k, x, y, w, h, stack ? "top and bottom" : "side by side");
+}
+
 static unsigned __stdcall window_main(void *arg) {
     (void)arg;
     SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "0");
@@ -40,12 +53,16 @@ static unsigned __stdcall window_main(void *arg) {
     front_sdl_lock(); int vok = SDL_Init(SDL_INIT_VIDEO); front_sdl_unlock();
     if (!vok) { VKRED("SDL_Init(VIDEO) failed: %s", SDL_GetError()); g_w.fail = 1; SetEvent(g_w.ready); return 0; }
     if (!SDL_Vulkan_LoadLibrary(NULL)) { VKRED("SDL cannot load the Vulkan loader: %s", SDL_GetError()); g_w.fail = 1; SetEvent(g_w.ready); return 0; }
-    SDL_WindowFlags fl = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (g_w.hidden ? SDL_WINDOW_HIDDEN : 0);
+    int split = g_w.hidden ? 0 : split_window();
+    SDL_WindowFlags fl = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (g_w.hidden ? SDL_WINDOW_HIDDEN : 0) |
+                         (split ? SDL_WINDOW_BORDERLESS : 0) | (split == 2 ? SDL_WINDOW_NOT_FOCUSABLE : 0);
     g_w.win = SDL_CreateWindow(g_w.title, g_w.req_w, g_w.req_h, fl);
     if (!g_w.win) { VKRED("SDL_CreateWindow failed: %s", SDL_GetError()); g_w.fail = 1; SetEvent(g_w.ready); return 0; }
     SDL_SetWindowMinimumSize(g_w.win, 320, 180);
+    if (split) split_place(split);
     g_w.ev_req = SDL_RegisterEvents(1);
     if (!g_w.hidden) {   // the game's window (the tests' hidden ones take no input)
+        front_sdl_hints();
         front_sdl_lock(); int gok = SDL_InitSubSystem(SDL_INIT_GAMEPAD); front_sdl_unlock();
         if (!gok) VKRED("SDL cannot start its controller subsystem: %s (keyboard and mouse only)", SDL_GetError());
         front_sdl_start(g_w.win); g_w.front = 1;
@@ -65,7 +82,7 @@ static unsigned __stdcall window_main(void *arg) {
             case SDL_EVENT_WINDOW_RESTORED: case SDL_EVENT_WINDOW_EXPOSED: case SDL_EVENT_WINDOW_SHOWN: case SDL_EVENT_WINDOW_MAXIMIZED:
                 atomic_store(&g_w.minimized, 0); refresh_size(); break;
             case SDL_EVENT_KEY_DOWN:
-                if ((e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT)) || e.key.key == SDLK_F11)
+                if (!split && ((e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT)) || e.key.key == SDLK_F11))   // split screen: the halves stay put
                     SDL_SetWindowFullscreen(g_w.win, !(SDL_GetWindowFlags(g_w.win) & SDL_WINDOW_FULLSCREEN));
                 break;
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED: case SDL_EVENT_QUIT:
@@ -74,7 +91,8 @@ static unsigned __stdcall window_main(void *arg) {
                 break;
             default:
                 if (e.type == g_w.ev_req) {
-                    if (e.user.code == 1) { SDL_RestoreWindow(g_w.win); SDL_SetWindowFullscreen(g_w.win, false); SDL_SetWindowSize(g_w.win, (int)(intptr_t)e.user.data1, (int)(intptr_t)e.user.data2); SDL_SyncWindow(g_w.win); refresh_size(); }
+                    if (split && (e.user.code == 1 || e.user.code == 2)) VKLOG("split screen: the window keeps its half (size and fullscreen requests ignored)");
+                    else if (e.user.code == 1) { SDL_RestoreWindow(g_w.win); SDL_SetWindowFullscreen(g_w.win, false); SDL_SetWindowSize(g_w.win, (int)(intptr_t)e.user.data1, (int)(intptr_t)e.user.data2); SDL_SyncWindow(g_w.win); refresh_size(); }
                     else if (e.user.code == 2) { SDL_SetWindowFullscreen(g_w.win, e.user.data1 != NULL); SDL_SyncWindow(g_w.win); refresh_size(); }
                     else if (e.user.code == 3) SDL_SetWindowTitle(g_w.win, g_w.title);
                 }
@@ -112,6 +130,7 @@ void vkw_close(void) {
 }
 
 int vkw_is_open(void) { return atomic_load(&g_w.open); }
+void vkw_message(const char *title, const char *text) { if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, text, NULL)) VKLOG("the message box could not be shown: %s", SDL_GetError()); }
 const char *const *vkw_instance_exts(uint32_t *n) { Uint32 c = 0; const char *const *e = SDL_Vulkan_GetInstanceExtensions(&c); *n = c; return e; }
 int vkw_create_surface(VkInstance inst, VkSurfaceKHR *out) {
     if (!SDL_Vulkan_CreateSurface(g_w.win, inst, NULL, out)) { VKRED("SDL_Vulkan_CreateSurface failed: %s", SDL_GetError()); return -1; }

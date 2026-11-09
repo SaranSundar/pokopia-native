@@ -59,6 +59,7 @@ void *plat_exe_image(size_t *size);        /* this executable's load address and
 #include <setjmp.h>
 typedef struct plat_guard { sigjmp_buf jb; struct plat_guard *prev; } plat_guard;
 extern __thread plat_guard *plat_guard_top;
+extern __thread int plat_guard_sig; extern __thread void *plat_guard_pc;   /* the last recovery's signal (SIGSEGV, SIGBUS, SIGILL, SIGFPE) and instruction */
 #define PLAT_GUARD_PUSH(g) ((g)->prev = plat_guard_top, plat_guard_top = (g))
 #define PLAT_GUARD_POP(g) (plat_guard_top = (g)->prev)
 #endif

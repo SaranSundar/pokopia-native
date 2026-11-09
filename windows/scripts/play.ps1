@@ -27,11 +27,12 @@
 # and so does -Settings (the installer's "Pokopia Settings" launcher).
 # A host over the internet gets its room code in a window with a Copy button.
 # The window's Controls tab sets this PC's keyboard keys (%APPDATA%\Pokopia Native\controls.json, handed to the game as DM_KEYMAP; the game logs the map):
-# click an action, press its key. Keys count by their place on the keyboard; "Reset to defaults" brings back the usual layout. Controllers keep their buttons.
+# click an action, press its key. Keys count by their place on the keyboard; "Reset to defaults" brings back the usual layout. Its Controller buttons page
+# sets one button map for every controller (the same file's "pad" object) and can forget the controller kept as player 1 (the game's F1 menu chooses it).
 # Its Display tab sets the picture (%APPDATA%\Pokopia Native\display.json; with -Ask or -Config at every start, switches from outside winning): console mode
 # (DM_OPMODE), the size the game draws its picture at (NXRT_VK_RESOLUTION: "default" = the monitor's height, or <w>x<h>, never below the game's own;
 # NXRT_VK_SCALE, a factor, wins), window or full screen and the window size, upscaling (NXRT_VK_UPSCALE) and its sharpness (NXRT_VK_SHARPNESS), 30 fps
-# (DM_FPS), vsync off (NXRT_VK_PRESENT=mailbox), the FPS counter (NXRT_FPS_COUNTER). In the game, F1 (or a controller's Minus + Plus) opens the same settings and changes them at once; it saves to the same files
+# (DM_FPS), vsync off (NXRT_VK_PRESENT=mailbox), the FPS counter (NXRT_FPS_COUNTER), the wide view (NXRT_VK_WIDE=1, experimental). In the game, F1 (or a controller's Minus + Plus) opens the same settings and changes them at once; it saves to the same files
 # (NXRT_SETTINGS_DIR, docs/in-game-menu.md). POKOPIA_SETTINGS_DIR puts linkplay.json, controls.json and display.json in another folder (tests).
 param(
     [string]$ExeFS = "",
@@ -195,11 +196,35 @@ function Read-Controls([string]$file) {
     } catch {}
     $m
 }
+# The controllers' buttons (the same file's "pad" object, front_map.h front_padmap_parse): one map for every controller, each Switch button's controller input
+# by SDL's name for its place (south = the bottom face button). Without a "pad" object the game keeps its own layout, which $PadDefault shows. "player1" and
+# "player1_name" name the controller that is player 1 (the game's F1 menu chooses it; here it can only be forgotten)
+$PadDefault = [ordered]@{ A = "east"; B = "south"; X = "north"; Y = "west"; L = "leftshoulder"; R = "rightshoulder"; ZL = "lefttrigger"; ZR = "righttrigger"
+                          Plus = "start"; Minus = "back"; Up = "dpup"; Down = "dpdown"; Left = "dpleft"; Right = "dpright"; LS = "leftstick"; RS = "rightstick" }
+$PadInputs = [ordered]@{ south = "Bottom face button"; east = "Right face button"; west = "Left face button"; north = "Top face button"
+                         leftshoulder = "LB / L1 / L"; rightshoulder = "RB / R1 / R"; lefttrigger = "LT / L2 / ZL"; righttrigger = "RT / R2 / ZR"
+                         back = "Back / Select / -"; start = "Start / Options / +"; leftstick = "Left stick press"; rightstick = "Right stick press"
+                         dpup = "D-pad up"; dpdown = "D-pad down"; dpleft = "D-pad left"; dpright = "D-pad right"; misc1 = "Share / Capture"
+                         rightpaddle1 = "Paddle R1"; leftpaddle1 = "Paddle L1"; rightpaddle2 = "Paddle R2"; leftpaddle2 = "Paddle L2"; touchpad = "Touchpad"
+                         misc2 = "Extra 2"; misc3 = "Extra 3"; misc4 = "Extra 4"; misc5 = "Extra 5"; misc6 = "Extra 6"; none = "(none)" }
+function Read-Pad([string]$file) {
+    $r = @{ pad = $null; player1 = ""; player1_name = "" }
+    try {
+        if (Test-Path -LiteralPath $file) {
+            $j = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
+            if ($j.pad) { $m = [ordered]@{}; foreach ($k in $PadDefault.Keys) { $v = "$($j.pad.$k)"; $m[$k] = if ($PadInputs.Contains($v)) { $v } else { $PadDefault[$k] } }; $r.pad = $m }
+            if ($j.player1) { $r.player1 = "$($j.player1)" }
+            if ($j.player1_name) { $r.player1_name = "$($j.player1_name)" }
+        }
+    } catch {}
+    $r
+}
 # The picture (the window's Display tab, %APPDATA%\Pokopia Native\display.json), applied at every start through the switches and variables below; a switch
 # or variable given from outside wins. The Mac's launcher has the same names (Console mode, Display mode, Upscaling); the in-game menu (F1) the same choices
 $DisplayDefault = [ordered]@{ console = 1; resolution = "default"; fullscreen = $false; window = "1280x720"; upscale = "sharp"; sharpness = 5; fps = 60; vsync = $true
-                              fps_counter = "off" }
+                              fps_counter = "off"; wide_view = $false; antialiasing = "smaa" }
 $DisplayCounters = @("off", "corner", "detailed")
+$DisplayAA = @("off", "fxaa", "smaa")
 $DisplaySizes = @("1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160")
 # The tallest Default the game draws: 1440 on a graphics card with 4 GB of its own memory or less, as nxrt picks it (front/menu.c monitor_h). The
 # registry's display adapters; one under 1 GB is an integrated GPU (nxrt sees its shared memory instead); the 32-bit size stops near 4 GB, so it only
@@ -226,14 +251,17 @@ function Read-Display([string]$file) {
             $h = [int][math]::Round(1080 * $f); "$([int][math]::Round($h * 16 / 9))x$h" } else { $DisplayDefault.resolution }
     }
     if ($DisplayCounters -notcontains "$($d.fps_counter)") { $d.fps_counter = $DisplayDefault.fps_counter }
+    if ($DisplayAA -notcontains "$($d.antialiasing)") { $d.antialiasing = $DisplayDefault.antialiasing }
     return $d
 }
 
 # How to play this time: alone, on this network, hosting or visiting over the internet; the keyboard's controls; the picture. $pref holds the last choice,
-# $keys the keyboard map, $disp the display settings; the new choice with the map in .controls and the settings in .display, or $null (Cancel)
-function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
+# $keys the keyboard map, $padc the controllers' (Read-Pad), $disp the display settings; the new choice with the map in .controls, the controllers' in .pad and
+# the settings in .display, or $null (Cancel)
+function Show-LinkPlay($pref, [string]$title, $keys, $disp, $padc) {
     $f, $outer = New-LinkPlayForm $title
-    $addrRx = $ipPort; $codeRx = $roomRx; $labels = $ControlsLabel; $def = $ControlsDefault; $ddef = $DisplayDefault; $dcnt = $DisplayCounters  # copied here: the event handlers' closures see this function's variables, not the script's
+    $addrRx = $ipPort; $codeRx = $roomRx; $labels = $ControlsLabel; $def = $ControlsDefault; $ddef = $DisplayDefault; $dcnt = $DisplayCounters; $daa = $DisplayAA  # copied here: the event handlers' closures see this function's variables, not the script's
+    $pdef = $PadDefault; $pin = $PadInputs; if (-not $padc) { $padc = @{ pad = $null; player1 = ""; player1_name = "" } }
     $tabs = New-Object System.Windows.Forms.TabControl; $tabs.Margin = New-Object System.Windows.Forms.Padding(0)
     $pages = @{}
     foreach ($n in 'Link Play', 'Controls', 'Display') {
@@ -248,7 +276,8 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     }
     $flow.Controls.Add((New-Label "How do you want to play?"))
     $modes = [ordered]@{ alone = "Play alone"; lan = "Link Play with players on this network (the same Wi-Fi)";
-                        host = "Host over the internet or a VPN (without a VPN, your router forwards port 47600 to this PC)"; visit = "Visit a host over the internet or a VPN" }
+                        host = "Host over the internet or a VPN (without a VPN, your router forwards port 47600 to this PC)"; visit = "Visit a host over the internet or a VPN";
+                        split = "Split screen: two players on this PC (the second plays a second controller)" }
     $radio = @{}
     $keep = New-Object System.Windows.Forms.CheckBox; $keep.AutoSize = $true; $keep.Margin = New-Object System.Windows.Forms.Padding(34, 2, 0, 0)
     $keep.Text = "Keep my room code from last time ($($pref.host_room))"; $keep.Checked = [bool]$pref.keep_room; $keep.Visible = [bool]$pref.host_room
@@ -284,7 +313,11 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $hint.ForeColor = [System.Drawing.SystemColors]::GrayText; $hint.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0); $flow.Controls.Add($hint)
     # Controls: an action's button shows its key; click it, then press the new key. A key another action had moves over, and that action gets this one's old key
     $cf = $pages['Controls']
-    $cf.Controls.Add((New-Label "Click an action, then press its key (Esc cancels). Keys count by their place on the keyboard; controllers keep their own buttons."))
+    $pick = New-Object System.Windows.Forms.FlowLayoutPanel; $pick.AutoSize = $true; $pick.WrapContents = $false; $pick.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 6)
+    $rkb = New-Object System.Windows.Forms.RadioButton; $rkb.Text = "Keyboard keys"; $rkb.AutoSize = $true; $rkb.Checked = $true
+    $rpad = New-Object System.Windows.Forms.RadioButton; $rpad.Text = "Controller buttons"; $rpad.AutoSize = $true; $rpad.Margin = New-Object System.Windows.Forms.Padding(16, 3, 3, 3)
+    $pick.Controls.Add($rkb); $pick.Controls.Add($rpad); $cf.Controls.Add($pick)
+    $kbIntro = New-Label "Click an action, then press its key (Esc cancels). Keys count by their place on the keyboard."; $cf.Controls.Add($kbIntro)
     $st = @{ map = [ordered]@{}; act = $null; done = [datetime]::MinValue }
     foreach ($k in $keys.Keys) { $st.map[$k] = $keys[$k] }
     $tbl = Get-KeyTable; $names = @{}; foreach ($v in $tbl.Values) { $names[[int]$v[0]] = $v[1] }
@@ -299,7 +332,47 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $cf.Controls.Add($cgrid)
     $status = New-Label " `n "; $status.ForeColor = [System.Drawing.SystemColors]::GrayText; $status.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
     $reset = New-Object System.Windows.Forms.Button; $reset.Text = "Reset to defaults"; $reset.AutoSize = $true; $reset.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
-    $cf.Controls.Add($reset); $cf.Controls.Add($status)
+    $cf.Controls.Add($reset)
+    # Controller buttons: one map for every controller (controls.json "pad"), face buttons by their place; an input another button had moves over, as the keys
+    # do. Player 1 is chosen in the game (F1, Controls), where the controllers can be seen; here it can be forgotten
+    $pst = @{ map = [ordered]@{}; custom = $null -ne $padc.pad; p1 = "$($padc.player1)"; p1n = "$($padc.player1_name)"; busy = $false }
+    foreach ($k in $pdef.Keys) { $pst.map[$k] = if ($padc.pad) { $padc.pad[$k] } else { $pdef[$k] } }
+    $padIntro = New-Label "Choose the controller button for each Switch button; one map for every controller. Face buttons go by their place: the bottom one is A on an Xbox pad and B on a Switch pad."
+    $pgrid = New-Object System.Windows.Forms.TableLayoutPanel; $pgrid.ColumnCount = 4; $pgrid.AutoSize = $true; $pgrid.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
+    $pc = [ordered]@{}; $i = 0; $inKeys = @($pin.Keys); $inNames = @($pin.Values)
+    foreach ($a in $pdef.Keys) {
+        $c = New-Object System.Windows.Forms.ComboBox; $c.DropDownStyle = 'DropDownList'; $c.Width = 150; [void]$c.Items.AddRange([object[]]$inNames); $c.Margin = New-Object System.Windows.Forms.Padding(2, 2, 14, 2)
+        $l = New-Label $labels[$a] 120; $l.Margin = New-Object System.Windows.Forms.Padding(0, 6, 4, 0)
+        $pgrid.Controls.Add($l, ($i % 2) * 2, [math]::Floor($i / 2)); $pgrid.Controls.Add($c, ($i % 2) * 2 + 1, [math]::Floor($i / 2))
+        $pc[$a] = $c; $i++
+    }
+    $preset = New-Object System.Windows.Forms.Button; $preset.Text = "Reset to defaults"; $preset.AutoSize = $true; $preset.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
+    $p1row = New-Object System.Windows.Forms.FlowLayoutPanel; $p1row.AutoSize = $true; $p1row.WrapContents = $false; $p1row.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
+    $p1 = New-Label ""; $p1.Margin = New-Object System.Windows.Forms.Padding(0, 6, 8, 0)
+    $p1forget = New-Object System.Windows.Forms.Button; $p1forget.Text = "Forget"; $p1forget.AutoSize = $true
+    $p1row.Controls.Add($p1); $p1row.Controls.Add($p1forget)
+    $pshow = {
+        $pst.busy = $true; foreach ($a in $pc.Keys) { $pc[$a].SelectedIndex = [array]::IndexOf($inKeys, [string]$pst.map[$a]) }; $pst.busy = $false
+        $p1.Text = if ($pst.p1) { "Player 1: $(if ($pst.p1n) { $pst.p1n } else { 'a controller' }), whenever it is connected (the game's F1 menu, Controls, chooses another)." }
+                   else { "Player 1: the first controller connected. To choose one, open the game's menu (F1), Controls, Controller." }
+        $p1forget.Visible = [bool]$pst.p1
+    }.GetNewClosure()
+    foreach ($a in @($pc.Keys)) {
+        $act = $a
+        $pc[$a].Add_SelectedIndexChanged({
+            if ($pst.busy -or $pc[$act].SelectedIndex -lt 0) { return }
+            $new = $inKeys[$pc[$act].SelectedIndex]; $old = $pst.map[$act]; if ($new -eq $old) { return }
+            $msg = "$($labels[$act]): $($pin[$new])."
+            if ($new -ne 'none') { foreach ($o in @($pst.map.Keys)) { if ($o -ne $act -and $pst.map[$o] -eq $new) { $pst.map[$o] = $old; $msg = "$($labels[$act]): $($pin[$new]), which $($labels[$o]) had; $($labels[$o]) takes the old button." } } }
+            $pst.map[$act] = $new; $pst.custom = $true; & $pshow; $status.Text = $msg
+        }.GetNewClosure())
+    }
+    $preset.Add_Click({ foreach ($k in $pdef.Keys) { $pst.map[$k] = $pdef[$k] }; $pst.custom = $false; & $pshow; $status.Text = "Back to the game's own controller layout." }.GetNewClosure())
+    $p1forget.Add_Click({ $pst.p1 = ""; $pst.p1n = ""; & $pshow; $status.Text = "Player 1 is the first controller connected again." }.GetNewClosure())
+    $cf.Controls.Add($padIntro); $cf.Controls.Add($pgrid); $cf.Controls.Add($preset); $cf.Controls.Add($p1row)
+    $cf.Controls.Add($status)
+    $ctlPage = { $k = $rkb.Checked; foreach ($c in @($kbIntro, $cgrid, $reset)) { $c.Visible = $k }; foreach ($c in @($padIntro, $pgrid, $preset, $p1row)) { $c.Visible = -not $k }; $status.Text = " `n " }.GetNewClosure()
+    $rkb.Add_CheckedChanged($ctlPage); & $pshow; & $ctlPage
     $show = { foreach ($a in $kb.Keys) { $v = [int]$st.map[$a]; $kb[$a].Text = if ($names[$v]) { $names[$v] } else { "(none)" } } }.GetNewClosure()
     & $show
     foreach ($a in @($kb.Keys)) {
@@ -360,11 +433,14 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     $upBox = New-Object System.Windows.Forms.FlowLayoutPanel; $upBox.AutoSize = $true; $upBox.WrapContents = $false; $upBox.Margin = New-Object System.Windows.Forms.Padding(0)
     $upBox.Controls.Add($up); $upBox.Controls.Add($upNote); & $addRow "Upscaling:" $upBox
     $sh = New-Object System.Windows.Forms.TrackBar; $sh.Minimum = 0; $sh.Maximum = 10; $sh.TickFrequency = 1; $sh.Width = 280; $sh.Value = [math]::Min(10, [math]::Max(0, [int]$disp.sharpness)); & $addRow "Sharpness:" $sh
+    $aaItems = @("Off", "FXAA", "SMAA")   # smooths the 3D picture's jagged edges; the HUD and text stay sharp (vk_aa.c)
+    $aa = & $combo $aaItems $aaItems[[math]::Max(0, [array]::IndexOf($daa, [string]$disp.antialiasing))]; & $addRow "Anti-aliasing:" $aa
     $fpsItems = @("60 fps", "30 fps")
     $fp = & $combo $fpsItems $fpsItems[$(if ([int]$disp.fps -eq 30) { 1 } else { 0 })]; & $addRow "Frame rate:" $fp
     $vs = New-Object System.Windows.Forms.CheckBox; $vs.Text = "On (off: less delay, may tear)"; $vs.AutoSize = $true; $vs.Checked = [bool]$disp.vsync; $vs.Margin = New-Object System.Windows.Forms.Padding(3, 6, 0, 0); & $addRow "Vsync:" $vs
     $cnItems = @("Off", "Corner", "Detailed")
     $cn = & $combo $cnItems $cnItems[[math]::Max(0, [array]::IndexOf($dcnt, [string]$disp.fps_counter))]; & $addRow "FPS counter:" $cn
+    $wv = New-Object System.Windows.Forms.CheckBox; $wv.Text = "On (experimental: fills a screen wider than 16:9)"; $wv.AutoSize = $true; $wv.Checked = [bool]$disp.wide_view; $wv.Margin = New-Object System.Windows.Forms.Padding(3, 6, 0, 0); & $addRow "Wide view:" $wv
     $df.Controls.Add($dg)
     $fitNote = New-Label ""; $fitNote.Margin = New-Object System.Windows.Forms.Padding(0, 6, 0, 0); $df.Controls.Add($fitNote)
     $dnote = New-Label ("Resolution is the size the game draws its picture at: bigger looks sharper but works your graphics card harder; Default matches your monitor. " +
@@ -391,7 +467,7 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     & $dsync
     $dreset.Add_Click({
         $cm.SelectedIndex = 0; & $resFill "default"; $dm.SelectedIndex = 0; $ws.SelectedIndex = [math]::Max(0, $ws.Items.IndexOf($ddef.window)); $up.SelectedIndex = 0
-        $sh.Value = $ddef.sharpness; $fp.SelectedIndex = 0; $vs.Checked = $ddef.vsync; $cn.SelectedIndex = 0; & $dsync
+        $sh.Value = $ddef.sharpness; $fp.SelectedIndex = 0; $vs.Checked = $ddef.vsync; $cn.SelectedIndex = 0; $wv.Checked = $ddef.wide_view; $aa.SelectedIndex = [array]::IndexOf($daa, $ddef.antialiasing); & $dsync
     }.GetNewClosure())
     $outer.Controls.Add($tabs)   # first: the pages measure their wrapped labels in the window's font
     $w = ($pages.Values | ForEach-Object { $_.PreferredSize.Width } | Measure-Object -Maximum).Maximum + 16
@@ -420,11 +496,12 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp) {
     if (-not $coop) { $new.interact = $pref.interact; $new.story = $pref.story }   # kept for a game version that has them
     if ($mode -eq 'visit') { $new.join = $addr.Text.Trim(); $new.room = $code.Text.Trim().ToUpper() }
     $new.controls = $st.map
+    $new.pad = @{ map = $pst.map; custom = $pst.custom; p1 = $pst.p1; p1n = $pst.p1n }
     $new.display = [ordered]@{ console = $(if ($cm.SelectedIndex -eq 1) { 0 } else { 1 })
                                resolution = $(if ($rs.SelectedIndex -eq $rst.origIdx -and $cm.SelectedIndex -eq $rst.cmIdx) { $rst.orig } else { [string]$rst.vals[$rs.SelectedIndex] })   # untouched: as saved
                                fullscreen = ($dm.SelectedIndex -eq 1); window = [string]$ws.SelectedItem
                                upscale = $(if ($up.SelectedIndex -eq 1) { "standard" } else { "sharp" }); sharpness = $sh.Value; fps = $(if ($fp.SelectedIndex -eq 1) { 30 } else { 60 }); vsync = $vs.Checked
-                               fps_counter = $dcnt[$cn.SelectedIndex] }
+                               fps_counter = $dcnt[$cn.SelectedIndex]; wide_view = $wv.Checked; antialiasing = $daa[$aa.SelectedIndex] }
     return $new
 }
 # A host's room code, big, with a Copy button: the players who visit need it (and this PC's internet address)
@@ -454,12 +531,12 @@ $settingsDir = if ($env:POKOPIA_SETTINGS_DIR) { $env:POKOPIA_SETTINGS_DIR } else
 $keysFile = Join-Path $settingsDir "controls.json"; $dispFile = Join-Path $settingsDir "display.json"
 $env:NXRT_SETTINGS_DIR = $settingsDir   # the in-game menu (F1) saves its changes there too
 $disp = Read-Display $dispFile
-if (($Config -or $Ask) -and -not ($LinkPlay -or $Join -or $Internet -or $Room -or $Relay -or $CoopHost -or $CoopJoin -or $env:DM_COOP) -and -not $DryRun) {
+if (($Config -or $Ask) -and -not ($LinkPlay -or $Join -or $Internet -or $Room -or $Relay -or $CoopHost -or $CoopJoin -or $env:DM_COOP)) {   # a dry run reads the remembered way, no window
     $prefFile = Join-Path $settingsDir "linkplay.json"
     $pref = @{ mode = "alone"; join = ""; room = ""; host_room = ""; keep_room = $false; ask = $true; interact = $false; story = $false }
     try { if (Test-Path -LiteralPath $prefFile) { (Get-Content -Raw -LiteralPath $prefFile | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $pref[$_.Name] = $_.Value } } } catch {}
     try { Add-Type -AssemblyName System.Windows.Forms, System.Drawing; $forms = $true } catch { $forms = $false; Write-Warning "no Windows Forms: Link Play starts the remembered way" }
-    if ($forms) {
+    if ($forms -and -not $DryRun) {
         [System.Windows.Forms.Application]::EnableVisualStyles()
         $shift = ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) -ne 0
         if ($pref.ask -or $shift -or $Settings) {
@@ -472,10 +549,10 @@ if (($Config -or $Ask) -and -not ($LinkPlay -or $Join -or $Internet -or $Room -o
                     'public static int ScreenHeight() { IntPtr dc = GetDC(IntPtr.Zero); int h = GetDeviceCaps(dc, 117); ReleaseDC(IntPtr.Zero, dc); return h; } ' +   # DESKTOPVERTRES
                     'public static int ScreenWidth() { IntPtr dc = GetDC(IntPtr.Zero); int w = GetDeviceCaps(dc, 118); ReleaseDC(IntPtr.Zero, dc); return w; } }')   # DESKTOPHORZRES
             }
-            $keys = Read-Controls $keysFile
-            $new = Show-LinkPlay $pref "Pokopia" $keys $disp
+            $keys = Read-Controls $keysFile; $padc = Read-Pad $keysFile
+            $new = Show-LinkPlay $pref "Pokopia" $keys $disp $padc
             if (-not $new) { Write-Host "cancelled"; exit 0 }
-            $chosen = $new.controls; $new.Remove('controls')
+            $chosen = $new.controls; $new.Remove('controls'); $padNew = $new.pad; $new.Remove('pad')
             $nd = $new.display; $new.Remove('display')
             if ($nd.Keys | Where-Object { "$($nd[$_])" -ne "$($disp[$_])" }) {   # changed in the Display tab: saved for this PC
                 try { New-Item -ItemType Directory -Force $settingsDir | Out-Null; $nd | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath $dispFile } catch { Write-Warning "the display settings were not saved: $dispFile" }
@@ -483,9 +560,14 @@ if (($Config -or $Ask) -and -not ($LinkPlay -or $Join -or $Internet -or $Room -o
             $disp = $nd
             $pref = $new
             try { New-Item -ItemType Directory -Force (Split-Path -Parent $prefFile) | Out-Null; $pref | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath $prefFile } catch {}
-            if ($chosen.Keys | Where-Object { [int]$chosen[$_] -ne [int]$keys[$_] }) {   # changed in the window (Reset to defaults too): saved for this PC
+            $padChanged = ([bool]$padNew.custom -ne ($null -ne $padc.pad)) -or ($padNew.custom -and ($padNew.map.Keys | Where-Object { "$($padNew.map[$_])" -ne "$($padc.pad[$_])" })) -or
+                          ("$($padNew.p1)" -ne "$($padc.player1)")
+            if (($chosen.Keys | Where-Object { [int]$chosen[$_] -ne [int]$keys[$_] }) -or $padChanged) {   # changed in the window (Reset to defaults too): saved for this PC
+                # the keys, then the controllers' map (only when one was chosen) and player 1, kept as the game's menu wrote them unless changed here
                 $o = [ordered]@{ version = 1 }; foreach ($k in $chosen.Keys) { $o[$k] = [int]$chosen[$k] }
-                try { $o | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath $keysFile } catch { Write-Warning "the controls were not saved: $keysFile" }
+                if ($padNew.custom) { $o.pad = $padNew.map }
+                $o.player1 = "$($padNew.p1)"; $o.player1_name = "$($padNew.p1n)"
+                try { New-Item -ItemType Directory -Force $settingsDir | Out-Null; $o | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath $keysFile } catch { Write-Warning "the controls were not saved: $keysFile" }
             }
         }
         $windowed = $true
@@ -494,6 +576,11 @@ if (($Config -or $Ask) -and -not ($LinkPlay -or $Join -or $Internet -or $Room -o
         'lan' { $LinkPlay = $true }
         'host' { $Internet = $true; if ($pref.keep_room -and $pref.host_room) { $Room = $pref.host_room } }
         'visit' { $Internet = $true; $Join = $pref.join; $Room = $pref.room }
+        'split' {   # split.ps1 starts the two games (docs/split-screen.md)
+            $sa = @{}; foreach ($n in "Config", "ExeFS", "Dll", "RomFS", "Save", "Work", "Exe", "Shaders") { $v = Get-Variable $n -ValueOnly; if ($v) { $sa[$n] = $v } }
+            if ($pref.story) { $sa.Story = $true }; if ($DryRun) { $sa.DryRun = $true }
+            & (Join-Path $here "split.ps1") @sa; exit $LASTEXITCODE
+        }
     }
     if ($pref.mode -ne 'alone' -and $pref.interact) { $Interact = $true }
     if ($pref.mode -ne 'alone' -and $pref.story) { $Story = $true }
@@ -574,6 +661,8 @@ if ($Config -or $Ask) {   # the Display tab's settings, saved for this PC; a swi
     if (-not $env:DM_FPS -and [int]$disp.fps -eq 30) { $env:DM_FPS = "30" }
     if (-not $env:NXRT_VK_PRESENT -and -not $disp.vsync) { $env:NXRT_VK_PRESENT = "mailbox" }
     if (-not $env:NXRT_FPS_COUNTER -and $disp.fps_counter -ne "off") { $env:NXRT_FPS_COUNTER = [string]$disp.fps_counter }
+    if (-not $env:NXRT_VK_WIDE -and $disp.wide_view -eq $true) { $env:NXRT_VK_WIDE = "1" }
+    if (-not $env:NXRT_VK_AA) { $env:NXRT_VK_AA = [string]$disp.antialiasing }
 }
 if ($Window) { $env:NXRT_VK_WINDOW = $Window }
 if ($Fullscreen) { $env:NXRT_VK_FULLSCREEN = "1" }
@@ -606,9 +695,9 @@ if ($DryRun) {
     Write-Host "env: NXRT_VK_CACHE_DIR=$env:NXRT_VK_CACHE_DIR DM_AUDIO=$env:DM_AUDIO DM_PAD_CHECK=$env:DM_PAD_CHECK"
     if ($Shaders) { Write-Host "shaders: NXRT_SHADER_CACHE=$env:NXRT_SHADER_CACHE NXRT_SHADER_BUILD=$env:NXRT_SHADER_BUILD NXSHADER_TOOLS=$env:NXSHADER_TOOLS"; Write-Host "shader tool: $env:NXRT_SHADER_TOOL" }
     if ($Fonts -or $PipelineSeed) { Write-Host "fonts: $env:DM_FONT_DIR; pipeline seed: $env:NXRT_VK_PIPELINE_SEED" }
-    if ($env:DM_COOP) { Write-Host "link play: DM_COOP=$env:DM_COOP DM_COOP_INTERACT=$env:DM_COOP_INTERACT DM_COOP_STORY=$env:DM_COOP_STORY" }
+    if ($env:DM_COOP) { Write-Host "link play: DM_COOP=$env:DM_COOP DM_COOP_INTERACT=$env:DM_COOP_INTERACT DM_COOP_STORY=$env:DM_COOP_STORY DM_COOP_JOIN=$env:DM_COOP_JOIN DM_COOP_INTERNET=$env:DM_COOP_INTERNET DM_COOP_ROOM=$env:DM_COOP_ROOM" }
     if ($env:DM_KEYMAP) { Write-Host "keys: DM_KEYMAP=$env:DM_KEYMAP" }
-    Write-Host "display: DM_OPMODE=$env:DM_OPMODE NXRT_VK_SCALE=$env:NXRT_VK_SCALE NXRT_VK_RESOLUTION=$env:NXRT_VK_RESOLUTION NXRT_VK_WINDOW=$env:NXRT_VK_WINDOW NXRT_VK_FULLSCREEN=$env:NXRT_VK_FULLSCREEN NXRT_VK_UPSCALE=$env:NXRT_VK_UPSCALE NXRT_VK_SHARPNESS=$env:NXRT_VK_SHARPNESS DM_FPS=$env:DM_FPS NXRT_VK_PRESENT=$env:NXRT_VK_PRESENT NXRT_FPS_COUNTER=$env:NXRT_FPS_COUNTER"
+    Write-Host "display: DM_OPMODE=$env:DM_OPMODE NXRT_VK_SCALE=$env:NXRT_VK_SCALE NXRT_VK_RESOLUTION=$env:NXRT_VK_RESOLUTION NXRT_VK_WINDOW=$env:NXRT_VK_WINDOW NXRT_VK_FULLSCREEN=$env:NXRT_VK_FULLSCREEN NXRT_VK_UPSCALE=$env:NXRT_VK_UPSCALE NXRT_VK_SHARPNESS=$env:NXRT_VK_SHARPNESS DM_FPS=$env:DM_FPS NXRT_VK_PRESENT=$env:NXRT_VK_PRESENT NXRT_FPS_COUNTER=$env:NXRT_FPS_COUNTER NXRT_VK_WIDE=$env:NXRT_VK_WIDE NXRT_VK_AA=$env:NXRT_VK_AA"
     exit 0
 }
 Write-Host "Pokopia: keyboard WASD move, mouse look (click the picture; Esc releases the mouse), J/K/U/I = A/B/X/Y, Return = +, Tab = -, F11 fullscreen."
@@ -619,7 +708,8 @@ $exePath = (Resolve-Path -LiteralPath $Exe).Path
 # Files unzipped from a download keep Windows' "came from the internet" mark, and Start-Process then refuses nxrt.exe with "The operation was
 # canceled by the user": the runtime's folder loses the mark first
 Get-ChildItem -LiteralPath (Split-Path -Parent $exePath) -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
-$p = Start-Process -FilePath $exePath -ArgumentList $quoted -WorkingDirectory $Work -PassThru
+$style = if ($env:DM_SPLIT) { "Minimized" } else { "Normal" }   # split screen (split.ps1): the log console stays out of the two halves
+$p = Start-Process -FilePath $exePath -ArgumentList $quoted -WorkingDirectory $Work -PassThru -WindowStyle $style
 try { $p.PriorityClass = 'BelowNormal' } catch {}
 $p.WaitForExit()
 exit $p.ExitCode

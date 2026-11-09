@@ -54,6 +54,8 @@ typedef struct coop_cfg {
     int room_new;        // the code was made here (the host shows it: coop_env_node logs it)
     uint32_t relay_ip;   // the relay, host order (0: none): auto hosts through it while the game hosts and joins its room while the game scans
     uint16_t relay_port;
+    int nat;             // internet play, hosting here: ask the router to forward the port (coop_nat.c; 1 by default, DM_COOP_NAT=0 off)
+    uint32_t nat_gw; uint16_t nat_gport; char nat_location[128];   // tests: the NAT-PMP / PCP gateway and its port, a UPnP description URL (no SSDP; "-" no UPnP)
     coop_hooks hooks;
 } coop_cfg;
 
@@ -73,6 +75,8 @@ void coop_room_format(const char *norm, char out[COOP_ROOM_SHOWN]);
 // DM_COOP_TCP=1 sets tcp_only (game datagrams over the control link: a TCP-only path such as an SSH tunnel; a station's choice, the host follows it).
 // DM_COOP_INTERNET=1, DM_COOP_ROOM=<code>, DM_COOP_RELAY=<IPv4>[:<port>]: internet play (coop_cfg_parse_ex); a host's new room code is logged.
 coop_node *coop_env_node(const coop_hooks *hooks);
+// A new node from DM_COOP* as they are now, each call (the in-game Link Play settings make one again while the game's Link Play is closed); NULL as above
+coop_node *coop_env_make(const coop_hooks *hooks);
 // The Uid DM_UID names when DM_COOP is set: 1 and out filled, else 0 (the host keeps its constant).
 int coop_env_uid(uint8_t out[16]);
 
@@ -98,6 +102,44 @@ typedef struct coop_stats {
     int relay_up;           // host: its room is open at the relay
 } coop_stats;
 void coop_get_stats(coop_node *n, coop_stats *s);
+// Automatic port forwarding while hosting over the internet (coop_nat.c, docs/coop-nat.md): the router asked through NAT-PMP, PCP or UPnP IGD to
+// forward the hosting port, TCP and UDP, with a lease renewed while hosting and given back when hosting ends or the game quits
+enum { COOP_NAT_OFF, COOP_NAT_TRYING, COOP_NAT_MAPPED, COOP_NAT_FAILED };
+enum { COOP_NATM_NONE, COOP_NATM_NATPMP, COOP_NATM_PCP, COOP_NATM_UPNP };
+// what stands in the way: no router found, it answers none of the three, carrier-grade NAT (its own address in 100.64/10), a second router in front
+// (its own address private), the port forwarded to another device, the router refused
+enum { COOP_NATP_NONE, COOP_NATP_NO_GATEWAY, COOP_NATP_NO_SUPPORT, COOP_NATP_CGNAT, COOP_NATP_DOUBLE_NAT, COOP_NATP_CONFLICT, COOP_NATP_REFUSED };
+typedef struct coop_nat_info {
+    int state, method, problem;   // COOP_NAT_*, COOP_NATM_*, COOP_NATP_*
+    uint32_t gateway, external;   // the router asked; the internet address it reports (0 not known)
+    uint16_t port;                // the port forwarded (as seen from the internet), or being tried
+    int lease_s;
+} coop_nat_info;
+void coop_nat_quit(coop_node *n);   // the game quits: the mapping given back now (short timeouts)
+// What a player is shown about Link Play (the in-game Link Play page): one snapshot under the node lock
+#define COOP_INFO_PLAYERS 8
+typedef struct coop_player {
+    char name[33];        // the game's user name as the NetworkInfo carries it (UTF-8; control bytes as '?')
+    int node, self;       // node 0 is the host
+    uint32_t ip;          // the player's real address where this device knows it (a host: each visitor's; a visitor: the host's), else 0
+} coop_player;
+typedef struct coop_info {
+    int role, scope, internet, tcp_only;     // as configured (coop_cfg)
+    int ldn;                                 // COOP_LS_*: the game's Link Play state
+    int hosting; uint16_t port;              // listening while the game hosts, on this port
+    char room[COOP_ROOM_SHOWN];              // internet play: the room code, XXXX-XXXX-XXXX-XXXX; "" otherwise
+    uint32_t join_ip; uint16_t join_port;    // the host this device visits: the one joined, else the configured one (join); 0: none
+    uint32_t relay_ip; uint16_t relay_port; int relay_up;
+    int links, found;                        // control links up; hosts found that this device can join
+    char mods[64];                           // the gameplay mods every player must share ("" none)
+    coop_nat_info nat;                       // automatic port forwarding while hosting over the internet
+    int nplayers;                            // the session's players as the game's NetworkInfo lists them, the host first (0 outside a session)
+    coop_player player[COOP_INFO_PLAYERS];
+} coop_info;
+void coop_get_info(coop_node *n, coop_info *out);
+// This machine's IPv4 addresses on interfaces that are up, loopback left out (host order), the one the default route uses first: the count (at most max),
+// -1 when they cannot be read
+int coop_local_ipv4(uint32_t *out, int max);
 
 // Address classes (step 1c's protection): a scope accepts loopback (both), private and link-local (LAN). IPv4 in host order; IPv6 as 16 bytes
 enum { COOP_ADDR_PUBLIC, COOP_ADDR_LOOPBACK, COOP_ADDR_PRIVATE, COOP_ADDR_LINKLOCAL, COOP_ADDR_INVALID };
@@ -187,10 +229,10 @@ int coop_vnet_select(coop_node *n, int nfds, uint64_t *rd, uint64_t *wr, uint64_
 // callback writes takes effect. Every player in a session must have the same setting: a port adds COOP_INTERACT_MOD to its mods fingerprint.
 // "Story co-op (experimental)" (docs/story-coop.md), DM_COOP_STORY=1, implies Interact everywhere and adds the story sites; a port that attaches them
 // adds COOP_STORY_MOD after COOP_INTERACT_MOD ----------
-enum { COOP_SITE_MASK = 1, COOP_SITE_TALK = 2 };
+enum { COOP_SITE_MASK = 1, COOP_SITE_TALK = 2, COOP_SITE_ROLE = 3, COOP_SITE_ALONE = 4, COOP_SITE_ALONE8 = 5 };
 typedef struct coop_site {
     const char *build;   // main's build ID, its first 32 hex digits (the rewriter's key)
-    uint32_t fn, off;    // the function holding the site and the site, main offsets
+    uint32_t fn, off;    // the function holding the site and the site, main offsets (a site past a tail call can sit in the function it reaches)
     uint32_t word;       // the instruction there, checked before attaching
     int id;              // COOP_SITE_*
     const char *what;

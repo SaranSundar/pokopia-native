@@ -16,3 +16,5 @@ int nvn_dirty_since_span(const void *span, const void *addr, size_t len, uint64_
 void nvn_dirty_stats(uint64_t *faults, uint64_t *preps);           // Cumulative: number of page faults triggered by game writes, number of pages unprotected before host writes
 void nvn_dirty_mp_stats(uint64_t *calls, uint64_t *pages, uint64_t *ns);   // Cumulative: this module's mprotect call count, pages covered, time spent
 void nvn_dirty_slot_stats(int *live, int *used_slots, uint64_t *adds_total); // Currently live slots, slot table high-water mark, total number of registrations
+void nvn_dirty_submission(void);                                   // A submission starts: Linux's kernel tracking looks for each range's writes at its next check
+int nvn_dirty_kernel(void);                                        // 1 = Linux's kernel tracking is on (decided at the first range)

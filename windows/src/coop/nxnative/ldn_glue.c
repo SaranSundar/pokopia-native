@@ -35,14 +35,17 @@ static void coop_interact_gate(uint64_t *regs, int param) {
     if (param == COOP_SITE_TALK && regs[0] != was0 && !atomic_exchange(&said_talk, 1)) LOG("[coop] Story co-op: a visitor's talk takes the host's path");
 }
 __attribute__((constructor)) static void coop_interact_attach(void) { gate_obs_set(OBS_COOP_INTERACT, coop_interact_gate); }
+static void coop_quit(void);
 coop_node *dm_coop(void) {   // the process's coop node when DM_COOP is set (and not off), else NULL (hle_net.c and hle_misc.c ask too)
     static coop_node *_Atomic node; static _Atomic int done;
     if (atomic_load(&done)) return atomic_load(&node);
     static const coop_hooks h = {NULL, coop_hlog, coop_hsleep, coop_hstate, coop_hbuild, coop_hmods};
     coop_node *n = coop_env_node(&h);
+    if (n) atexit(coop_quit);   // macOS quits through exit(); iOS ends an app without it, and the router's lease runs out within the hour
     atomic_store(&node, n); atomic_store(&done, 1);
     return n;
 }
+static void coop_quit(void) { coop_nat_quit(dm_coop()); }   // a port the router forwards for hosting is given back (coop_nat.c)
 #define COOP(call) do { coop_node *c_ = dm_coop(); if (c_) return call; } while (0)
 HLE_FORCE("_ZN2nn3ldn10InitializeEv", "local wireless: the coop module (DM_COOP), else cut: initialization fails", Result, h_ldn_Init, void) { COOP(coop_ldn_initialize(c_)); return RES_FAIL; }
 HLE_FORCE("_ZN2nn3ldn8FinalizeEv", "local wireless (coop / cut)", void, h_ldn_Fini, void) { coop_node *c = dm_coop(); if (c) coop_ldn_finalize(c); }

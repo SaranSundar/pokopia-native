@@ -184,8 +184,8 @@ int main(void) {
     *(volatile uint32_t *)(store + 0x230000) = 10;
     gfx_null_stats(&n0);
     CALL(nvnQueueSubmitCommands, P(q), 1, P(&h));
+    T((uint32_t)CALL(nvnSyncWait, P(sync), ~0ull) <= NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED);   /* at once, or once the replay thread has replayed it */
     gfx_null_stats(&n1);
-    T((uint32_t)CALL(nvnSyncWait, P(sync), 0) == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED);
     T(!memcmp(dst, src, 256));
     T(!memcmp(ubo + 0x20, data, 64));
     { int ok = 1; for (int i = 0; i < 64; i += 4) ok &= *(uint32_t *)(fill + i) == 0x11223344; T(ok); }
@@ -196,7 +196,7 @@ int main(void) {
     T(n1.bad == n0.bad);
     /* QueueFenceSync and Finish */
     void *sync2 = gt_alloc(0x40); CALL(nvnSyncInitialize, P(sync2), P(dev)); CALL(nvnQueueFenceSync, P(q), P(sync2), 0, 0);
-    T((uint32_t)CALL(nvnSyncWait, P(sync2), 1000000) == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED);
+    T((uint32_t)CALL(nvnSyncWait, P(sync2), ~0ull) <= NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED);
     CALL(nvnQueueFinish, P(q));
 
     /* CALL and COPY of another recording: replayed twice */
@@ -206,7 +206,7 @@ int main(void) {
     CALL(nvnCommandBufferBeginRecording, P(cb));
     CALL(nvnCommandBufferCallCommands, P(cb), 1, P(&ha)); CALL(nvnCommandBufferCopyCommands, P(cb), 1, P(&ha));
     uint64_t hb = CALL(nvnCommandBufferEndRecording, P(cb));
-    gfx_null_stats(&n0); CALL(nvnQueueSubmitCommands, P(q), 1, P(&hb)); gfx_null_stats(&n1);
+    gfx_null_stats(&n0); CALL(nvnQueueSubmitCommands, P(q), 1, P(&hb)); CALL(nvnQueueFinish, P(q)); gfx_null_stats(&n1);
     T(n1.draws - n0.draws == 2 && n1.calls - n0.calls == 2 && n1.bad == n0.bad);
 
     /* command memory runs out: the game's callback (a guest function) adds 256-byte chunks; the recording continues across a JUMP */
@@ -219,7 +219,7 @@ int main(void) {
     printf("40 draws in 256-byte chunks: %d memory callbacks, the last asked for %llu bytes\n", g_cb_calls, (unsigned long long)g_cb_min);
     T(hc == P(store) + 0x3f0000 && g_cb_calls >= 4 && g_cb_min >= 16);
     nops = ops_of((const uint8_t *)(uintptr_t)hc, ops, 32); T(nops == 41);
-    gfx_null_stats(&n0); CALL(nvnQueueSubmitCommands, P(q), 1, P(&hc)); gfx_null_stats(&n1);
+    gfx_null_stats(&n0); CALL(nvnQueueSubmitCommands, P(q), 1, P(&hc)); CALL(nvnQueueFinish, P(q)); gfx_null_stats(&n1);
     T(n1.draws - n0.draws == 40 && n1.op[OP_JUMP] - n0.op[OP_JUMP] == (uint64_t)g_cb_calls && n1.bad == n0.bad);
     /* no callback: the host lends a segment */
     CALL(nvnCommandBufferSetMemoryCallback, P(cb), 0);
@@ -227,12 +227,12 @@ int main(void) {
     CALL(nvnCommandBufferBeginRecording, P(cb));
     for (int i = 0; i < 50; i++) CALL(nvnCommandBufferDrawArrays, P(cb), 4, i, 3);
     uint64_t hd = CALL(nvnCommandBufferEndRecording, P(cb));
-    gfx_null_stats(&n0); CALL(nvnQueueSubmitCommands, P(q), 1, P(&hd)); gfx_null_stats(&n1);
+    gfx_null_stats(&n0); CALL(nvnQueueSubmitCommands, P(q), 1, P(&hd)); CALL(nvnQueueFinish, P(q)); gfx_null_stats(&n1);
     T(hd == P(store) + 0x500000 && n1.draws - n0.draws == 50 && n1.bad == n0.bad);
 
     /* a malformed list is refused with a red line, the rest of the submission still runs */
     uint64_t bad[4] = {(uint64_t)250 | (uint64_t)16 << 32, 0, 0, 0}; uint64_t hs[2] = {P(bad), ha};
-    gfx_null_stats(&n0); CALL(nvnQueueSubmitCommands, P(q), 2, P(hs)); gfx_null_stats(&n1);
+    gfx_null_stats(&n0); CALL(nvnQueueSubmitCommands, P(q), 2, P(hs)); CALL(nvnQueueFinish, P(q)); gfx_null_stats(&n1);
     T(n1.bad - n0.bad == 1 && n1.draws - n0.draws == 1);
 
     /* the frame loop: acquire, present (a ticket from the backend), the guest frame ticks */
@@ -242,11 +242,11 @@ int main(void) {
     uint64_t f0 = dm_guest_frame(); gfx_null_stats(&n0);
     for (int k = 0; k < 10; k++) {
         T(CALL(nvnWindowAcquireTexture, P(win), P(sync), P(&idx)) == 0 && idx == k % 2);
-        T((uint32_t)CALL(nvnSyncWait, P(sync), 0) == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED);
+        T((uint32_t)CALL(nvnSyncWait, P(sync), ~0ull) <= NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED);
         CALL(nvnQueueSubmitCommands, P(q), 1, P(&ha));
         CALL(nvnQueuePresentTexture, P(q), P(win), idx);
     }
-    gfx_null_stats(&n1);
+    CALL(nvnQueueFinish, P(q)); gfx_null_stats(&n1);
     T(dm_guest_frame() - f0 == 10 && n1.presents - n0.presents == 10 && ((const win_t *)win)->ticket[1] > ((const win_t *)win)->ticket[0]);
 
     /* texels: a region written lands where the whole-surface layout (s2tex) puts it, and reads back */
@@ -308,6 +308,7 @@ int main(void) {
     T(nvn_dirty_tracked(pg + 4096, 8192) && !nvn_dirty_since(pg + 4096, 8192, st));
     uint64_t fa0, pr0, fa1, pr1; nvn_dirty_stats(&fa0, &pr0);
     pg[4096 + 100] = 1; pg[4096 + 200] = 2;
+    nvn_dirty_submission(); nvn_dirty_since(pg, 1, 0);   /* Linux's kernel tracking: seen at the first check after a submission starts */
     nvn_dirty_stats(&fa1, &pr1);
     T(nvn_dirty_since(pg + 4096, 4096, st) && !nvn_dirty_since(pg + 8192, 4096, st) && fa1 - fa0 == 1 && pg[4096 + 100] == 1);
     dm_guest_write_prepare(pg + 8192, 16);   /* a host write: unprotected before, stamped */

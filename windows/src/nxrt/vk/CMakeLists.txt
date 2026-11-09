@@ -29,7 +29,7 @@ message(STATUS "nxrt: Vulkan backend with SDL3 ${SDL3_VERSION} (${NXRT_SDL3_DIR}
 
 # The backend's own shaders, compiled to SPIR-V headers
 set(_spv)
-foreach(sh present.vert present.frag menu.vert menu.frag test_fill.comp test_pervertex.vert test_pervertex_cull.vert test_bind.frag clear.vert clear_f.frag clear_u.frag clear_i.frag test_dual.frag test_tri.vert test_ballot.comp test_ballot_used.comp test_ballot_slot.comp test_ballot_slot4.comp test_ballot_rank.comp test_guard.comp test_guard_u.comp quad_args.comp)
+foreach(sh present.vert present.frag menu.vert menu.frag test_fill.comp test_pervertex.vert test_pervertex_cull.vert test_bind.frag clear.vert clear_f.frag clear_u.frag clear_i.frag test_dual.frag test_tri.vert test_ballot.comp test_ballot_used.comp test_ballot_slot.comp test_ballot_slot4.comp test_ballot_rank.comp test_guard.comp test_guard_u.comp test_guard_v.comp test_guard_b.comp quad_args.comp aa.vert aa_fxaa.frag aa_edge.frag aa_weight.frag aa_blend.frag)
   string(REPLACE "." "_" var ${sh})
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${var}.h
     COMMAND ${NXRT_GLSLANG} -V --target-env vulkan1.3 --vn ${var}_spv -o ${CMAKE_CURRENT_BINARY_DIR}/${var}.h ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${sh}
@@ -46,7 +46,7 @@ add_library(nxrt_bc7enc STATIC third_party/bc7enc/bc7enc.cpp third_party/bc7enc/
 target_compile_options(nxrt_bc7enc PRIVATE -w)
 
 add_library(nxrt_vk OBJECT
-  gfx_vk.c vk_fn.c vk_dev.c vk_window.c vk_submit.c vk_present.c vk_pcache.c vk_mem.c vk_fmt.c vk_tex.c vk_astc.cpp
+  gfx_vk.c vk_fn.c vk_dev.c vk_window.c vk_submit.c vk_present.c vk_aa.c vk_pcache.c vk_mem.c vk_fmt.c vk_tex.c vk_astc.cpp
   vk_json.c vk_shader.c vk_pipe.c vk_replay.c vk_shot.c vk_menu.c ${_spv})
 target_include_directories(nxrt_vk PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../include "${_vk_inc}" "${NXRT_SDL3_DIR}/include"
   ${CMAKE_CURRENT_SOURCE_DIR}/../gfx ${CMAKE_CURRENT_SOURCE_DIR}/../host ${CMAKE_CURRENT_SOURCE_DIR}/../front ${CMAKE_SOURCE_DIR}/src/s2tex)
@@ -61,7 +61,7 @@ target_compile_options(nxrt_vk PRIVATE -fms-extensions $<$<COMPILE_LANGUAGE:C>:-
 target_sources(nxrt_core PRIVATE $<TARGET_OBJECTS:nxrt_vk>)
 # M6 (docs/m6-input-gameplay.md): the SDL3 front end (keyboard, mouse look, controllers) and the SDL3 audio output, built with the runtime's own includes;
 # the in-game settings menu (docs/in-game-menu.md)
-target_sources(nxrt_core PRIVATE ../front/front_sdl.c ../front/audio_sdl.c ../front/menu.c)
+target_sources(nxrt_core PRIVATE ../front/front_sdl.c ../front/audio_sdl.c ../front/menu.c ../front/menu_controls.c ../front/menu_linkplay.c ../front/linkplay.c ../front/linkplay_prefs.c)
 target_include_directories(nxrt_core PRIVATE ../front)
 target_compile_definitions(nxrt_core PRIVATE NXRT_GFX_VK)
 if(WIN32)
@@ -73,16 +73,33 @@ else()
   file(GLOB _sdl_so "${NXRT_SDL3_DIR}/lib/libSDL3.so*")   # beside the executables, which look in $ORIGIN
   file(COPY ${_sdl_so} DESTINATION "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}" FOLLOW_SYMLINK_CHAIN)
 endif()
+# SDL_GameControllerDB's controller mappings (zlib), read beside nxrt at start (docs/controllers.md)
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/../front/third_party/SDL_GameControllerDB/gamecontrollerdb.txt" DESTINATION "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
 # Tests (docs/m5-vulkan.md §6): skipped (77) without a Vulkan GPU or without the data they need
 set(NXRT_VK_TEST_INC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} "${_vk_inc}" "${NXRT_SDL3_DIR}/include" ${CMAKE_CURRENT_SOURCE_DIR}/../gfx ${CMAKE_SOURCE_DIR}/src/s2tex)
-foreach(t device dirty tex astc pcache replay windows ballot guard quads scale)
+foreach(t device dirty tex astc pcache replay windows ballot guard quads scale wide aa)
   nxrt_executable(nxrt-tests-vk-${t} tests/t_vk_${t}.c)
   target_include_directories(nxrt-tests-vk-${t} PRIVATE ${NXRT_VK_TEST_INC})
   target_compile_options(nxrt-tests-vk-${t} PRIVATE -fms-extensions -Wno-sign-compare -Wno-missing-field-initializers -Wno-missing-braces)
   add_test(NAME nxrt.vk_${t} COMMAND nxrt-tests-vk-${t})
   set_tests_properties(nxrt.vk_${t} PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache")
 endforeach()
+if(NOT WIN32)   # the dirty-page tracker once more with the kernel's tracking (NXRT_DIRTY_KERNEL=1, off by default)
+  add_test(NAME nxrt.vk_dirty_kernel COMMAND nxrt-tests-vk-dirty)
+  set_tests_properties(nxrt.vk_dirty_kernel PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NXRT_DIRTY_KERNEL=1;NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache")
+endif()
+# The loop guards on whole shader caches (t_vk_guard's corpus part): 634565ab, 560a0262 and 2cb5df5c through vksh_make, with every rewrite in the order
+# NVIDIA gets them, then as other GPUs get them, made into pipelines with validation on; skipped without a cache. NXRT_TEST_CORPUS: shader cache folders
+# (each with vk/), '|'-separated. The kit's corpus lays the tables out as texel buffers, ours as 2D textures: run it on a kit-built cache before a release
+set(NXRT_TEST_CORPUS "${CMAKE_SOURCE_DIR}/_local/nxshader/cache|${CMAKE_SOURCE_DIR}/../windows-native/_local/nxshader/cache|${CMAKE_SOURCE_DIR}/../m7-test/build201/windows/shaders"
+    CACHE STRING "shader caches for nxrt.vk_guard_corpus_* ('|'-separated; missing ones are skipped)")
+add_test(NAME nxrt.vk_guard_corpus_nv COMMAND nxrt-tests-vk-guard)
+add_test(NAME nxrt.vk_guard_corpus_other COMMAND nxrt-tests-vk-guard)
+set_tests_properties(nxrt.vk_guard_corpus_nv PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT
+  "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache;NXRT_TEST_CORPUS=${NXRT_TEST_CORPUS};NXRT_VK_LOOP_GUARD=1;NXRT_VK_BALLOT_FIX=1")
+set_tests_properties(nxrt.vk_guard_corpus_other PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT
+  "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache;NXRT_TEST_CORPUS=${NXRT_TEST_CORPUS};NXRT_VK_LOOP_GUARD=cap;NXRT_VK_BALLOT_FIX=0")
 # The pool windows once more, side by side (no sparse aliasing): a range across a window edge is refused
 add_test(NAME nxrt.vk_windows_side COMMAND nxrt-tests-vk-windows)
 set_tests_properties(nxrt.vk_windows_side PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NXRT_VK_NO_ALIAS=1;NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache")
@@ -91,7 +108,8 @@ target_sources(nxrt-tests-vk-pcache PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_fil
 target_sources(nxrt-tests-vk-ballot PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_used_comp.h
   ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_slot_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_slot4_comp.h
   ${CMAKE_CURRENT_BINARY_DIR}/test_ballot_rank_comp.h)
-target_sources(nxrt-tests-vk-guard PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_guard_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_guard_u_comp.h)
+target_sources(nxrt-tests-vk-guard PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_guard_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_guard_u_comp.h
+  ${CMAKE_CURRENT_BINARY_DIR}/test_guard_v_comp.h ${CMAKE_CURRENT_BINARY_DIR}/test_guard_b_comp.h)
 target_sources(nxrt-tests-vk-quads PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/quad_args_comp.h)
 target_sources(nxrt-tests-vk-scale PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_bind_frag.h)
 target_sources(nxrt-tests-vk-replay PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_pervertex_cull_vert.h ${CMAKE_CURRENT_BINARY_DIR}/test_bind_frag.h
@@ -109,4 +127,6 @@ target_include_directories(nxrt-tests-pad-sdl PRIVATE ${_nxrt_dir}/plat ${_nxrt_
 add_test(NAME nxrt.pad_sdl COMMAND nxrt-tests-pad-sdl)
 set_tests_properties(nxrt.input nxrt.audio_sdl nxrt.pad_sdl PROPERTIES ENVIRONMENT "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs")
 set_tests_properties(nxrt.pad_sdl PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME nxrt.pad_sdl_split COMMAND nxrt-tests-pad-sdl)   # split screen's second window (docs/split-screen.md)
+set_tests_properties(nxrt.pad_sdl_split PROPERTIES ENVIRONMENT "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;DM_SPLIT=2" SKIP_RETURN_CODE 77)
 set_tests_properties(nxrt.vk_tex PROPERTIES ENVIRONMENT "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs;NXRT_VK_CACHE_DIR=${CMAKE_BINARY_DIR}/vk-test-cache;S2TEX_CORPUS=${CMAKE_SOURCE_DIR}/_local/s2tex/corpus")

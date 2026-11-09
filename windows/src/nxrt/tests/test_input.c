@@ -188,7 +188,48 @@ int main(int argc, char **argv) {
     a3 = pad_slot_take(&ps, &a3, "DualSense"); T(a3 == 0);                               /* player 1 free: taken */
     pad_slot_free(&ps, &a3); pad_slot_free(&ps, &a2);
     T(pad_slot_take(&ps, &a2, "Xbox Controller") == 1);                                  /* reconnected: its player back */
-    printf("front end mapping: keys, buttons by position and by label, dead zones, triggers, touch point, player slots\n");
+    /* player 1 chosen (the in-game menu, or the controller remembered for it): the two swap, names and all; a keyboard that holds player 1 keeps it */
+    {
+        pad_slots q = {0}; int b1, b2, b3; char kb = 0;
+        pad_slot_take(&q, &b1, "Steam Deck"); pad_slot_take(&q, &b2, "Xbox Controller"); pad_slot_take(&q, &b3, "DualSense");
+        T(pad_slot_first(&q, &b3, NULL) == 0 && pad_slot_of(&q, &b3) == 0 && pad_slot_of(&q, &b1) == 2 && pad_slot_of(&q, &b2) == 1);
+        T(!strcmp(q.last[0], "DualSense") && !strcmp(q.last[2], "Steam Deck") && pad_slot_mask(&q) == 7);
+        T(pad_slot_first(&q, &b3, NULL) == 0 && pad_slot_of(&q, &b3) == 0);              /* already player 1 */
+        int nope; T(pad_slot_first(&q, &nope, NULL) == -1);                                /* holds no slot */
+        pad_slots r = {0}; int c1;
+        pad_slot_take(&r, &kb, "keyboard"); pad_slot_take(&r, &c1, "Pro Controller");
+        T(pad_slot_first(&r, &c1, &kb) == -1 && pad_slot_of(&r, &kb) == 0 && pad_slot_of(&r, &c1) == 1);   /* DM_KBD_PLAYER=own */
+    }
+    /* the controllers' map (controls.json's "pad"): the default is the layout above by place; a file's map; refusals; swaps; the buttons it makes */
+    {
+        front_padmap pm; int refused = -1; uint8_t held[FRONT_INS] = {0};
+        front_padmap_default(&pm);
+        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++) {   /* the default map plays as front_pad_button does */
+            memset(held, 0, sizeof held); held[b] = 1;
+            T(front_padmap_buttons(&pm, held) == front_pad_button((SDL_GamepadButton)b, 0, SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN));
+        }
+        memset(held, 0, sizeof held); held[FRONT_IN_LT] = 1; held[FRONT_IN_RT] = 1; T(front_padmap_buttons(&pm, held) == (DM_BTN_ZL | DM_BTN_ZR));
+        T(front_padmap_parse(&pm, "{\"version\": 1, \"A\": 13}", &refused) == -1 && refused == 0);   /* no "pad": the layout is kept */
+        T(front_padmap_parse(&pm, NULL, NULL) == -1);
+        /* A on the bottom button takes it from B (B is left with none); ZL on the right paddle; Guide and unknown names refused; X asked twice: the first wins;
+           Minus none; the keyboard's numbers beside it are no business of this map */
+        T(front_padmap_parse(&pm, "{\"A\": 44, \"pad\": {\"A\": \"south\", \"ZL\": \"rightpaddle1\", \"Plus\": \"guide\", \"R\": \"nosuch\", \"X\": \"misc1\", "
+                                  "\"Y\": \"misc1\", \"Minus\": \"none\"}, \"player1\": \"03000000\"}", &refused) == 4 && refused == 3);
+        T(pm.in[0] == SDL_GAMEPAD_BUTTON_SOUTH && pm.in[1] == -1 && pm.in[8] == SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1 && pm.in[2] == SDL_GAMEPAD_BUTTON_MISC1);
+        T(pm.in[3] == SDL_GAMEPAD_BUTTON_WEST && pm.in[10] == SDL_GAMEPAD_BUTTON_START && pm.in[11] == -1 && pm.in[7] == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+        memset(held, 0, sizeof held); held[SDL_GAMEPAD_BUTTON_SOUTH] = 1; held[SDL_GAMEPAD_BUTTON_BACK] = 1;
+        T(front_padmap_buttons(&pm, held) == DM_BTN_A);   /* bottom is A now; Back plays nothing */
+        char js[900]; front_padmap_json(&pm, js, sizeof js);   /* written and read back the same */
+        char file[1000]; snprintf(file, sizeof file, "{\"version\": 1, %s, \"player1\": \"x\"}", js);
+        front_padmap q; T(front_padmap_parse(&q, file, &refused) == FRONT_PACTS && refused == 0 && !memcmp(&q, &pm, sizeof q));
+        front_padmap_bind(&pm, 9, SDL_GAMEPAD_BUTTON_SOUTH);   /* ZR takes the bottom button from A: A gets ZR's right trigger */
+        T(pm.in[9] == SDL_GAMEPAD_BUTTON_SOUTH && pm.in[0] == FRONT_IN_RT);
+        front_padmap_bind(&pm, 9, SDL_GAMEPAD_BUTTON_GUIDE); T(pm.in[9] == SDL_GAMEPAD_BUTTON_SOUTH);   /* Guide refused */
+        char g[40]; T(front_json_str(file, "player1", g, sizeof g) && !strcmp(g, "x") && !front_json_str(file, "player2", g, sizeof g));
+        char cn[16]; front_name_clean("A \"B\"\\C", cn, sizeof cn); T(!strcmp(cn, "A _B__C"));
+        front_keymap km; int kr = 0; T(front_keymap_parse(&km, file, &kr) == 0 && kr == 0 && km.key[0] == SDL_SCANCODE_J);   /* the keys ignore "pad" */
+    }
+    printf("front end mapping: keys, buttons by position and by label, dead zones, triggers, touch point, player slots, player 1 chosen, the controllers' map\n");
 
     DeleteFileA(ctl);
     printf("nxrt.input: %s\n", gt_fail ? "FAIL" : "ok");

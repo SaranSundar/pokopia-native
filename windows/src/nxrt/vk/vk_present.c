@@ -11,9 +11,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+extern float g_nxrt_wide_aspect;   // host/rt.c: the aspect 16:9 cameras get (NXRT_VK_WIDE), 0 = their own
+extern float g_vkr_wide_squeeze;   // vk_replay.c: how much the 2D drawn into a presented texture is squeezed toward its middle (NXRT_VK_WIDE), 1 = not
 
 enum { PQ = 4, NFR = 3, MAXIMG = 8, TRING = 256, STAT_N = 300 };
-typedef struct { uint64_t serial, wait_value; double period; int crop[4], has_crop, flip; uint64_t t_enq; } pq_item;
+typedef struct { uint64_t serial, wait_value; double period; int crop[4], has_crop, flip, bars; uint64_t t_enq; } pq_item;
 typedef struct { VkCommandPool pool; VkCommandBuffer cb; VkSemaphore acq; VkFence fence; VkDescriptorSet ds; int used; } frame_t;
 
 static struct {
@@ -196,8 +198,18 @@ static int present_one(const pq_item *it) {
     }
     if (it->flip && have) { float t = v0; v0 = v1; v1 = t; }   // GL's lower-left origin: the picture is stored bottom up
     float W = (float)g_p.ext.width, H = (float)g_p.ext.height, s = fminf(W / pw, H / ph), vw = floorf(pw * s + 0.5f), vh = floorf(ph * s + 0.5f);
+    // Wide view (NXRT_VK_WIDE=1, experimental): a window wider than the picture is filled, and 16:9 cameras are told the aspect that undoes the stretch
+    // (host/rt.c), so the 3D view gets wider instead of being stretched; narrower windows keep their bars
+    static int wide = -1; if (wide < 0) { const char *e = getenv("NXRT_VK_WIDE"); wide = e && *e == '1'; }
+    int filled = wide && have && W / H > pw / ph * 1.005f;
+    if (filled) { vw = W; vh = H; g_nxrt_wide_aspect = 16.0f / 9.0f * (W / H) / (pw / ph); g_vkr_wide_squeeze = (pw / ph) / (W / H); }
+    else if (wide) { g_nxrt_wide_aspect = 0; g_vkr_wide_squeeze = 1.0f; }
     VkViewport vp = {floorf((W - vw) / 2), floorf((H - vh) / 2), vw, vh, 0, 1};
     VkRect2D sc = {{(int32_t)vp.x, (int32_t)vp.y}, {(uint32_t)vw, (uint32_t)vh}};
+    if (filled && it->bars) {   // a menu over the whole screen: only the middle 16:9, where the 2D is (vk_replay.c wide_squeeze)
+        float x0 = floorf((W - W * g_vkr_wide_squeeze) / 2);
+        sc.offset.x = (int32_t)x0; sc.extent.width = (uint32_t)(W - 2 * x0);
+    }
     VkDescriptorImageInfo dii = {g_p.samp, have ? src.view : g_p.dummy_view, have ? src.layout : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, f->ds, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &dii, NULL, NULL};
     vkUpdateDescriptorSets(g_vk.dev, 1, &w, 0, NULL);
@@ -384,12 +396,13 @@ void vkp_set_resolver(vkp_resolve_fn fn) { g_p.resolve = fn; }
 void vkp_set_upscale(int sharp, float sharpness) { g_p.sharp = sharp; g_p.sharpness = sharpness < 0 ? 0 : sharpness > 1 ? 1 : sharpness; }
 void vkp_set_mode(int mode) { if (mode != g_p.want_mode) { g_p.want_mode = mode; g_p.stale = 1; VKLOG("present: vsync %s from the in-game menu", mode == VKP_FIFO ? "on" : "off"); } }
 
-uint64_t vkp_enqueue(uint64_t serial, double period, uint64_t wait_value, const int crop[4], int flip) {
+uint64_t vkp_enqueue(uint64_t serial, double period, uint64_t wait_value, const int crop[4], int flags) {
     if (!g_p.thread) return 0;
     AcquireSRWLockExclusive(&g_p.lk);
     while (g_p.in - g_p.read >= PQ) SleepConditionVariableSRW(&g_p.cv, &g_p.lk, 100, 0);   // only when the present thread is a whole queue behind
     pq_item *it = &g_p.q[g_p.in % PQ];
-    memset(it, 0, sizeof *it); it->serial = serial; it->period = period; it->wait_value = wait_value; it->flip = flip; it->t_enq = now_ns();
+    memset(it, 0, sizeof *it); it->serial = serial; it->period = period; it->wait_value = wait_value; it->t_enq = now_ns();
+    it->flip = (flags & VKP_FLIP) != 0; it->bars = (flags & VKP_BARS) != 0;
     if (crop) { memcpy(it->crop, crop, sizeof it->crop); it->has_crop = 1; }
     uint64_t tk = ++g_p.in;
     WakeAllConditionVariable(&g_p.cv);

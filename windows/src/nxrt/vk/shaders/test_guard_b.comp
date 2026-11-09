@@ -1,0 +1,18 @@
+#version 450
+// vkspv_limit_count on a texel buffer table (t_vk_guard.c): test_guard_u.comp's shape with the table as the kit's corpus lays it out (a uniform texel
+// buffer, Dim Buffer), as 634565ab's and 560a0262's tables are in every kit-built shader cache. Each lane writes how many items it walked
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std140) uniform Cb { vec4 m[4]; } cp_c3;
+layout(set = 0, binding = 1) uniform samplerBuffer cp_t_tcb_12;
+layout(set = 0, binding = 2, std430) buffer Out { uint walked[]; };
+void main() {
+    uint n = 0u; float acc = 0.0;
+    if (!(0u >= floatBitsToUint(cp_c3.m[3].y))) {
+        uint i = 0u;
+        do {
+            acc += texelFetch(cp_t_tcb_12, int(i)).x;
+            n++; i++;
+        } while (!(i >= floatBitsToUint(cp_c3.m[3].y)));
+    }
+    walked[gl_GlobalInvocationID.x] = n + (acc > 1e30 ? 1u : 0u);
+}

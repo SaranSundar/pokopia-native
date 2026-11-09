@@ -229,6 +229,7 @@ void crash_report(const char *why, const void *ctx_) {
 
 #ifndef _WIN32
 __thread plat_guard *plat_guard_top;
+__thread int plat_guard_sig; __thread void *plat_guard_pc;
 void crash_thread_init(void);
 // One handler for every fatal signal. SA_NODEFER: a plat_guard recovery leaves the handler with siglongjmp and no signal mask to restore
 static void on_signal(int sig, siginfo_t *si, void *uc_) {
@@ -237,8 +238,11 @@ static void on_signal(int sig, siginfo_t *si, void *uc_) {
         int is_write = uc && (uc->uc_mcontext.gregs[REG_ERR] & 2) != 0;
         int saved = errno;
         for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) { errno = saved; return; }
-        plat_guard *g = plat_guard_top;
-        if (g) { plat_guard_top = g->prev; siglongjmp(g->jb, 1); }
+    }
+    plat_guard *g = plat_guard_top;   // a guarded region (plat.h): as Windows' filters take them, illegal instructions and divide errors too
+    if (g && (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL || sig == SIGFPE)) {
+        plat_guard_top = g->prev; plat_guard_sig = sig; plat_guard_pc = uc ? (void *)(uintptr_t)uc->uc_mcontext.gregs[REG_RIP] : NULL;
+        siglongjmp(g->jb, 1);
     }
     char why[64]; snprintf(why, sizeof why, "signal %d (%s)", sig, sig == SIGABRT ? "abort()" : strsignal(sig));
     sig_ctx sc = {sig, si, uc};

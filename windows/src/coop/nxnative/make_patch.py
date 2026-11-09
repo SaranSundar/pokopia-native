@@ -7,7 +7,7 @@ import pathlib, re, subprocess, sys
 
 nx, old, new = (pathlib.Path(a).expanduser() for a in sys.argv[1:4])
 base = sys.argv[4] if len(sys.argv) > 4 else 'c1df4dd'
-NEW_FILES = ['dm/host/coop.h', 'dm/host/coop_int.h'] + [f'dm/host/hle_coop_{m}.c' for m in ('auth', 'disc', 'interact', 'ldn', 'mpnet', 'plat', 'vnet')]
+NEW_FILES = ['dm/host/coop.h', 'dm/host/coop_int.h'] + [f'dm/host/hle_coop_{m}.c' for m in ('auth', 'disc', 'interact', 'ldn', 'mpnet', 'nat', 'plat', 'vnet')]
 CHANGED = ['dm/games/settings.py', 'dm/games/settings.tsv', 'dm/host/dm.h', 'dm/host/hle_misc.c', 'dm/host/hle_net.c', 'dm/host/hle_offline.c', 'dm/ios/Sources/LauncherRow.swift',
            'dm/ios/Sources/LauncherSettings.swift', 'dm/ios/project.yml', 'dm/mac/launcher.c', 'dm/mac/pack_app.py', 'dm/tools/tests/test_launcher_settings.py',
            'docs/env_switches.tsv', 'docs/frontends.md', 'docs/launcher.schema.json']

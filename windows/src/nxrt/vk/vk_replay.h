@@ -41,6 +41,8 @@ void vkr_texdump_next(void);                 // DM_CTL texdump: the next frame's
 // commas, semicolons or spaces): how many keys it holds, -1 when something in it is not a key (the keys are kept). Whether a key is in it
 int vkr_skip_set(const char *list);
 int vkr_skip_has(const char *key);
+void vkr_note_presented(uint64_t serial);   // a texture the game presents: the wide view squeezes the 2D drawn into it (NXRT_VK_WIDE)
+int vkr_wide_bars(uint64_t serial);         // before its present: the wide view shows it with bars (nothing full screen was drawn into it)
 
 #ifdef __cplusplus
 }

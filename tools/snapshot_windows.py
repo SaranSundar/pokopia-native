@@ -27,7 +27,7 @@ README_NEW = ('Published inside [pokopia-native](../README.md) as `windows/`, fr
 UPSTREAM_REF = {'src/s2tex/tests/ref/tex/nvn_deswizzle.c': 'dm/gfx/tex/nvn_deswizzle.c', 'src/s2tex/tests/ref/tex/nvn_deswizzle.h': 'dm/gfx/tex/nvn_deswizzle.h',
                 'src/s2tex/tests/ref/nvn/nvn_tex.c': 'dm/gfx/nvn/nvn_tex.c', 'src/s2tex/tests/ref/nvn/nvn_tex.h': 'dm/gfx/nvn/nvn_tex.h'}
 TEXT = {'.c', '.cpp', '.h', '.hpp', '.py', '.md', '.txt', '.cmd', '.ps1', '.tsv', '.tbl', '.inc', '.S', '.m', '.metal', '.sh', '.diff', '.frag', '.vert',
-        '.comp', '.json', '.gitignore', ''}
+        '.comp', '.json', '.gitignore', '.cmake', '.dynlist', ''}
 
 
 def main():

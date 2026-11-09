@@ -9,6 +9,8 @@ void dm_guest_write_prepare(void *addr, size_t len);
 
 enum { NP = 256, PG = 4096 };
 
+// Linux's kernel tracking (nvn_dirty.c) sees a write at a range's first check after a submission starts; with signals at once
+static void seen(const void *p) { nvn_dirty_submission(); nvn_dirty_since(p, 1, 0); }
 static void submit_sync_all(void) { vks_begin(); vkm_sync_all(); vks_wait(vks_commit(), UINT64_MAX); }
 static int mirror_equals(uint8_t *mem, size_t n) {   // the pool's device copy, read back, against guest memory
     VkBuffer pb; VkDeviceSize po; if (!vkm_addr((uint64_t)(uintptr_t)mem, n, &pb, &po)) return 0;
@@ -35,6 +37,7 @@ int main(void) {
     uint64_t st = nvn_dirty_now(); nvn_dirty_protect(mem, NP * PG);
     uint64_t f0, p0; nvn_dirty_stats(&f0, &p0);
     mem[5 * PG + 7] ^= 1; mem[5 * PG + 9] ^= 1;   // two writes, one page
+    seen(mem);
     uint64_t f1, p1; nvn_dirty_stats(&f1, &p1);
     CHECK(f1 - f0 == 1, "one fault for two writes to one page (%llu)", (unsigned long long)(f1 - f0));
     CHECK(nvn_dirty_since(mem + 5 * PG, PG, st) && !nvn_dirty_since(mem + 6 * PG, PG, st), "only the written page is newer than the stamp");
@@ -42,10 +45,11 @@ int main(void) {
     CHECK(nvn_dirty_since(mem + 9 * PG, PG, st), "a host pre-write stamps its page");
     // the cost of one write fault (protect, write, fault, unprotect), on this PC
     uint64_t t0 = now_ns(); int nf = 2000;
-    for (int i = 0; i < nf; i++) { nvn_dirty_protect(mem + (i % NP) * PG, PG); mem[(i % NP) * PG + 1]++; }
+    for (int i = 0; i < nf; i++) { nvn_dirty_protect(mem + (i % NP) * PG, PG); mem[(i % NP) * PG + 1]++; seen(mem); }
     uint64_t dt = now_ns() - t0; uint64_t f2, p2; nvn_dirty_stats(&f2, &p2);
     double us = dt / 1e3 / nf;
-    printf("tracker: %d protect + write-fault rounds in %.2f ms = %.2f us each (%llu faults)\n", nf, vt_ms(dt), us, (unsigned long long)(f2 - f1));
+    printf("tracker (%s): %d protect + write-fault rounds in %.2f ms = %.2f us each (%llu faults)\n", nvn_dirty_kernel() ? "the kernel's" : "signals",
+           nf, vt_ms(dt), us, (unsigned long long)(f2 - f1));
     CHECK(f2 - f1 >= (uint64_t)nf - 1, "every round faulted");
     // a range with a hole the heap has not committed (#27: textures whose storage spans an untouched 1 MB chunk): Windows refuses the whole run, so the
     // committed parts are protected one by one and only the hole counts as written
@@ -56,8 +60,14 @@ int main(void) {
     nvn_dirty_add_range(hm, 16 * PG);
     uint64_t hs = nvn_dirty_now(); nvn_dirty_protect(hm, 16 * PG);
     CHECK(!nvn_dirty_since(hm, 4 * PG, hs) && !nvn_dirty_since(hm + 8 * PG, 8 * PG, hs), "a hole: the committed parts are tracked (clean after the protect)");
-    CHECK(nvn_dirty_since(hm + 4 * PG, PG, hs) && nvn_dirty_since(hm + 7 * PG, PG, hs), "a hole: its own pages count as written");
-    uint64_t hf0, hp0, hf1, hp1; nvn_dirty_stats(&hf0, &hp0); hm[9 * PG + 3] = 7; nvn_dirty_stats(&hf1, &hp1);
+    if (!nvn_dirty_kernel()) CHECK(nvn_dirty_since(hm + 4 * PG, PG, hs) && nvn_dirty_since(hm + 7 * PG, PG, hs), "a hole: its own pages count as written");
+    else {   // the kernel protects the hole too: clean until the heap commits it and the game writes it
+        CHECK(!nvn_dirty_since(hm + 4 * PG, 4 * PG, hs), "a hole: the kernel tracks it as well (clean)");
+        VirtualAlloc(hm + 5 * PG, PG, MEM_COMMIT, PAGE_READWRITE); hm[5 * PG + 1] = 3; seen(hm);
+        CHECK(nvn_dirty_since(hm + 5 * PG, PG, hs) && !nvn_dirty_since(hm + 4 * PG, PG, hs) && !nvn_dirty_since(hm + 6 * PG, PG, hs),
+              "a hole committed and written: only that page is newer");
+    }
+    uint64_t hf0, hp0, hf1, hp1; nvn_dirty_stats(&hf0, &hp0); hm[9 * PG + 3] = 7; seen(hm); nvn_dirty_stats(&hf1, &hp1);
     CHECK(hf1 - hf0 == 1 && nvn_dirty_since(hm + 9 * PG, PG, hs) && !nvn_dirty_since(hm + 10 * PG, PG, hs), "a hole: a write past it faults and only its page is newer");
     nvn_dirty_remove_range(hm); VirtualFree(hm, 0, MEM_RELEASE);
 
@@ -75,9 +85,9 @@ int main(void) {
     CHECK(b.up_pages == a.up_pages, "nothing written: nothing copied (%llu)", (unsigned long long)(b.up_pages - a.up_pages));
     uint64_t fa, pa, fb, pb_; nvn_dirty_stats(&fa, &pa);
     mem[7 * PG + 100] = 0x5a; mem[30 * PG] = 0xa5; mem[30 * PG + 4095] = 0x11; mem[31 * PG + 1] = 0x22;
-    nvn_dirty_stats(&fb, &pb_);
     vkm_frame_tick(2);
     vkm_stats(&a); submit_sync_all(); vkm_stats(&b);
+    nvn_dirty_stats(&fb, &pb_);
     CHECK(fb - fa == 3, "three pages written, three faults (%llu)", (unsigned long long)(fb - fa));
     CHECK(b.up_pages - a.up_pages == 3, "only the three written pages are copied again (%llu)", (unsigned long long)(b.up_pages - a.up_pages));
     CHECK(b.up_runs - a.up_runs == 2, "pages 30 and 31 go in one run (%llu runs)", (unsigned long long)(b.up_runs - a.up_runs));
@@ -86,12 +96,12 @@ int main(void) {
     for (int f = 3; f < 9; f++) { mem[40 * PG + f] = (uint8_t)f; vkm_frame_tick((uint64_t)f); submit_sync_all(); }
     vkm_stats(&a);
     CHECK(a.hot_pages >= 1, "a page written in consecutive frames is hot (%llu)", (unsigned long long)a.hot_pages);
-    nvn_dirty_stats(&fa, &pa); mem[40 * PG + 200] = 1; mem[40 * PG + 201] = 2; nvn_dirty_stats(&fb, &pb_);
+    nvn_dirty_stats(&fa, &pa); mem[40 * PG + 200] = 1; mem[40 * PG + 201] = 2; seen(mem); nvn_dirty_stats(&fb, &pb_);
     CHECK(fb == fa, "a hot page is left writable (%llu faults)", (unsigned long long)(fb - fa));
     vkm_frame_tick(9); submit_sync_all();
     CHECK(mirror_equals(mem, NP * PG), "a hot page is copied at every use");
     vkm_frame_tick(240); submit_sync_all();   // cooling: protected again at its next copy
-    nvn_dirty_stats(&fa, &pa); mem[40 * PG + 300] = 3; nvn_dirty_stats(&fb, &pb_);
+    nvn_dirty_stats(&fa, &pa); mem[40 * PG + 300] = 3; seen(mem); nvn_dirty_stats(&fb, &pb_);
     CHECK(fb - fa == 1, "a cooled page faults again (%llu)", (unsigned long long)(fb - fa));
     // vkm_use: only the range asked for
     mem[100 * PG] = 9; mem[200 * PG] = 9;
@@ -121,7 +131,7 @@ int main(void) {
     vks_begin(); vkm_use((uint64_t)(uintptr_t)(mem + 50 * PG), PG, &db_, &do_); vks_wait(vks_commit(), UINT64_MAX);
     vkm_stats(&b);
     CHECK(b.up_pages == a.up_pages, "a page the GPU wrote whole: not copied up again (%llu)", (unsigned long long)(b.up_pages - a.up_pages));
-    nvn_dirty_stats(&fa, &pa); mem[50 * PG + 17] ^= 0xff; nvn_dirty_stats(&fb, &pb_);
+    nvn_dirty_stats(&fa, &pa); mem[50 * PG + 17] ^= 0xff; seen(mem); nvn_dirty_stats(&fb, &pb_);
     vkm_stats(&a);
     vks_begin(); vkm_use((uint64_t)(uintptr_t)(mem + 50 * PG), PG, &db_, &do_); vks_wait(vks_commit(), UINT64_MAX);
     vkm_stats(&b);

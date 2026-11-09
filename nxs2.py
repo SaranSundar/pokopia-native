@@ -29,9 +29,9 @@ Windows game the tools of the "for Windows PCs" download (windows/bin). On Linux
 or newer with lz4, fontTools and Pillow, the .NET 10 runtime, git, a Vulkan driver, and the tools of the "for Linux" download (linux/bin; docs/LINUX.md).
 `nxs2.py doctor` lists what is missing.
 """
-import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shutil, struct, subprocess, sys, time
+import argparse, concurrent.futures as cf, hashlib, json, os, pathlib, platform, re, shlex, shutil, struct, subprocess, sys, time
 
-TOOL_VERSION = '1.3.3'   # this tool's release (co-op compares the game build and mods, not this); the game's own version is separate
+TOOL_VERSION = '1.3.5'   # this tool's release (co-op compares the game build and mods, not this); the game's own version is separate
 TITLE = '0400A3A01EE4C000'
 NAME = 'Pokemon Pokopia'
 UPSTREAM = 'https://github.com/seedds/nxnative'
@@ -176,12 +176,16 @@ def win_tools():
     kit = pathlib.Path(os.environ['NXW_TOOLS']) if os.environ.get('NXW_TOOLS') else WIN_KIT
     if (kit / 'nxrt.exe').is_file():
         t = {n: kit / n for n in WIN_KIT_FILES}; t['dir'] = kit
+        t['gamecontrollerdb.txt'] = kit / 'gamecontrollerdb.txt'   # SDL_GameControllerDB's controller mappings: copied beside nxrt.exe when the kit has them
+        t['pokopia-launch.exe'] = kit / 'pokopia-launch.exe'       # the launcher as a program: out\Play Pokopia <version>.exe when the kit has it
     else:
         src = HERE / 'windows'; rel = src / 'build' / 'Release'
         t = {n: rel / 'bin' / n for n in ('nxanalyze.exe', 'nxlift.exe', 'nxrt.exe', 'SDL3.dll')}
         t.update({'nxrt.lib': rel / 'lib' / 'nxrt.lib', 'hle_inventory.tsv': src / 'src/nxrt/gen/out/hle_inventory.tsv', 'play.ps1': src / 'scripts/play.ps1',
                   'nxshader/nxshader.py': src / 'src/nxshader/nxshader.py', 'nxshader/dmsh_abi.h': src / 'src/nxrt/gfx/dmsh_abi.h',
                   'lld-link.exe': llvm_tool('lld-link'), 'dir': rel / 'bin'})
+        t['gamecontrollerdb.txt'] = src / 'src/nxrt/front/third_party/SDL_GameControllerDB/gamecontrollerdb.txt'
+        t['pokopia-launch.exe'] = rel / 'bin' / 'pokopia-launch.exe'
         vk = [pathlib.Path(v) / 'Bin' for v in (os.environ.get('VULKAN_SDK'),) if v] + sorted(pathlib.Path('C:/VulkanSDK').glob('*/Bin'))[-1:]
         for n in ('spirv-opt.exe', 'spirv-val.exe'): t[n] = next((d / n for d in vk if (d / n).is_file()), None)
     t['missing'] = [n for n in WIN_KIT_FILES if not (t.get(n) and pathlib.Path(t[n]).is_file())]
@@ -315,6 +319,27 @@ def externally_managed():
     return sys.prefix == sys.base_prefix and pathlib.Path(sysconfig.get_path('stdlib'), 'EXTERNALLY-MANAGED').is_file()
 
 
+def metal_hint(sdk, selected, said):
+    """Why `xcrun -sdk <sdk> metal` failed, in one line: the usual cause is the Command Line Tools selected instead of Xcode, which installing the
+    Metal toolchain in Xcode does not change. selected is `xcode-select -p`, said what xcrun printed."""
+    said = ' '.join(said.split()); low = said.lower()
+    apps = pathlib.Path('/Applications')
+    xcode = apps / 'Xcode.app' if (apps / 'Xcode.app').is_dir() else next(iter(sorted(apps.glob('Xcode*.app'))), None)
+    if xcode is None:
+        return 'install Xcode (App Store or developer.apple.com) and open it once, then Xcode -> Settings -> Components: install the Metal toolchain'
+    if '/commandlinetools' in selected.lower() or not selected:
+        return (f'Terminal uses Apple\'s Command Line Tools, which have no Metal compiler; switch it to Xcode (asks for your password), '
+                f'in Terminal: sudo xcode-select -s {shlex.quote(str(xcode / "Contents" / "Developer"))}')
+    if 'license' in low: return 'accept the Xcode license, in Terminal: sudo xcodebuild -license accept'
+    if 'runfirstlaunch' in low or 'first launch' in low: return 'finish Xcode\'s setup, in Terminal: sudo xcodebuild -runFirstLaunch'
+    if sdk == 'iphoneos' and ('cannot be located' in low or 'sdk "iphoneos"' in low):
+        return 'Xcode -> Settings -> Components: install the iOS platform'
+    if 'metal toolchain' in low or 'metaltoolchain' in low or 'unable to find utility' in low:
+        return 'Xcode -> Settings -> Components: install the Metal toolchain, or in Terminal: xcodebuild -downloadComponent MetalToolchain'
+    return ('Xcode -> Settings -> Components: install the Metal toolchain' + (' and the iOS platform' if sdk == 'iphoneos' else '')
+            + (f' (xcrun said: {said[:160]})' if said else ''))
+
+
 def doctor(need_ios=True, quiet=False, need_windows=True):
     """What this machine has of what the build needs. Returns the list of problems (empty = ready). On Windows need_ios is the iPhone IPA's toolchain
     and need_windows the Windows game's tools."""
@@ -328,12 +353,14 @@ def doctor(need_ios=True, quiet=False, need_windows=True):
     ok('macOS on Apple silicon', sys.platform == 'darwin' and platform.machine() == 'arm64', 'the host runs the game\'s arm64 code natively: an Apple silicon Mac is required')
     ok(f'Python 3.12+ (running {platform.python_version()})', sys.version_info >= (3, 12), 'brew install python@3.12, then run nxs2.py with python3.12')
     managed = externally_managed(); missing = 0
+    venv = shlex.quote(str(VENV))   # a managed Python's fix: the builder's own environment, made and filled in one go (the window shows only this line)
+    venv_fix = f'in Terminal: {shlex.quote(sys.executable)} -m venv {venv} && {venv}/bin/python -m pip install "capstone>=5,<6" lz4 fonttools pillow'
     for mod, pip in (('capstone', 'capstone>=5,<6'), ('lz4', 'lz4'), ('fontTools', 'fonttools')):
         try: __import__(mod); have = True
         except ImportError: have = False; missing += 1
-        ok(f'python module {mod}', have, 'the steps below' if managed else f'{PY} -m pip install "{pip}"')
+        ok(f'python module {mod}', have, venv_fix if managed else f'{PY} -m pip install "{pip}"')
     try:
-        import capstone; ok('capstone 5.x', capstone.__version__.startswith('5.'), f'{VENV}/bin/python -m pip install "capstone>=5,<6"' if managed else f'{PY} -m pip install "capstone>=5,<6"')
+        import capstone; ok('capstone 5.x', capstone.__version__.startswith('5.'), venv_fix if managed else f'{PY} -m pip install "capstone>=5,<6"')
     except ImportError: pass
     if missing and managed and not quiet:
         print(f'  This Python ({sys.executable}) is managed by Homebrew or the system, which keeps pip packages out of it.\n'
@@ -347,7 +374,7 @@ def doctor(need_ios=True, quiet=False, need_windows=True):
     ok('make', which('make') is not None, 'comes with Xcode\'s command line tools')
     for sdk in ('macosx',) + (('iphoneos',) if need_ios else ()):
         r = subprocess.run(['xcrun', '-sdk', sdk, 'metal', '--version'], capture_output=True, text=True)
-        ok(f'Metal compiler for {sdk}', r.returncode == 0, 'Xcode -> Settings -> Components: install the Metal toolchain' + (' and the iOS platform' if sdk == 'iphoneos' else ''))
+        ok(f'Metal compiler for {sdk}', r.returncode == 0, '' if r.returncode == 0 else metal_hint(sdk, xc.stdout.strip(), r.stdout + ' ' + r.stderr))
     d = dotnet_root()
     have_rt = False
     if d:
@@ -470,6 +497,37 @@ def unblock_download():
     if n: say(f'{n} downloaded files unblocked (Windows had marked them as from the internet)')
 
 
+# nxnative's own tools for encrypted games, and the docs and tests about them: its NSP extractor and NSP-to-app scripts (they take console
+# keys), its Unreal Engine pak reader (it finds a game's AES key in the game's code and decrypts the pak index), and the Windows port's NSP
+# driver, window and guides. Pokopia Native runs none of them, so every setup removes them from its copy of nxnative (and from the cached
+# Windows port) and puts a stand-in where the pak reader was. None of them is in the shader chain's version (dmsh_chain.py FILES), so no
+# build's cache changes.
+NX_STRIP = ('dm/tools/nx_extract', 'scripts', 'docs', 'README.md', 'AGENTS.md', 'dm/tools/tests', 'dm/tools/fuzz',
+            'win/build_ipa_windows.py', 'win/gui.pyw', 'win/README.md', 'win/TUTORIAL.md', 'win/LINUX.md')
+UEPAK_STUB = ("# Pokopia Native's copy of nxnative: the Unreal Engine pak reader that was here (it decrypted pak indexes with a key found in\n"
+              "# the game's code) is removed. Pokopia is not an Unreal Engine game; this stand-in only lets the modules that import it load.\n"
+              "def unreal_paks(*a, **k): return []\n"
+              "def __getattr__(name): raise AttributeError(f'uepak.{name}: Unreal Engine pak support is removed from this copy of nxnative')\n")
+
+def strip_nxnative():
+    """NX_STRIP removed, the pak reader replaced by UEPAK_STUB, and the AES helper taken out of the Windows port's Python shim. Safe to run any
+    number of times: setup's resets bring the files back, and this removes them again."""
+    fork = HERE / 'nxnativewindows-src'
+    for root in (NX, fork):
+        for rel in NX_STRIP:
+            if root == fork and not rel.startswith('win/'): continue
+            p = root / rel
+            if p.is_dir(): shutil.rmtree(p)
+            elif p.exists(): p.unlink()
+    ue = NX / 'dm/gfx/tools/uepak.py'
+    if ue.exists() and ue.read_bytes() != UEPAK_STUB.encode(): ue.write_bytes(UEPAK_STUB.encode())
+    for shim in (NX / 'win/pyshim/sitecustomize.py', fork / 'win/pyshim/sitecustomize.py'):
+        if not shim.is_file(): continue
+        s = shim.read_text(encoding='utf-8')
+        s2 = re.sub(r"    class _CCCrypt:\n.*?    class _LibSystem:\n        CCCrypt = _CCCrypt\(\)\n",
+                    "    class _LibSystem(_NoLib): pass   # Pokopia Native's copy: no CommonCrypto (only the removed Unreal pak reader used it)\n", s, flags=re.S)
+        if s2 != s: shim.write_bytes(s2.encode('utf-8'))
+
 def setup(args):
     """nxnative at the pinned commit with the Switch 2 patch and the rebuilt translator, and ampere-lower built."""
     if (NX / '.bundled').is_file() and not (NX / '.git').is_dir():   # the Linux AppImage carries nxnative set up already, without its git history
@@ -517,6 +575,7 @@ def setup(args):
     elif not AMPERE.is_file() or AMPERE.stat().st_mtime < (HERE / 'ampere-lower/main.cpp').stat().st_mtime:
         say('building ampere-lower (the Switch 2 shader lowering)')
         run(['sh', HERE / 'ampere-lower/build.sh'], HERE / 'setup-ampere.log')
+    strip_nxnative()   # nxnative's tools for encrypted games: never used here, so never kept
     say(f'setup done: nxnative {head()} + Switch 2 patch at {NX}, ampere-lower at {AMPERE}')
 
 
@@ -534,7 +593,7 @@ def setup_windows(patch_key):
     cur = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=src).stdout.strip()
     if cur != FORK_COMMIT: run(['git', 'fetch', 'origin', FORK_COMMIT], HERE / 'setup-fork-fetch.log', cwd=src, ok=(0, 128))
     if cur != FORK_COMMIT or not (src / 'win/build_app.py').is_file():   # a --no-checkout clone has HEAD but no files yet
-        run(['git', 'checkout', '-q', FORK_COMMIT], HERE / 'setup-fork-checkout.log', cwd=src)
+        run(['git', 'checkout', '-q', '-f', FORK_COMMIT], HERE / 'setup-fork-checkout.log', cwd=src)   # -f: strip_nxnative's removals in this cache
     if not (src / 'win/build_app.py').is_file(): raise Fail(f'the Windows port\'s win/ folder did not arrive in {src}; see {HERE / "setup-fork-checkout.log"}')
     if (NX / 'win').is_dir(): shutil.rmtree(NX / 'win')
     shutil.copytree(src / 'win', NX / 'win', ignore=shutil.ignore_patterns('__pycache__', 'build', 'sdk'))
@@ -1109,6 +1168,7 @@ def st_win_play(b, t):
     %APPDATA%\\Pokopia Native\\<version>\\save, created empty the first time (nxs2.py import-save brings an existing one)."""
     rt = b.win / 'runtime'
     for n in ('nxrt.exe', 'SDL3.dll', 'play.ps1', 'spirv-opt.exe', 'spirv-val.exe'): copy_if_changed(t[n], rt / n)
+    if t.get('gamecontrollerdb.txt') and pathlib.Path(t['gamecontrollerdb.txt']).is_file(): copy_if_changed(t['gamecontrollerdb.txt'], rt / 'gamecontrollerdb.txt')   # nxrt reads it beside itself
     nxs = pathlib.Path(t['nxshader/nxshader.py']).parent
     for f in sorted(nxs.glob('*.py')): copy_if_changed(f, rt / 'nxshader' / f.name)
     copy_if_changed(next(p for p in (nxs / 'dmsh_abi.h', nxs.parent / 'nxrt/gfx/dmsh_abi.h') if p.is_file()), rt / 'nxshader' / 'dmsh_abi.h')
@@ -1143,7 +1203,12 @@ rem -PadCheck; -Save and -Work with other folders for a second player on this PC
 rem The window before Pokemon Pokopia {b.version} starts (Link Play, Controls, Display), even after "Don't ask again" was ticked. Play in it starts the game.
 {play} -Settings %*
 ''' + end, encoding='ascii')
-    say(f'Windows game: {cmd}  (the settings window: Pokopia Settings {b.version}.cmd beside it; save: {win_save_dir(b)})')
+    exe = t.get('pokopia-launch.exe')   # the same two launchers as programs (no console window, an icon; for a taskbar pin or Steam's "Add a Non-Steam Game")
+    if exe and pathlib.Path(exe).is_file():
+        copy_if_changed(exe, b.outputs / f'Play Pokopia {b.version}.exe'); copy_if_changed(exe, b.outputs / f'Pokopia Settings {b.version}.exe')
+        say(f'Windows game: {b.outputs / f"Play Pokopia {b.version}.exe"}  (or the .cmd beside it; the settings window: Pokopia Settings {b.version}.exe; save: {win_save_dir(b)})')
+    else:
+        say(f'Windows game: {cmd}  (the settings window: Pokopia Settings {b.version}.cmd beside it; save: {win_save_dir(b)})')
     return cmd
 
 
@@ -1535,7 +1600,9 @@ def build(args):
         st_xcode(b, args.team_id)
     if not (args.mac_app or args.ipa or args.xcode or args.windows or args.linux): say('no output asked for (--mac-app, --ipa, --xcode); the build folder is complete for nxs2.py run')
     if apple: report(b)
-    if args.windows: say(f'the Windows game: double-click "{b.outputs / f"Play Pokopia {b.version}.cmd"}" (or nxs2.py run "{b.out}")')
+    if args.windows:
+        play = b.outputs / f'Play Pokopia {b.version}.exe'
+        say(f'the Windows game: double-click "{play if play.is_file() else b.outputs / f"Play Pokopia {b.version}.cmd"}" (or nxs2.py run "{b.out}")')
     if args.linux: say(f'the Linux game: run "{b.outputs / f"play-pokopia-{b.version}.sh"}" (or nxs2.py run "{b.out}")')
     say('done')
 

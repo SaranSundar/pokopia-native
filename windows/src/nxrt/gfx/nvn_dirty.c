@@ -37,7 +37,8 @@ enum { BLK_SHIFT = 10, BLK = 1 << BLK_SHIFT, NBLK = 256, MAX_RANGE = BLK * NBLK 
 // Ranges are rounded to host pages (16 KB) but guest memory pools are only 4 KB aligned: adjacent pools share their first / last pages, so one address can fall in several registered ranges.
 // So: "is this texture tracked" looks for a range that holds its whole span; a fault / host pre-write unprotects and stamps every range covering that page; pool destruction identifies its range by the pool's exact start mem.
 // (Previously the first range containing the address was always taken: two SMBW ASTC 6x5 textures whose pool's first page is shared with a small preceding pool were judged untracked and re-uploaded on every use, about 6 MB per frame)
-typedef struct { uintptr_t base, end, mem; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; } range_t;
+typedef struct { uintptr_t base, end, mem; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live;
+                 _Atomic int k; _Atomic int64_t kn; uintptr_t klo, khi; _Atomic uint64_t hv; } range_t;   // the kernel tracks it (Linux, below): protected pages, their extent, the submission last harvested
 static _Atomic(range_t *) g_blk[NBLK];
 static inline range_t *rg(int i) { return &atomic_load_explicit(&g_blk[i >> BLK_SHIFT], memory_order_acquire)[i & (BLK - 1)]; }
 static _Atomic int g_nr;
@@ -56,6 +57,133 @@ static int mp_(uintptr_t a, size_t len, int prot, int quiet) {
     return r;
 }
 static int mp(uintptr_t a, size_t len, int prot) { return mp_(a, len, prot, 0); }
+
+// Linux 6.7+, NXRT_DIRTY_KERNEL=1 (off by default): the kernel tracks the writes (docs/LINUX-PLAN.md, the Steam Deck). Each range is registered with a
+// userfaultfd in asynchronous write-protect mode: a write to a protected page is resolved inside the kernel (no SIGSEGV, no handler, no mprotect, no mmap
+// lock taken for writing), and a range's first check after a submission starts (nvn_dirty_submission) runs one PAGEMAP_SCAN over its protected pages: those
+// written count as after a fault (written now, protected no more). The same pages are protected as with signals; a page already protected is left alone
+// (protecting it again would make the kernel forget a write). A write is seen at the next submission instead of at once; our own writes into guest memory
+// (prep_write) are stamped at once. A failure moves the range back to signals.
+// Why off: a scan walks every protected page's table entry (about 4 ns each), and Pokopia keeps nearly all of its five pools (5 GB) protected. In WSL at
+// the title: 0.92 ms a frame of tracking this way against 0.07 ms with signals, for the same 3.4 writes a frame (400 scattered writes into a 64 MB range
+// were 0.17 ms against 3.1 ms). Worth it only for the few regions written often, not whole pools
+#ifndef _WIN32
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/userfaultfd.h>
+#include <sys/ioctl.h>
+#include <sys/syscall.h>
+#ifndef UFFD_USER_MODE_ONLY
+#define UFFD_USER_MODE_ONLY 1
+#endif
+#ifndef UFFD_FEATURE_WP_HUGETLBFS_SHMEM
+#define UFFD_FEATURE_WP_HUGETLBFS_SHMEM (1 << 12)
+#endif
+#ifndef UFFD_FEATURE_WP_UNPOPULATED
+#define UFFD_FEATURE_WP_UNPOPULATED (1 << 13)
+#endif
+#ifndef UFFD_FEATURE_WP_ASYNC
+#define UFFD_FEATURE_WP_ASYNC (1 << 15)
+#endif
+#ifndef PAGEMAP_SCAN   // include/uapi/linux/fs.h, Linux 6.7
+struct page_region { uint64_t start, end, categories; };
+struct pm_scan_arg { uint64_t size, flags, start, end, walk_end, vec, vec_len, max_pages, category_inverted, category_mask, category_anyof_mask, return_mask; };
+#define PAGEMAP_SCAN _IOWR('f', 16, struct pm_scan_arg)
+#define PM_SCAN_WP_MATCHING (1 << 0)
+#define PM_SCAN_CHECK_WPASYNC (1 << 1)
+#define PAGE_IS_WRITTEN (1 << 1)
+#endif
+static int g_uffd = -1, g_pmfd = -1, g_kmode;   // g_kmode: the kernel's tracking is available (decided at the first range)
+static _Atomic uint64_t g_epoch = 1;   // the submission count (nvn_dirty_submission)
+static void kmode_init(void) {
+    const char *e = getenv("NXRT_DIRTY_KERNEL");
+    if (!e || *e != '1') return;
+    int fd = (int)syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);
+    struct uffdio_api api = {.api = UFFD_API, .features = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_HUGETLBFS_SHMEM | UFFD_FEATURE_WP_UNPOPULATED};
+    int pm = fd >= 0 ? open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC) : -1;
+    const char *why = fd < 0 ? "no userfaultfd" : ioctl(fd, UFFDIO_API, &api) ? "no asynchronous write-protect (Linux 6.7+)" : pm < 0 ? "no /proc/self/pagemap" : NULL;
+    if (why) { int err = errno; if (pm >= 0) close(pm); if (fd >= 0) close(fd);
+        LOG("dirty-page tracking: signals and mprotect (the kernel's tracking: %s, %s)", why, strerror(err)); return; }
+    g_uffd = fd; g_pmfd = pm; g_kmode = 1;
+    LOG("dirty-page tracking: by the kernel (userfaultfd asynchronous write-protect, PAGEMAP_SCAN at each submission)");
+}
+static int k_wp(uintptr_t a, uintptr_t e, int on) {   // write-protect [a, e) again (on) or for good no more (off); 0 = done
+    uint64_t t = mach_absolute_time();
+    struct uffdio_writeprotect wp = {.range = {(uint64_t)a, (uint64_t)(e - a)}, .mode = on ? UFFDIO_WRITEPROTECT_MODE_WP : 0};
+    int r = ioctl(g_uffd, UFFDIO_WRITEPROTECT, &wp);
+    atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - t); atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, (e - a) >> g_shift);
+    return r;
+}
+static int k_register(range_t *r) {   // 1 = the kernel tracks the range from now on (nothing protected yet)
+    struct uffdio_register reg = {.range = {(uint64_t)r->base, (uint64_t)(r->end - r->base)}, .mode = UFFDIO_REGISTER_MODE_WP};
+    if (!ioctl(g_uffd, UFFDIO_REGISTER, &reg)) return 1;
+    static _Atomic int red; if (!atomic_exchange(&red, 1)) LOG("[RED] dirty-page tracking: the kernel would not track %p+%#zx (%s): signals and mprotect for it and any like it", (void *)r->base, (size_t)(r->end - r->base), strerror(errno));
+    return 0;
+}
+static void k_unregister(range_t *r) {
+    k_wp(r->base, r->end, 0);
+    struct uffdio_range ur = {(uint64_t)r->base, (uint64_t)(r->end - r->base)}; ioctl(g_uffd, UFFDIO_UNREGISTER, &ur);
+}
+static int k_release(range_t *r, uintptr_t p, uint64_t g) {   // a protected page written: written at g, protected no more (as after a fault)
+    uint8_t st = PG_PROT;
+    if (!atomic_compare_exchange_strong(&r->state[p], &st, PG_NONE)) return 0;
+    atomic_store(&r->gen[p], g); atomic_fetch_sub(&r->kn, 1);
+    return 1;
+}
+static void k_fail(range_t *r, const char *what) {   // under g_slot_mu: back to signals, every protected page counting as written
+    static _Atomic int red; if (!atomic_exchange(&red, 1)) LOG("[RED] dirty-page tracking: %s failed on %p+%#zx (%s): signals and mprotect for that range", what, (void *)r->base, (size_t)(r->end - r->base), strerror(errno));
+    uint64_t g = atomic_fetch_add(&g_now, 1) + 1;
+    for (uintptr_t p = r->klo; p < r->khi; p++) k_release(r, p, g);
+    atomic_fetch_add(&g_now, 1);
+    k_unregister(r); atomic_store(&r->k, 0);
+}
+static void k_harvest(range_t *r) {   // under g_slot_mu: the protected pages written since the last scan
+    uint64_t ep = atomic_load(&g_epoch);
+    if (atomic_load(&r->hv) == ep) return;
+    atomic_store(&r->hv, ep);
+    if (atomic_load(&r->kn) <= 0) { r->klo = (r->end - r->base) >> g_shift; r->khi = 0; return; }
+    enum { VEC = 1024 }; static struct page_region vec[VEC];
+    struct pm_scan_arg s = {.size = sizeof s, .flags = PM_SCAN_CHECK_WPASYNC, .start = r->base + (r->klo << g_shift), .end = r->base + (r->khi << g_shift),
+                            .vec = (uint64_t)(uintptr_t)vec, .vec_len = VEC, .category_mask = PAGE_IS_WRITTEN, .return_mask = PAGE_IS_WRITTEN};
+    uint64_t g = atomic_fetch_add(&g_now, 1) + 1, n = 0, t = mach_absolute_time();
+    for (;;) {   // pages never protected count as written too: only those protected are taken
+        long m = ioctl(g_pmfd, PAGEMAP_SCAN, &s);
+        if (m < 0) { k_fail(r, "PAGEMAP_SCAN"); break; }
+        for (long i = 0; i < m; i++)
+            for (uintptr_t p = (uintptr_t)(vec[i].start - r->base) >> g_shift, q = (uintptr_t)(vec[i].end - r->base) >> g_shift; p < q; p++) n += (uint64_t)k_release(r, p, g);
+        if (m < VEC || s.walk_end >= s.end) break;
+        s.start = s.walk_end;
+    }
+    atomic_fetch_add(&g_now, 1);
+    atomic_fetch_add(&g_faults, n); atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - t);
+}
+// Protect pages [p, q] of a kernel-tracked range: the runs not protected yet, one ioctl each. 0 = it failed and the range is back on signals
+static int k_protect(range_t *r, uintptr_t p, uintptr_t q) {
+    for (uintptr_t i = p; i <= q; ) {
+        if (atomic_load(&r->state[i]) != PG_NONE) { i++; continue; }   // protected: the kernel keeps its writes for the next scan
+        uintptr_t j = i; while (j <= q && atomic_load(&r->state[j]) == PG_NONE) j++;
+        if (k_wp(r->base + (i << g_shift), r->base + (j << g_shift), 1)) { k_fail(r, "UFFDIO_WRITEPROTECT"); return 0; }
+        for (uintptr_t k = i; k < j; k++) atomic_store(&r->state[k], PG_PROT);
+        atomic_fetch_add(&r->kn, (int64_t)(j - i));
+        if (i < r->klo) r->klo = i;
+        if (j > r->khi) r->khi = j;
+        i = j;
+    }
+    return 1;
+}
+#endif
+void nvn_dirty_submission(void) {
+#ifndef _WIN32
+    atomic_fetch_add(&g_epoch, 1);
+#endif
+}
+int nvn_dirty_kernel(void) {
+#ifndef _WIN32
+    return g_kmode;
+#else
+    return 0;
+#endif
+}
 
 static mach_timebase_info_data_t g_tb;   // obtained when the first pool is registered (the fault path only multiplies and divides)
 static _Atomic int g_busy_red;
@@ -103,7 +231,7 @@ static int release_page(range_t *r, uintptr_t p, _Atomic uint64_t *count) {
 // Windows: whether a tracked range has this page protected or is changing it, for the heap's fault hook ahead of on_fault (dm_fault_is_wp)
 static int page_wp(void *addr) {
     uintptr_t a = (uintptr_t)addr; int n = atomic_load(&g_nr);
-    for (int i = 0; i < n; i++) { range_t *r = rg(i); if (live_at(i) && a >= r->base && a < r->end && atomic_load(&r->state[(a - r->base) >> g_shift]) != PG_NONE) return 1; }
+    for (int i = 0; i < n; i++) { range_t *r = rg(i); if (live_at(i) && !atomic_load(&r->k) && a >= r->base && a < r->end && atomic_load(&r->state[(a - r->base) >> g_shift]) != PG_NONE) return 1; }
     return 0;
 }
 static int on_fault(void *addr, int is_write, void *uc) {
@@ -111,7 +239,7 @@ static int on_fault(void *addr, int is_write, void *uc) {
     if (!is_write) return 0;
     uintptr_t a = (uintptr_t)addr; int ours = 0, n = atomic_load(&g_nr);
     for (int i = 0; i < n; i++)   // Every range sharing the page must be released: releasing only one leaves the other range's state at "protected", and later writes no longer fault and are missed
-        { range_t *r = rg(i); if (live_at(i) && a >= r->base && a < r->end) ours |= release_page(r, (a - r->base) >> g_shift, &g_faults); }
+        { range_t *r = rg(i); if (live_at(i) && !atomic_load(&r->k) && a >= r->base && a < r->end) ours |= release_page(r, (a - r->base) >> g_shift, &g_faults); }   // the kernel's ranges never fault
     return ours;
 }
 // Unprotect pages p..q of a range with one mprotect per run of protected pages (a host write over a whole texture, e.g. WriteTexels, used to make one system call per 16 KB page:
@@ -137,13 +265,25 @@ static void prep_write(void *addr, size_t len) {
         range_t *r = rg(i);
         if (!live_at(i) || e <= r->base || a >= r->end) continue;
         uintptr_t lo = a > r->base ? a : r->base, hi = e < r->end ? e : r->end;
+#ifndef _WIN32
+        if (atomic_load(&r->k)) {   // the kernel lets our write through: no system call, the protected pages count as written now
+            uint64_t g = atomic_fetch_add(&g_now, 1) + 1, n = 0;
+            for (uintptr_t p = (lo - r->base) >> g_shift, q = (hi - 1 - r->base) >> g_shift; p <= q; p++) n += (uint64_t)k_release(r, p, g);
+            atomic_fetch_add(&g_now, 1); atomic_fetch_add(&g_preps, n);
+            continue;
+        }
+#endif
         release_pages(r, (lo - r->base) >> g_shift, (hi - 1 - r->base) >> g_shift, &g_preps);
     }
 }
 
 void nvn_dirty_add_range(const void *mem, size_t size) {
     static int inited;
-    if (!inited) { inited = 1; g_pg = (uintptr_t)getpagesize(); g_shift = (uintptr_t)__builtin_ctzll(g_pg); mach_timebase_info(&g_tb); dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write); dm_fault_wp_register(page_wp); }
+    if (!inited) { inited = 1; g_pg = (uintptr_t)getpagesize(); g_shift = (uintptr_t)__builtin_ctzll(g_pg); mach_timebase_info(&g_tb); dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write); dm_fault_wp_register(page_wp);
+#ifndef _WIN32
+        kmode_init();
+#endif
+    }
     atomic_fetch_add(&g_adds_total, 1);
     pthread_mutex_lock(&g_slot_mu);
     int n = atomic_load(&g_nr);
@@ -176,6 +316,10 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
         memset((void *)state, 0, np); memset((void *)gen, 0, np * sizeof *gen);
     }
     r->base = base; r->end = end; r->mem = (uintptr_t)mem; r->state = state; r->gen = gen;
+    atomic_store(&r->k, 0); atomic_store(&r->kn, 0); r->klo = np; r->khi = 0; atomic_store(&r->hv, 0);
+#ifndef _WIN32
+    if (g_kmode) atomic_store(&r->k, k_register(r));
+#endif
     if (slot == n) atomic_store(&g_nr, n + 1);
     atomic_store_explicit(&r->live, 1, memory_order_release);
     pthread_mutex_unlock(&g_slot_mu);
@@ -185,6 +329,9 @@ void nvn_dirty_remove_range(const void *mem) {
     pthread_mutex_lock(&g_slot_mu);
     range_t *r = NULL; int n = atomic_load(&g_nr);
     for (int i = 0; i < n && !r; i++) if (live_at(i) && rg(i)->mem == (uintptr_t)mem) r = rg(i);   // Match by the pool's exact start: an adjacent pool sharing a page may have the same rounded base
+#ifndef _WIN32
+    if (r && atomic_load(&r->k)) { k_unregister(r); atomic_store(&r->k, 0); atomic_store_explicit(&r->live, 0, memory_order_release); atomic_fetch_sub(&g_live, 1); r = NULL; }
+#endif
     if (r) { prep_write((void *)r->base, r->end - r->base); atomic_store_explicit(&r->live, 0, memory_order_release); atomic_fetch_sub(&g_live, 1); }
     pthread_mutex_unlock(&g_slot_mu);
 }
@@ -250,6 +397,9 @@ void nvn_dirty_protect(const void *addr, size_t len) {
     range_t *r = len ? find_span((uintptr_t)addr, len) : NULL;
     if (!r) { pthread_mutex_unlock(&g_slot_mu); return; }
     uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
+#ifndef _WIN32
+    if (atomic_load(&r->k) && k_protect(r, p, q)) { pthread_mutex_unlock(&g_slot_mu); return; }
+#endif
     // Consecutive pages are merged into one mprotect (per-page calls reach thousands per frame on the first upload of large textures; character select page startup frame 5: 4888 calls).
     // Pages already PROT / BUSY break the consecutive run: do not protect again, and do not touch pages another thread is changing.
     // A BUSY page is waited out (the run so far is protected first, so none of ours is BUSY meanwhile) and looked at again: an unprotect in progress leaves the page writable
@@ -270,6 +420,13 @@ int nvn_dirty_since_span(const void *span, const void *addr, size_t len, uint64_
     range_t *r = (range_t *)span; uintptr_t a0 = (uintptr_t)addr;   // the kept handle still holds the span (a slot reused by another pool over the same memory is as good): no scan
     if (!r || !atomic_load_explicit(&r->live, memory_order_acquire) || a0 < r->base || a0 + len > r->end) r = find_span(a0, len);
     if (!r) return 1;   // When untracked, conservatively treat as dirty: better to upload more than to show stale content
+#ifndef _WIN32
+    if (atomic_load(&r->k) && atomic_load(&r->hv) != atomic_load(&g_epoch)) {
+        pthread_mutex_lock(&g_slot_mu);
+        if (atomic_load_explicit(&r->live, memory_order_acquire) && atomic_load(&r->k)) k_harvest(r);
+        pthread_mutex_unlock(&g_slot_mu);
+    }
+#endif
     uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
     for (uintptr_t i = p; i <= q; i++) if (atomic_load(&r->gen[i]) > stamp) return 1;   // The generation of the last write before upload is <= the stamp; any later write must be > the stamp
     return 0;

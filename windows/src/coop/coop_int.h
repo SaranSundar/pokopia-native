@@ -56,6 +56,27 @@ typedef struct caddr { uint32_t ip, mask; int is_public; } caddr;
 // COM call): Windows, the interface's network has the Public profile (its firewall keeps visitors out there); elsewhere 0. The count (at most
 // max), -1 when the list cannot be read
 int cplat_local_addrs(caddr *out, int max, int profiles);
+int cplat_gateway(uint32_t *gw);    // the router: the default route's next hop (0 on success)
+
+// ---------- automatic port forwarding (coop_nat.c) ----------
+typedef struct natmap { int method; uint32_t gw, client, ext; uint16_t gport, port, eport; uint8_t nonce[2][12]; char control[256], service[80]; } natmap;
+typedef struct cnat {
+    uint16_t want;           // the hosting port to forward, 0 none (under the node lock, as all of these)
+    int stop, quitting, running;
+    cthread th;
+    coop_nat_info info;      // what the player is shown
+    natmap m_left;           // the worker's mapping, left for coop_nat_quit
+} cnat;
+void cnat_want(coop_node *n, uint16_t port);   // with the lock held: hosting over the internet starts (the port) or ends (0)
+void cnat_stop(coop_node *n);                  // without the lock (coop_destroy)
+// the pieces, for the tests: NAT-PMP (op 0 the address, 1 UDP, 2 TCP), PCP MAP, a URL, an SSDP answer's LOCATION, a tag's text, the IGD control URL
+int cnat_pmp(uint32_t gw, uint16_t gport, int op, uint16_t iport, uint16_t eport, uint32_t life, uint32_t *ext, uint16_t *mapped, uint32_t *life_out, int tries);
+int cnat_pcp_map(uint32_t gw, uint16_t gport, uint32_t client, const uint8_t nonce[12], int proto, uint16_t iport, uint16_t eport, uint32_t life,
+                 uint32_t *ext, uint16_t *mapped, uint32_t *life_out, int tries);
+int cnat_url(const char *url, uint32_t *ip, uint16_t *port, char *path, size_t pn);
+int cnat_ssdp_location(const char *resp, char *loc, size_t n);
+int cnat_xml_text(const char *s, const char *tag, char *out, size_t n);
+int cnat_igd_control(const char *xml, const char *desc_url, char *service, size_t sn, char *control, size_t cn);
 
 // ---------- the node ----------
 #define LDN_NETINFO 0x480
@@ -247,6 +268,7 @@ struct coop_node {
     uint64_t refused_src, refused_join, bad_input, rate_drops, udp_junk;
     int64_t log_src_at, log_junk_at;
     cdisc disc;
+    cnat nat;
     // vnet
     vsock sk[COOP_FD_MAX];
     uint16_t next_eph;

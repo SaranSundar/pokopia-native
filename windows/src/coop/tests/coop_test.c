@@ -389,6 +389,19 @@ static void run(int tcp_only) {
     uint32_t ip2 = 0; CHECK_EQ(coop_ldn_ipv4(S2, &ip2, &mask), 0); CHECK_EQ(ip2, net | 3);
     WAIT_UNTIL(coop_ldn_network_info(S1, sinfo) == 0 && NI_COUNT(sinfo) == 3, 2000);   // S1 hears of S2 through SYNC
     CHECK_EQ(NI_COUNT(sinfo), 3); CHECK_EQ(NI_NODE_IP(sinfo, 2), ip2);
+    {   // the in-game Link Play page's snapshot: the players by name, with the real addresses each side knows
+        coop_info hi, si;
+        WAIT_UNTIL((coop_get_info(H, &hi), hi.nplayers == 3), 2000);
+        CHECK_EQ(hi.ldn, COOP_LS_AP_CREATED); CHECK(hi.hosting); CHECK_EQ(hi.port, port); CHECK_EQ(hi.internet, 0); CHECK_EQ(hi.room[0], 0); CHECK_EQ(hi.join_ip, 0);
+        CHECK_EQ(hi.nplayers, 3); CHECK_EQ(hi.links, 2);
+        CHECK(!strcmp(hi.player[0].name, "Host") && hi.player[0].self && hi.player[0].node == 0 && hi.player[0].ip == 0);
+        CHECK(!strcmp(hi.player[1].name, "Sta1") && !hi.player[1].self && hi.player[1].node == 1 && hi.player[1].ip == 0x7F000001u);
+        CHECK(!strcmp(hi.player[2].name, "Sta2") && hi.player[2].ip == 0x7F000001u);
+        WAIT_UNTIL((coop_get_info(S1, &si), si.nplayers == 3), 2000);
+        CHECK_EQ(si.ldn, COOP_LS_STATION_CONNECTED); CHECK(!si.hosting); CHECK_EQ(si.port, 0); CHECK_EQ(si.join_ip, 0x7F000001u); CHECK_EQ(si.join_port, port);
+        CHECK_EQ(si.nplayers, 3); CHECK(si.player[1].self && !si.player[0].self); CHECK(!strcmp(si.player[0].name, "Host") && si.player[0].ip == 0x7F000001u);
+        CHECK_EQ(si.player[2].ip, 0);   // another visitor's address: only the host knows it
+    }
 
     // ---- station 3: the network is full (Number of Players: Three)
     coop_node *S3 = mk_node(join, "0000000000000001000000000000000d", &t3, tcp_only);
@@ -619,6 +632,17 @@ static void test_lan(void) {
     free(scan);
 }
 
+// One junk datagram to the host's port, sent again (at most five times) until the host has counted it as malformed
+static int udp_junk_counted(coop_node *H, csock u, const uint8_t *p, size_t len, uint16_t port) {
+    for (int tries = 0; tries < 5; tries++) {
+        coop_stats a, b; coop_get_stats(H, &a);
+        cplat_sendto(u, p, len, 0x7F000001u, port);
+        WAIT_UNTIL((coop_get_stats(H, &b), b.bad_input > a.bad_input), 2000);
+        if (b.bad_input > a.bad_input) return 1;
+    }
+    return 0;
+}
+
 // Malformed, truncated, oversized and flooding input. A host must close or ignore it and keep serving honest stations; a station must not let a
 // hostile host's NetworkInfo, ACCEPT, REFUSE, SYNC or datagram flood reach the game
 static void test_hostile_host(void) {
@@ -682,17 +706,15 @@ static void test_hostile_host(void) {
       CHECK(open <= 4 && open >= 1);
       for (int i = 0; i < 10; i++) cplat_close(fl[i]);
       msleep(100); }
-    // UDP junk at the host's datagram port: short, not ours, an unknown token, over-long
-    { coop_stats st0; coop_get_stats(H, &st0);
-      csock u = cplat_udp_open(0x7F000001u, 0, NULL);
+    // UDP junk at the host's datagram port: short, not ours, an unknown token, over-long. Each is sent until the host has counted it: on a busy machine
+    // (a release's ctest -j 2 at low priority) all five once went missing (9 malformed at the end instead of 14), lost before the host read them
+    { csock u = cplat_udp_open(0x7F000001u, 0, NULL); CHECK(u != CSOCK_BAD);
       uint8_t p[9000]; memset(p, 0x5A, sizeof p);
-      cplat_sendto(u, p, 3, 0x7F000001u, port);
-      cplat_sendto(u, p, 64, 0x7F000001u, port);
-      put32(p, MP_UMAGIC); p[4] = U_DGRAM; cplat_sendto(u, p, 64, 0x7F000001u, port);
-      p[4] = U_HELLO; cplat_sendto(u, p, MP_UDP_HDR, 0x7F000001u, port);
-      cplat_sendto(u, p, sizeof p, 0x7F000001u, port);
-      coop_stats st; WAIT_UNTIL((coop_get_stats(H, &st), st.bad_input >= st0.bad_input + 4), 2000);
-      CHECK(st.bad_input >= st0.bad_input + 4);
+      CHECK(udp_junk_counted(H, u, p, 3, port));
+      CHECK(udp_junk_counted(H, u, p, 64, port));
+      put32(p, MP_UMAGIC); p[4] = U_DGRAM; CHECK(udp_junk_counted(H, u, p, 64, port));
+      p[4] = U_HELLO; CHECK(udp_junk_counted(H, u, p, MP_UDP_HDR, port));
+      CHECK(udp_junk_counted(H, u, p, sizeof p, port));
       cplat_close(u); }
     // after all that, an honest station still scans, joins and talks
     char join[48]; snprintf(join, sizeof join, "join:127.0.0.1:%u", port);
@@ -705,7 +727,8 @@ static void test_hostile_host(void) {
     char b[64]; uint8_t fr[16];
     CHECK_EQ(send_to(S, ss, hip, "still here"), 11); CHECK_EQ(recv_wait(H, hs, b, sizeof b, fr, 2000), 11);
     coop_stats st; coop_get_stats(H, &st);
-    CHECK(st.bad_input >= 10); CHECK(st.rate_drops >= 1);
+    // each hostile input counted malformed, or refused by a rate limit before it was read (the accept limiter can close a garbage link unread)
+    CHECK(st.bad_input + st.rate_drops >= 10); CHECK(st.rate_drops >= 1);
     fprintf(stderr, "   host after the hostile links: %llu malformed inputs, %llu rate drops, %llu joins refused\n", (unsigned long long)st.bad_input,
             (unsigned long long)st.rate_drops, (unsigned long long)st.refused_join);
     poll_stop();
@@ -883,6 +906,7 @@ static void test_mdns(void) {
 }
 
 #include "coop_test_inet.c"   // step 1d: internet play and the relay
+#include "coop_test_nat.c"    // automatic port forwarding
 
 // "Interact everywhere": the sites by build, the callback's register change, and a fingerprint every port computes alike (nxnative's cheat names, then the mod)
 static void env_set(const char *name, const char *v) {   // NULL removes it
@@ -910,7 +934,9 @@ static void test_interact(void) {
     uint64_t x[31] = {0};
     x[13] = 0x87800000; x[22] = 0;
     coop_interact_site(COOP_SITE_MASK, x); CHECK_EQ(x[13], 0x5ffffffe);   // the session's Spectator flag clear: Palette Town's Spectator-Off pattern
-    x[13] = 0x87800000; x[22] = 1;
+    x[13] = 0x87800000; x[20] = 1;
+    coop_interact_site(COOP_SITE_MASK, x); CHECK_EQ(x[13], 0x5ffffffe);   // the host without Story co-op: the same
+    x[13] = 0x87800000; x[20] = 0; x[22] = 1;
     coop_interact_site(COOP_SITE_MASK, x); CHECK_EQ(x[13], 0x87800000);   // set: unchanged
     x[13] = 0x87800000; x[22] = 0;
     coop_interact_site(0, x); CHECK_EQ(x[13], 0x87800000);   // another id: nothing
@@ -925,8 +951,11 @@ static void test_interact(void) {
 static void test_story(void) {
     fprintf(stderr, "== story\n");
     const coop_site *s = NULL;
-    CHECK_EQ(coop_story_sites("76a489f3bd3642fa5e18bd83d32c98bacc5f7d0e", &s), 1);
+    CHECK_EQ(coop_story_sites("76a489f3bd3642fa5e18bd83d32c98bacc5f7d0e", &s), 5);
     CHECK(s && s->id == COOP_SITE_TALK && s->off == 0x4c06d8 && s->fn == 0x4c024c && s->word == 0x2a000328u);
+    CHECK(s && s[1].id == COOP_SITE_ROLE && s[1].off == 0xb0f74 && s[1].fn == 0xb0f60 && s[1].word == 0xaa0003f3u);
+    CHECK(s && s[2].id == COOP_SITE_ALONE && s[2].off == 0x4cfe20 && s[3].id == COOP_SITE_ALONE && s[3].off == 0x4d4860);
+    CHECK(s && s[4].id == COOP_SITE_ALONE8 && s[4].off == 0x207c4 && s[4].fn == 0x4d04fc && s[4].word == 0x12000100u);
     CHECK_EQ(coop_story_sites("816c5358e8178d802fcec4a7ce5a741a", &s), 1);   // 1.0.5
     CHECK(s && s->id == COOP_SITE_TALK && s->off == 0x4698b0 && s->fn == 0x469424 && s->word == 0x2a000328u);
     CHECK_EQ(coop_story_sites("0000000000000000000000000000000000000000", &s), 0);
@@ -937,6 +966,23 @@ static void test_story(void) {
     env_set("DM_COOP_STORY", "1"); CHECK(coop_story_on()); CHECK(coop_interact_on());   // Story co-op brings Interact everywhere
     coop_interact_site(COOP_SITE_TALK, x); CHECK_EQ(x[0], 1);
     x[13] = 0x87800000; coop_interact_site(COOP_SITE_TALK, x); CHECK_EQ(x[13], 0x87800000);   // the talk site leaves the mask alone
+    x[13] = 0x87800000; x[20] = 1; x[22] = 0;
+    coop_interact_site(COOP_SITE_MASK, x); CHECK_EQ(x[13], 0x5ffffffe);   // a build without the ROLE site (1.0.5): as before
+    coop_interact_site(COOP_SITE_ROLE, x);
+    x[13] = 0x87800000; coop_interact_site(COOP_SITE_MASK, x); CHECK_EQ(x[13], 0x5fffffff);   // the host keeps its story system (bit 0)
+    x[0] = 1; coop_interact_site(COOP_SITE_ALONE, x); CHECK_EQ(x[0], 0);   // and its talk conditions read IsOnline as false
+    x[8] = 3; coop_interact_site(COOP_SITE_ALONE8, x); CHECK_EQ(x[8], 0);
+    coop_interact_site(COOP_SITE_ROLE, x);                                  // the next build of the mask: unknown until the story-area site
+    x[0] = 1; coop_interact_site(COOP_SITE_ALONE, x); CHECK_EQ(x[0], 1);
+    x[13] = 0x87800000; x[20] = 0;
+    coop_interact_site(COOP_SITE_MASK, x); CHECK_EQ(x[13], 0x5ffffffe);   // a visitor doesn't
+    x[0] = 1; coop_interact_site(COOP_SITE_ALONE, x); CHECK_EQ(x[0], 1);
+    x[8] = 3; coop_interact_site(COOP_SITE_ALONE8, x); CHECK_EQ(x[8], 3);
+    coop_interact_site(COOP_SITE_ROLE, x);
+    x[13] = 0x87800000; x[20] = 1; x[22] = 1;
+    coop_interact_site(COOP_SITE_MASK, x); CHECK_EQ(x[13], 0x87800000);   // the session's Spectator flag set: unchanged
+    x[0] = 1; coop_interact_site(COOP_SITE_ALONE, x); CHECK_EQ(x[0], 1);
+    x[20] = 0; x[22] = 0;
     const char *two[] = {COOP_INTERACT_MOD, COOP_STORY_MOD};
     CHECK(coop_mods_add(coop_mods_add(0, COOP_INTERACT_MOD), COOP_STORY_MOD) == fnv_names(two, 2));
     CHECK(coop_mods_add(coop_mods_add(0, COOP_INTERACT_MOD), COOP_STORY_MOD) == 0xc75a2da0380038c1ull);   // as the Mac hosts logged it
@@ -950,7 +996,7 @@ int main(int argc, char **argv) {
     cplat_init();   // the raw sockets need Winsock even while no node exists
     int all = argc < 2;
     int want_config = all, want_addr = all, want_txt = all, want_loop = all, want_lan = all, want_hostile = all, want_mdns = m && atoi(m);
-    int want_crypto = all, want_inet = all, want_relay = all, want_probe = 0, want_interact = all;
+    int want_crypto = all, want_inet = all, want_relay = all, want_probe = 0, want_interact = all, want_nat = all;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "config")) want_config = 1;
         else if (!strcmp(argv[i], "addr")) want_addr = 1;
@@ -964,7 +1010,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "relay")) want_relay = 1;
         else if (!strcmp(argv[i], "probe")) want_probe = 1;
         else if (!strcmp(argv[i], "interact")) want_interact = 1;
-        else { fprintf(stderr, "sections: config addr txt loopback lan hostile mdns crypto inet relay probe interact\n"); return 2; }
+        else if (!strcmp(argv[i], "nat")) want_nat = 1;
+        else { fprintf(stderr, "sections: config addr txt loopback lan hostile mdns crypto inet relay probe interact nat\n"); return 2; }
     }
     if (want_config) test_config();
     if (want_addr) test_addr();
@@ -978,6 +1025,7 @@ int main(int argc, char **argv) {
     if (want_relay) test_relay();
     if (want_probe) test_probe();
     if (want_interact) { test_interact(); test_story(); }
+    if (want_nat) test_nat();
     fprintf(stderr, "%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

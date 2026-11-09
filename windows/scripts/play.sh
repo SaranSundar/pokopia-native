@@ -213,10 +213,14 @@ CACHE=$WORK/cache TEMP=$WORK/temp LOGS=$WORK/logs
 export NXRT_VK_CACHE_DIR=$CACHE
 export DM_AUDIO=$([ -n "$SILENT" ] && echo 0 || echo 1)
 if [ -n "$CONFIG$ASK" ]; then   # the picture, saved for this computer (display.json); a switch or variable given from outside wins
-  D_CONSOLE=1 D_RES=default D_FULL=false D_WIN=1280x720 D_UPSCALE=sharp D_SHARP=0.5 D_FPS=60 D_VSYNC=true D_COUNTER=off
-  [ -n "$PY" ] && eval "$("$PY" -I - "$SETTINGS/display.json" <<'EOF'
+  # A Steam Deck (Steam's flag, or Valve's LCD / OLED board) starts in the game's handheld mode, its lighter settings (24 % less GPU time measured),
+  # until the player picks docked or handheld in F1 -> Graphics (display.json then holds "console")
+  DECK=; [ "${SteamDeck:-}" = 1 ] && DECK=1
+  case "$(cat /sys/class/dmi/id/board_vendor 2>/dev/null || true)/$(cat /sys/class/dmi/id/board_name 2>/dev/null || true)" in Valve/Jupiter|Valve/Galileo) DECK=1 ;; esac
+  D_CONSOLE=$([ -n "$DECK" ] && echo 0 || echo 1) D_RES=default D_FULL=false D_WIN=1280x720 D_UPSCALE=sharp D_SHARP=0.5 D_FPS=60 D_VSYNC=true D_COUNTER=off
+  [ -n "$PY" ] && eval "$("$PY" -I - "$SETTINGS/display.json" "$D_CONSOLE" <<'EOF'
 import json, re, shlex, sys
-d = {'console': 1, 'resolution': 'default', 'fullscreen': False, 'window': '1280x720', 'upscale': 'sharp', 'sharpness': 5, 'fps': 60, 'vsync': True, 'fps_counter': 'off'}
+d = {'console': int(sys.argv[2]), 'resolution': 'default', 'fullscreen': False, 'window': '1280x720', 'upscale': 'sharp', 'sharpness': 5, 'fps': 60, 'vsync': True, 'fps_counter': 'off'}
 try: d.update({k: v for k, v in json.load(open(sys.argv[1], encoding='utf-8')).items() if k in d})
 except Exception: pass
 def num(v, dflt):
@@ -227,13 +231,14 @@ if r != 'default' and not re.fullmatch(r'\d+x\d+', r):
     try: f = float(r)
     except ValueError: f = 0
     h = round(1080 * f); r = f'{round(h * 16 / 9)}x{h}' if f >= 1 else 'default'
-for var, v in (('D_CONSOLE', num(d['console'], 1)), ('D_RES', r), ('D_FULL', 'true' if d['fullscreen'] else 'false'), ('D_WIN', d['window'] or ''),
+for var, v in (('D_CONSOLE', num(d['console'], int(sys.argv[2]))), ('D_RES', r), ('D_FULL', 'true' if d['fullscreen'] else 'false'), ('D_WIN', d['window'] or ''),
                ('D_UPSCALE', d['upscale']), ('D_SHARP', f"{num(d['sharpness'], 5) / 10:g}"), ('D_FPS', num(d['fps'], 60)),
                ('D_VSYNC', 'true' if d['vsync'] else 'false'), ('D_COUNTER', d['fps_counter'] if d['fps_counter'] in ('off', 'corner', 'detailed') else 'off')):
     print(f'{var}={shlex.quote(str(v))}')
 EOF
 )"
   [ -z "${DM_OPMODE:-}" ] && export DM_OPMODE=$D_CONSOLE
+  [ -n "$DECK" ] && [ "$DM_OPMODE" = 0 ] && echo "Steam Deck: the game's handheld mode (F1 -> Graphics -> Docked switches it at the next start)."
   [ -z "${NXRT_VK_SCALE:-}${NXRT_VK_RESOLUTION:-}" ] && export NXRT_VK_RESOLUTION=$D_RES
   if [ -z "$WINDOW$FULLSCREEN${NXRT_VK_WINDOW:-}${NXRT_VK_FULLSCREEN:-}" ]; then [ "$D_FULL" = true ] && FULLSCREEN=1 || WINDOW=$D_WIN; fi
   [ -z "${NXRT_VK_UPSCALE:-}" ] && export NXRT_VK_UPSCALE=$D_UPSCALE

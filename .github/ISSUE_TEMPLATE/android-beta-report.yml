@@ -1,0 +1,163 @@
+name: Android beta report
+description: "How the Android beta ran on your phone or handheld (it worked, or it didn't: both help)"
+title: "[Android beta] <your device>: <worked / what went wrong>"
+labels: ["android-beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Fill in what you got to; "didn't get there" is a fine answer. Everything after the install is from your
+        first play session.
+
+        **Please never attach** your save, anything from your dump or your build folder, the APK, your signing key, shader files, or
+        console keys. The report the builder makes leaves all of those out by itself.
+
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Its exact model (Settings → About phone), for example "Retroid Pocket 6", "Ayn Odin 2", "Samsung Galaxy S24".
+      placeholder: Ayn Odin 2
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Android version, chip and memory
+      description: For example "Android 14, Snapdragon 8 Gen 2, 12 GB". The report file has the details.
+      placeholder: Android 14, Snapdragon 8 Gen 2, 12 GB
+    validations:
+      required: true
+
+  - type: dropdown
+    id: game_version
+    attributes:
+      label: Game version of your dump
+      options:
+        - "2.0.1"
+        - "1.0.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: build
+    attributes:
+      label: Did the build and the install finish?
+      options:
+        - "Yes"
+        - "No: the build stopped with an error"
+        - "No: the install stopped with an error"
+        - "No: the device test said the phone's graphics are not usable"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: title
+    attributes:
+      label: The title screen
+      options:
+        - Showed correctly
+        - Showed, with graphics problems
+        - Black or white screen
+        - The app closed before it
+        - Didn't get there
+    validations:
+      required: true
+
+  - type: dropdown
+    id: field
+    attributes:
+      label: In the game (after the title)
+      options:
+        - Played correctly
+        - Played, with graphics problems
+        - Froze, closed or the phone ran out of memory
+        - Didn't get there
+    validations:
+      required: true
+
+  - type: dropdown
+    id: smoothness
+    attributes:
+      label: How smooth was it?
+      options:
+        - Steady (30 fps or more)
+        - Mostly smooth, short hitches
+        - Choppy (about 15 to 30 fps)
+        - Very slow (below 15 fps)
+        - Didn't get there
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: controls
+    attributes:
+      label: What worked for controls?
+      options:
+        - label: The touch controls on the screen
+        - label: A handheld's built-in controls
+        - label: A Bluetooth or USB controller
+        - label: Tapping the game's own menus
+        - label: The name box (typing your character's name)
+        - label: Back opened the settings menu
+
+  - type: dropdown
+    id: lifecycle
+    attributes:
+      label: Leaving the app and coming back (Home, then the app again)
+      options:
+        - The game carried on
+        - The picture stayed black or froze
+        - The game had closed
+        - Didn't try
+
+  - type: dropdown
+    id: sound
+    attributes:
+      label: Sound
+      options:
+        - Worked
+        - Crackled or stuttered
+        - No sound
+        - Didn't get there
+
+  - type: dropdown
+    id: saves
+    attributes:
+      label: Saves
+      options:
+        - A new game saved, and loaded again after a restart
+        - Something went wrong with saving or loading (say below)
+        - Didn't try
+
+  - type: textarea
+    id: problems
+    attributes:
+      label: What went wrong, or looked wrong?
+      description: What you did, what happened and when, and any message on screen or in the builder (copy the text if you can). Did the phone get hot?
+      placeholder: |
+        In the first town, the water flickered white when the camera turned...
+        The install stopped with: ...
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: |
+        Drag files into this box.
+        1. **The report file (please always):** with the device on USB, press "Make a report" in the builder (or run
+           `py -3 nxs2.py android-report <your build folder>`), and attach the `pokopia-android-report-<date>.zip` it puts in your
+           build folder. It holds the game's logs and facts about your device, no game files or pictures.
+        2. **Screenshots** of anything that looks wrong.
+        3. **A short screen recording** if you made one. Files over 10 MB won't attach here: link it instead (an unlisted video).
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: nothing_private
+    attributes:
+      label: Before you send
+      options:
+        - label: I attached no save, no game files, no APK, no signing key, no build folder and no keys
+          required: true

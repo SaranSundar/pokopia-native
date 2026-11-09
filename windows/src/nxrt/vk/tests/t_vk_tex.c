@@ -86,11 +86,13 @@ int main(void) {
         vkt_resolve(&t); vkt_stats(&b);
         CHECK(b.reuploads == a.reuploads, "unchanged storage is not uploaded again");
         for (size_t i = 0; i < 4096; i++) mem[1000 + i] = (uint8_t)vt_rand();   // the game draws a new icon into the storage (write faults stamp the pages)
+        nvn_dirty_submission();   // the next submission's replay looks (Linux's kernel tracking sees writes from there)
         vkt_resolve(&t); vkt_stats(&a);
         CHECK(a.reuploads == b.reuploads + 1, "rewritten storage is uploaded again (%llu)", (unsigned long long)(a.reuploads - b.reuploads));
         CHECK(compare_level(im, &t, 0, 0) == 0, "and the GPU holds the new icon");
         tex_t t2 = t; t2.serial = ++vt_serial;   // a new texture object over the same storage with the same description
         for (size_t i = 0; i < 2048; i++) mem[i] = (uint8_t)vt_rand();
+        nvn_dirty_submission();
         vkt_image *im2 = vkt_resolve(&t2); vkt_stats(&b);
         CHECK(im2 == im && b.shared_hits > a.shared_hits, "the same storage and description share one image");
         CHECK(compare_level(im2, &t2, 0, 0) == 0, "a new object over rewritten storage shows the new content (not the previous item's)");

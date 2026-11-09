@@ -69,15 +69,35 @@ function Check-Display($name, $extra, $want) {
     $d = Display-Line $o
     if ($d -notlike "*$want*") { Write-Host "FAIL: display, $name`n  got:  $d`n  want: $want"; $script:fail++ } else { Write-Host "ok: display, $name" }
 }
-Check-Display "the defaults" "-Ask" "DM_OPMODE=1 NXRT_VK_SCALE= NXRT_VK_RESOLUTION=default NXRT_VK_WINDOW=1280x720 NXRT_VK_FULLSCREEN= NXRT_VK_UPSCALE=sharp NXRT_VK_SHARPNESS=0.5 DM_FPS= NXRT_VK_PRESENT= NXRT_FPS_COUNTER="
+Check-Display "the defaults" "-Ask" "DM_OPMODE=1 NXRT_VK_SCALE= NXRT_VK_RESOLUTION=default NXRT_VK_WINDOW=1280x720 NXRT_VK_FULLSCREEN= NXRT_VK_UPSCALE=sharp NXRT_VK_SHARPNESS=0.5 DM_FPS= NXRT_VK_PRESENT= NXRT_FPS_COUNTER= NXRT_VK_WIDE= NXRT_VK_AA=smaa"
 @{ console = 0; resolution = 1.5; fullscreen = $true; window = "1600x900"; upscale = "standard"; sharpness = 3; fps = 30; vsync = $false } | ConvertTo-Json | Set-Content -Encoding UTF8 "$t\settings\display.json"
 Check-Display "a saved choice (a factor from before the named list)" "-Ask" "DM_OPMODE=0 NXRT_VK_SCALE= NXRT_VK_RESOLUTION=2880x1620 NXRT_VK_WINDOW= NXRT_VK_FULLSCREEN=1 NXRT_VK_UPSCALE=standard NXRT_VK_SHARPNESS=0.3 DM_FPS=30 NXRT_VK_PRESENT=mailbox"
 @{ console = 1; resolution = "2560x1440"; fullscreen = $false; window = "1600x900"; upscale = "sharp"; sharpness = 5; fps = 60; vsync = $true; fps_counter = "detailed" } | ConvertTo-Json | Set-Content -Encoding UTF8 "$t\settings\display.json"
-Check-Display "a size by name and the FPS counter (the in-game menu writes these)" "-Ask" "NXRT_VK_SCALE= NXRT_VK_RESOLUTION=2560x1440 NXRT_VK_WINDOW=1600x900 NXRT_VK_FULLSCREEN= NXRT_VK_UPSCALE=sharp NXRT_VK_SHARPNESS=0.5 DM_FPS= NXRT_VK_PRESENT= NXRT_FPS_COUNTER=detailed"
+Check-Display "a size by name and the FPS counter (the in-game menu writes these)" "-Ask" "NXRT_VK_SCALE= NXRT_VK_RESOLUTION=2560x1440 NXRT_VK_WINDOW=1600x900 NXRT_VK_FULLSCREEN= NXRT_VK_UPSCALE=sharp NXRT_VK_SHARPNESS=0.5 DM_FPS= NXRT_VK_PRESENT= NXRT_FPS_COUNTER=detailed NXRT_VK_WIDE="
+@{ console = 1; resolution = "default"; fullscreen = $true; window = "1280x720"; upscale = "sharp"; sharpness = 5; fps = 60; vsync = $true; fps_counter = "off"; wide_view = $true } | ConvertTo-Json | Set-Content -Encoding UTF8 "$t\settings\display.json"
+Check-Display "the wide view (experimental)" "-Ask" "NXRT_FPS_COUNTER= NXRT_VK_WIDE=1"
+@{ console = 1; resolution = "default"; fullscreen = $true; window = "1280x720"; upscale = "sharp"; sharpness = 5; fps = 60; vsync = $true; antialiasing = "fxaa" } | ConvertTo-Json | Set-Content -Encoding UTF8 "$t\settings\display.json"
+Check-Display "anti-aliasing (the in-game menu writes it)" "-Ask" "NXRT_VK_WIDE= NXRT_VK_AA=fxaa"
+$env:NXRT_VK_AA = "off"; Check-Display "anti-aliasing from outside wins" "-Ask" "NXRT_VK_AA=off"; Remove-Item env:NXRT_VK_AA
+@{ console = 1; resolution = "default"; fullscreen = $true; window = "1280x720"; upscale = "sharp"; sharpness = 5; fps = 60; vsync = $true; antialiasing = "msaa" } | ConvertTo-Json | Set-Content -Encoding UTF8 "$t\settings\display.json"
+Check-Display "an anti-aliasing it does not know is the default" "-Ask" "NXRT_VK_AA=smaa"
 @{ console = 1; resolution = "5760x3240"; fullscreen = $false; window = "1600x900"; upscale = "sharp"; sharpness = 5; fps = 60; vsync = $true } | ConvertTo-Json | Set-Content -Encoding UTF8 "$t\settings\display.json"
 Check-Display "an older size keeps its string" "-Ask" "NXRT_VK_RESOLUTION=5760x3240 "
 Check-Display "-Window from outside wins" "-Ask -Window 1920x1080" "NXRT_VK_WINDOW=1920x1080 NXRT_VK_FULLSCREEN= "
 Check-Display "nothing without -Ask or -Config" "" "DM_OPMODE= NXRT_VK_SCALE= NXRT_VK_RESOLUTION= NXRT_VK_WINDOW= NXRT_VK_FULLSCREEN= NXRT_VK_UPSCALE= NXRT_VK_SHARPNESS= DM_FPS= NXRT_VK_PRESENT= NXRT_FPS_COUNTER="
+# linkplay.json as the in-game Link Play settings write it (front/linkplay_prefs.c: no UTF-8 mark, keys it doesn't know kept): -Ask starts the remembered way
+function Check-LinkPlay($name, $json, $want) {
+    [System.IO.File]::WriteAllText("$t\settings\linkplay.json", $json)
+    $o = powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$play' $a -Ask" 2>&1
+    $l = ($o | Where-Object { $_ -like "link play:*" }) -join ""
+    if ($l -notlike "*$want*") { Write-Host "FAIL: linkplay.json, $name`n  got:  $l`n  want: $want"; $script:fail++ } else { Write-Host "ok: linkplay.json, $name" }
+}
+Check-LinkPlay "visiting over the internet, both mods" "{`n    `"ask`":  false,`n    `"mode`":  `"visit`",`n    `"join`":  `"26.139.206.94`",`n    `"room`":  `"7K3M-9QXA-2B4C-HJ6N`",`n    `"host_room`":  `"`",`n    `"keep_room`":  false,`n    `"interact`":  true,`n    `"story`":  true`n}`n" `
+    "DM_COOP=auto DM_COOP_INTERACT=1 DM_COOP_STORY=1 DM_COOP_JOIN=26.139.206.94 DM_COOP_INTERNET=1 DM_COOP_ROOM=7K3M-9QXA-2B4C-HJ6N"
+Check-LinkPlay "hosting over the internet, the code kept" "{`n    `"ask`":  false,`n    `"mode`":  `"host`",`n    `"join`":  `"`",`n    `"room`":  `"`",`n    `"host_room`":  `"ABCD-EFGH-JKMN-PQRS`",`n    `"keep_room`":  true,`n    `"interact`":  false,`n    `"story`":  false`n}`n" `
+    "DM_COOP=auto DM_COOP_INTERACT= DM_COOP_STORY= DM_COOP_JOIN= DM_COOP_INTERNET=1 DM_COOP_ROOM=ABCD-EFGH-JKMN-PQRS"
+Check-LinkPlay "this network" "{`n    `"ask`":  false,`n    `"mode`":  `"lan`",`n    `"interact`":  true,`n    `"story`":  false`n}`n" "DM_COOP=auto DM_COOP_INTERACT=1 DM_COOP_STORY= DM_COOP_JOIN= DM_COOP_INTERNET= "
+Remove-Item "$t\settings\linkplay.json"
 Remove-Item env:POKOPIA_SETTINGS_DIR
 # A dump folder whose name has [ ] in it (wildcards to PowerShell, D-4): its ExeFS is still found
 $bt = Join-Path $t "dump[Base_Game_and_Update]"; [System.IO.Directory]::CreateDirectory("$bt\ExeFS") | Out-Null

@@ -1,6 +1,6 @@
 # This folder is a snapshot
 
-The Windows port's source, copied from its private development repository at commit `134b955f6b11` (plus the changes not committed there yet) by `tools/snapshot_windows.py`, without the history. 482 files. Fixes applied for publishing (docs/M7-PUBLISHING-AUDIT.md):
+The Windows port's source, copied from its private development repository at commit `b9537aa01ba8` (plus the changes not committed there yet) by `tools/snapshot_windows.py`, without the history. 519 files. Fixes applied for publishing (docs/M7-PUBLISHING-AUDIT.md):
 
 - `README.md`: the "local and private" lines
 - `docs/M7-REPORT.md`: this PC's work folder (1)
@@ -17,7 +17,7 @@ The Windows port's source, copied from its private development repository at com
 
 Upstream nxnative's reference files for the s2tex test, copied unchanged and checked by git blob id:
 
-- src/s2tex/tests/ref/tex/nvn_deswizzle.c: NOT CHECKED against nxnative c1df4dd:dm/gfx/tex/nvn_deswizzle.c
-- src/s2tex/tests/ref/tex/nvn_deswizzle.h: NOT CHECKED against nxnative c1df4dd:dm/gfx/tex/nvn_deswizzle.h
-- src/s2tex/tests/ref/nvn/nvn_tex.c: NOT CHECKED against nxnative c1df4dd:dm/gfx/nvn/nvn_tex.c
-- src/s2tex/tests/ref/nvn/nvn_tex.h: NOT CHECKED against nxnative c1df4dd:dm/gfx/nvn/nvn_tex.h
+- src/s2tex/tests/ref/tex/nvn_deswizzle.c: identical to nxnative c1df4dd:dm/gfx/tex/nvn_deswizzle.c
+- src/s2tex/tests/ref/tex/nvn_deswizzle.h: identical to nxnative c1df4dd:dm/gfx/tex/nvn_deswizzle.h
+- src/s2tex/tests/ref/nvn/nvn_tex.c: identical to nxnative c1df4dd:dm/gfx/nvn/nvn_tex.c
+- src/s2tex/tests/ref/nvn/nvn_tex.h: identical to nxnative c1df4dd:dm/gfx/nvn/nvn_tex.h

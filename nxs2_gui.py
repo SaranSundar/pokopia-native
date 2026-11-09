@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """nxs2_gui.py: the window around nxs2.py. A walkthrough takes you from "what do you want to make" through the checks, your game files and
 the build to playing, in plain words, and remembers where you are (a refresh due after the first play, a new download to update to).
-Advanced is the one-screen view with every button. Everything is done by nxs2.py underneath (the same commands the README lists), so a
+Advanced is the one-screen view with every button. Everything is done by nxs2.py underneath (the same commands the guides in docs/ list), so a
 build started here can be continued from Terminal and the other way round.
 
 Mac: double-click "Pokopia Native Builder.app" (or: python3.12 nxs2_gui.py). Windows: "Pokopia Native Builder.cmd" (the Windows game and the iPhone app).
@@ -275,6 +275,20 @@ CHECK_NAMES = ((r'^Windows on x64', 'Windows (64-bit)'), (r'^Python 3', 'Python'
               (((r'^Linux on x86-64', 'Linux (64-bit)'), (r'^the Linux game tools', 'The Linux game tools')) if LINUX else ())
 
 
+def fix_text(hints):
+    """One card's fix from its checks' hints: pip installs merged into one command, the same hint once (a Mac's own environment fixes every
+    missing module). Returns (what the card shows, what Copy copies: only the commands after "in Terminal: ")."""
+    pips, other = [], []
+    for h in hints:
+        m = re.match(r'^(.+?) -m pip install (".+")$', h)
+        if m: pips.append(m)
+        elif h not in other: other.append(h)
+    lines = ([f'{pips[0].group(1)} -m pip install ' + ' '.join(m.group(2) for m in pips)] if pips else []) + other
+    fix = '\n'.join(lines)
+    if any(' -m venv ' in l for l in other): fix += '\nThen quit the builder (⌘Q) and open it again: it uses that environment by itself.'
+    return fix, '\n'.join(l.split('in Terminal: ', 1)[1] if 'in Terminal: ' in l else l for l in lines)
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -370,11 +384,11 @@ class App(tk.Tk):
         ttk.Button(b, text='Open build folder', command=self.open_out).pack(side='right')
         steps = ('Setup once for each new download, then Build (the first build takes a while; stopping is safe, Build again carries on). '
                  'Then Play' + (', or Sign IPA' if WIN else '') + ' for the iPhone app. Import save brings your save from Eden, the iPhone or the Mac. '
-                 'Refresh shaders finishes the iPhone app after a first play; the README explains.' if WIN else
+                 'Refresh shaders finishes the iPhone app after a first play; docs/IPHONE.md explains.' if WIN else
                  'Build (the first build takes a while; stopping is safe, Build again carries on), then Play. Import save brings your save from Eden, '
                  'the iPhone or a Mac. docs/LINUX.md explains each step, and adding the game to Steam.' if LINUX else
                  'Setup once for each new download, then Build (the first build takes a while; stopping is safe, Build again carries on). '
-                 'Sign IPA makes the iPhone app installable; Refresh shaders finishes it after a first play. The README explains each step.')
+                 'Sign IPA makes the iPhone app installable; Refresh shaders finishes it after a first play. docs/MAC.md and docs/IPHONE.md explain each step.')
         ttk.Label(f, text=steps, foreground='#666', wraplength=720, justify='left').grid(row=10, column=0, columnspan=3, sticky='w', padx=8)
 
         self.status = tk.StringVar(value='')
@@ -491,14 +505,14 @@ class App(tk.Tk):
             self.status.set(f'{self.running} done in {el}.' + (f'  {made}' if made else ''))
             if self.running == 'Build' and made:
                 nxt = ' '.join(t for k, t in (('windows', 'Press Play to start the game.'), ('linux', 'Press Play to start the game.'), ('app', 'The Mac app is in the build folder.'),
-                                              ('ipa', 'Sign IPA makes the iPhone app installable; the README says how to get it onto the phone.')) if k in self.result)
+                                              ('ipa', 'Sign IPA makes the iPhone app installable; docs/IPHONE.md says how to get it onto the phone.')) if k in self.result)
                 messagebox.showinfo('Done', f'Build finished in {el}.\n\n{chr(10).join(self.result.values())}\n\n{nxt or "Open the build folder for the outputs."}')
         elif rc in (130, -15, -2, 143, 1) and self.result.get('stopped'):
             self.status.set(f'{self.running} stopped after {el}. Press the button again to continue where it left off.')
         else:
             self.status.set(f'{self.running} failed after {el}: {self.result.get("fail", f"exit {rc}")}')
             messagebox.showerror(f'{self.running} failed', self.result.get('fail', f'exit code {rc}') + '\n\nThe full output of every stage is in <build folder>/logs/.'
-                                 f'\nStuck? Ask in the Discord ({DISCORD}) or check "Common problems" in the README.')
+                                 f'\nStuck? Ask in the Discord ({DISCORD}) or see Common problems in docs/TROUBLESHOOTING.md.')
         self.t0 = None
 
     def do_stop(self):
@@ -891,8 +905,8 @@ class App(tk.Tk):
                 tk.Label(grid, text='✓  ' + n, font=F(11), fg=C['ok'], bg=r.fill, anchor='w').grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 24), pady=2)
             grid.columnconfigure(0, weight=1); grid.columnconfigure(1, weight=1)
         for nice, (st, hints) in rows.items():
-            fix = ' '.join(hints)
-            if st != 'ok': self.row(box, nice, st, hint=f'To fix: {fix}' if fix else '', copy=fix if fix else None)
+            fix, cmd = fix_text(hints)
+            if st != 'ok': self.row(box, nice, st, hint=f'To fix: {fix}' if fix else '', copy=cmd or None)
         for w in warns: self.row(box, 'Heads-up', 'warn', 'worth reading', hint=w)
         if not rows: self.row(box, f'Your {PC}', 'bad', 'the check did not run', hint='\n'.join(self.lines[-6:]))
         bad = not rows or any(st == 'bad' for st, _ in rows.values())

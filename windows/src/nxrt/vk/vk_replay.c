@@ -14,6 +14,7 @@
 #include "vk_pipe.h"
 #include "vk_hmap.h"
 #include "vk_shot.h"
+#include "vk_aa.h"
 #include "nvn_timestamp.h"
 #include "clear_vert.h"
 #include "clear_f_frag.h"
@@ -569,6 +570,9 @@ int vkr_fmt_as_ct(int f, int ct) {
 static const vks_shader *g_cur_sh;   // the shader whose descriptor set write_set is filling (for the messages below)
 // F-5: the support buffers with render scales made in this submission (g_sub_no), the last four, for draws whose scales are the same
 static struct { uint64_t sub; int vs; float rs[73]; VkBuffer b; VkDeviceSize o; } g_supc[4]; static unsigned g_supn; static uint64_t g_sub_no = 1;
+// What the game can learn of the GPU's time (its own dynamic resolution, docs/LINUX-PLAN.md): a timestamp reads its submission's completion time, so
+// two in one submission read 0 ms apart; and the viewports it draws its screen-size (1920x1080) passes with. Logged every 300 frames (vkr_frame)
+static uint64_t g_ts_n, g_ts_same, g_ts_sub, g_vp_n, g_vp_small; static float g_vpw[2] = {1e9f, 0}, g_vph[2] = {1e9f, 0};
 // Depth comparison on a colour texture: the game binds its default 1x1 / 8x8 black and white textures to the shadow samplers of lights without shadows. Vulkan
 // leaves that undefined (VUID-vkCmdDrawIndexed-None-06479, in gameplay); the GPU the game was made for compares with the texel's red channel. A 1x1 depth image
 // holding the red value of the texture's first texel stands in, one per value (M6), viewed as the shader declares it (M6 phase B: a 2D view under an arrayed or cube
@@ -1029,6 +1033,107 @@ static void skip_poll(void) {   // at each frame: the variable as it is now
     else VKLOG("NXRT_VK_SKIP: nothing left out");
 }
 
+// ---------- Wide view (NXRT_VK_WIDE=1, experimental): the 2D drawn into a presented texture is squeezed into its middle 16:9 ----------
+// The present fills a wider window with the game's 16:9 picture (vk_present.c), whose 3D a wider camera drew (host/rt.c); what the game draws into the
+// texture it presents, after its 3D, is its 2D (HUD, menus, text, markers), laid out for 16:9: squeezed toward the middle by f = 16:9 / the window's aspect,
+// the stretch undoes it. Full-screen draws without vertex inputs (the 3D composite, fades) keep the whole width. Markers over 3D objects near the sides
+// drift toward the middle (the game places them for 16:9); its own UI widened to the window is the follow-up
+float g_vkr_wide_squeeze = 1.0f;   // vk_present.c: f, 1 = off
+static _Atomic uint64_t g_pres[4]; static _Atomic int g_full[4]; static _Atomic unsigned g_npres;   // g_full: a full-screen draw went into it since its last present
+static _Atomic unsigned g_aa_frame;   // presents so far: the pictures kept for anti-aliasing (aa_pic_mark) last until the next
+void vkr_note_presented(uint64_t serial) {   // gfx_vk.c: the textures the game presents (its window's, two or three)
+    if (!serial) return;
+    atomic_fetch_add(&g_aa_frame, 1);   // a frame ends: the pictures kept for anti-aliasing go
+    for (int i = 0; i < 4; i++) if (atomic_load(&g_pres[i]) == serial) return;
+    unsigned k = atomic_fetch_add(&g_npres, 1) % 4;
+    atomic_store(&g_full[k], 1); atomic_store(&g_pres[k], serial);   // its draws so far were not looked at: no bars
+}
+static int pres_slot(uint64_t serial) {
+    for (int i = 0; serial && i < 4; i++) if (atomic_load(&g_pres[i]) == serial) return i;
+    return -1;
+}
+static void wide_squeeze(const vks_shader *vs, uint64_t count, VkViewport *vp, VkRect2D *sc) {
+    float f = g_vkr_wide_squeeze;
+    int k = f < 0.999f && P.any && P.ncolor && P.ci[0] ? pres_slot(P.ci[0]->serial) : -1;
+    if (k < 0) return;
+    float cx = P.pw * 0.5f;
+    if (vs && !vs->nin && count <= 6 && vp->x <= 0.5f && vp->x + vp->width >= P.pw - 0.5f) {   // the composite or a fade
+        if (sc->offset.x <= 0 && (float)sc->offset.x + (float)sc->extent.width >= P.pw - 0.5f) atomic_store(&g_full[k], 1);   // (menus draw a corner of it)
+        return;
+    }
+    vp->x = cx + (vp->x - cx) * f; vp->width *= f;
+    float x0 = cx + ((float)sc->offset.x - cx) * f, x1 = cx + ((float)sc->offset.x + (float)sc->extent.width - cx) * f;
+    sc->offset.x = (int32_t)floorf(x0); sc->extent.width = (uint32_t)(ceilf(x1) - floorf(x0));
+}
+// A frame with no full-screen draw (a menu over the whole screen, no 3D behind it) leaves the sides of the texture with older pictures: shown with bars
+int vkr_wide_bars(uint64_t serial) {
+    int k = pres_slot(serial);
+    return k >= 0 && !atomic_exchange(&g_full[k], 0) && g_vkr_wide_squeeze < 0.999f;
+}
+// A copy of a whole 16:9 picture of a target drawn larger, out to the CPU or into a texture at the game's size, is what the game keeps of what its camera
+// saw (a photo, its thumbnail): the picture holds the wider view squeezed into 16:9, so the copy takes its middle 16:9 part, stretched. Copies between
+// targets drawn larger (history, refraction) keep the whole view. The source's x range in its own pixels, or 0 when the copy stays as it is
+static int wide_unsqueeze(const vkt_image *im, unsigned level, const NVNcopyRegion *r, int32_t *x0, int32_t *x1) {
+    float f = g_vkr_wide_squeeze;
+    if (!(f < 0.999f) || !scaled_im(im) || level >= im->levels) return 0;
+    uint32_t w = mipd(im->w, level), h = mipd(im->h, level);
+    if (r->xoffset || r->yoffset || (uint32_t)r->width != w || (uint32_t)r->height != h || fabsf((float)w / (float)h - 16.0f / 9.0f) > 0.01f) return 0;
+    float vw = (float)vkt_vlw(im, level);
+    *x0 = (int32_t)floorf(vw * (1 - f) * 0.5f + 0.5f); *x1 = (int32_t)floorf(vw * (1 + f) * 0.5f + 0.5f);
+    static int n; if (n++ < 8) VKLOG("wide view: a copy of the whole picture of ser=%llu (%ux%u) takes its middle 16:9 part (pixels %d to %d of %.0f)", (unsigned long long)im->serial, w, h, *x0, *x1, vw);
+    return 1;
+}
+
+// Anti-aliasing (vk_aa.c) of the game's 3D pictures, before the 2D drawn over or around them. A picture is drawn whole: one draw that reads a texture and
+// overwrites all of the first level of its target, unblended (fades blend, menus draw a corner of it). Two kinds:
+// - the composite into a texture the game presents, a full-screen draw without vertex inputs (Pokopia's last pass, with its own light FXAA): run right
+//   after it, before the HUD;
+// - a picture drawn whole into an 8-bit target of its own, which a draw into a presented texture then reads (the character a menu shows, drawn apart and
+//   blended in by the menu): run once, just before that draw. Kept until the next present; another draw into it drops it
+// *rw x *rh: the rectangle from 0,0 it covers, all of the target or (a composite only) the part a game draws at a lower resolution, its scissor (Pokopia
+// in handheld: 1600x900 of 1920x1080, copied and stretched over the whole by the next draw)
+static int aa_whole(const vks_shader *const *sh, uint64_t count, uint64_t ind, const VkViewport *vp, const VkRect2D *sc, int blend, unsigned wmask, uint32_t *rw, uint32_t *rh) {
+    if (ind || count > 6 || !sh[0] || !sh[1] || blend || (wmask & 7) != 7 || !P.ncolor || !P.ci[0] || P.clv[0] || P.cnl[0] != 1) return 0;
+    if (sc->offset.x > 0 || sc->offset.y > 0 || vp->x > 0.5f || fabsf(vp->width) < P.pw - 0.5f || fabsf(vp->height) < P.ph - 0.5f) return 0;
+    *rw = sc->extent.width < P.pw ? sc->extent.width : P.pw; *rh = sc->extent.height < P.ph ? sc->extent.height : P.ph;
+    if (*rw < P.pw / 2 || *rh < P.ph / 2) return 0;   // a corner of it (the camera menu's blur): not the picture
+    for (int i = 0; i < sh[1]->nb; i++) if (sh[1]->b[i].kind == VKB_TEX) return 1;
+    return 0;
+}
+static struct { uint64_t serial; VkFormat f; uint32_t layer; } g_aa_pic[8]; static int g_aa_npic; static unsigned g_aa_pic_frame;
+static void aa_run_on(vkt_image *im, VkFormat f, uint32_t layer, VkImageView v, uint32_t rw, uint32_t rh) {
+    pass_end();
+    if (v && vkaa_run(vks_cb(), im->img, im->fi->vk, 0, layer, vkt_vlw(im, 0), vkt_vlh(im, 0), rw, rh, v, f)) { g_last_pipe = VK_NULL_HANDLE; dc_reset(); }
+}
+static void aa_pic_mark(void) {   // a whole picture into P.ci[0], which is not presented
+    VkFormat f = P.cf[0];
+    if (P.ncolor != 1 || P.pw < 64 || P.ph < 64 || (f != VK_FORMAT_R8G8B8A8_UNORM && f != VK_FORMAT_R8G8B8A8_SRGB && f != VK_FORMAT_B8G8R8A8_UNORM && f != VK_FORMAT_B8G8R8A8_SRGB)) return;
+    unsigned fr = atomic_load(&g_aa_frame);
+    if (g_aa_pic_frame != fr) { g_aa_npic = 0; g_aa_pic_frame = fr; }
+    int k = 0; while (k < g_aa_npic && g_aa_pic[k].serial != P.ci[0]->serial) k++;
+    if (k == 8) return;
+    g_aa_pic[k].serial = P.ci[0]->serial; g_aa_pic[k].f = f; g_aa_pic[k].layer = P.cl0[0]; if (k == g_aa_npic) g_aa_npic++;
+    static uint64_t said[6]; int n = 0; while (n < 6 && said[n] && said[n] != P.ci[0]->serial) n++;
+    if (n < 6 && !said[n]) { said[n] = P.ci[0]->serial; VKLOG("anti-aliasing: ser%llu (%ux%u) drawn whole: smoothed if a draw into a presented texture reads it", (unsigned long long)P.ci[0]->serial, P.pw, P.ph); }
+}
+static void aa_pic_drop(uint64_t serial) { for (int i = 0; i < g_aa_npic; i++) if (g_aa_pic[i].serial == serial) { g_aa_pic[i] = g_aa_pic[--g_aa_npic]; return; } }
+static void aa_pic_run(const vks_shader *fs) {   // before a draw: when it goes into a presented texture, the kept pictures it reads
+    if (atomic_load(&g_aa_frame) != g_aa_pic_frame) { g_aa_npic = 0; return; }
+    if (!P.valid) pass_targets();
+    if (!P.ncolor || !P.ci[0] || pres_slot(P.ci[0]->serial) < 0) return;
+    for (int i = 0; i < fs->nb && g_aa_npic; i++) {
+        if (fs->b[i].kind != VKB_TEX) continue;
+        uint64_t h = tex_slot_h(1, (unsigned)fs->b[i].reg); int tid = (int)(h & 0xfffff); vkt_reg r;
+        if (tid <= 0 || !vkt_reg_copy(tid, &r)) continue;
+        for (int k = 0; k < g_aa_npic; k++) if (g_aa_pic[k].serial == r.t.serial) {
+            VkFormat f = g_aa_pic[k].f; uint32_t layer = g_aa_pic[k].layer; g_aa_pic[k] = g_aa_pic[--g_aa_npic];
+            vkt_image *im = vkt_by_serial(r.t.serial);
+            if (im) aa_run_on(im, f, layer, vkt_view_raw_(im, f, VK_IMAGE_VIEW_TYPE_2D, 0, 1, layer, 1, VK_IMAGE_ASPECT_COLOR_BIT, NULL), vkt_vlw(im, 0), vkt_vlh(im, 0));
+            break;
+        }
+    }
+}
+
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (S->render_skip) { g_st.draws_skipped++; return; }
     int prim = dw ? dw->prim : di->prim, expand;
@@ -1046,16 +1151,23 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (S->rast_discard) sh[1] = NULL;
     VkBuffer qab = VK_NULL_HANDLE; VkDeviceSize qao = 0;   // indirect quads: the indexed draw's arguments, made on the GPU before the pass opens
     if (dw && ind && expand == VKP_EXPAND_QUADS && !quad_args(ind, &qab, &qao)) { g_st.draws_skipped++; return; }
+    if (g_aa_npic && sh[1] && vkaa_mode() != VKAA_OFF) aa_pic_run(sh[1]);
     // the render pass, its scissor and viewport (nvn_mtl.m draw_: viewport flipped for the lower-left origin there; Vulkan's y axis runs the other way)
     if (!P.open && !pass_begin()) { g_st.skip_no_target++; g_st.draws_skipped++; return; }
     uint32_t tw = P.any ? P.w : (uint32_t)(S->vp[0][0] + S->vp[0][2]), th = P.any ? P.h : (uint32_t)(S->vp[0][1] + S->vp[0][3]);
     VkRect2D sc; if (!scissor_rect(tw, th, &sc)) { if (!S->rast_discard) return; sc = (VkRect2D){{0, 0}, {tw, th}}; }
     VkViewport vp = S->has_vp ? (VkViewport){S->vp[0][0], S->vp[0][1], S->vp[0][2], S->vp[0][3], S->dr[0], S->dr[1]} : (VkViewport){0, 0, (float)tw, (float)th, S->dr[0], S->dr[1]};
     if (vp.width <= 0 || vp.height == 0) return;
+    if (P.any && P.w == 1920 && P.h == 1080 && S->has_vp) {
+        float aw = vp.width, ah = vp.height < 0 ? -vp.height : vp.height;
+        if (aw < g_vpw[0]) g_vpw[0] = aw; if (aw > g_vpw[1]) g_vpw[1] = aw; if (ah < g_vph[0]) g_vph[0] = ah; if (ah > g_vph[1]) g_vph[1] = ah;
+        g_vp_n++; g_vp_small += aw < 1919.5f || ah < 1079.5f;   // a draw into less than the whole target: one pass may, the scene drawn smaller is most
+    }
     if (P.any && scaled_im(P.ref)) {   // F-5: into the attachments' own pixels
         vp.x *= P.rx; vp.y *= P.ry; vp.width *= P.rx; vp.height *= P.ry;
         sc = px_rect(P.ref, P.ref_lv, sc, P.pw, P.ph);
     }
+    wide_squeeze(sh[0], dw ? (uint64_t)dw->count : (uint64_t)di->count, &vp, &sc);
     int flip = !g_origin_ll;
     { uint32_t sw; memcpy(&sw, S->vp_sw[0], 4);
       if (sw == 0x100) flip = !flip;   // NEGATIVE_Y: clip y negated, the viewport flipped about its centre
@@ -1248,6 +1360,11 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     }
     g_st.draws++;
     (void)swrites;
+    uint32_t rw, rh;
+    if (vkaa_mode() != VKAA_OFF && P.ncolor && aa_whole(sh, dw ? (uint64_t)dw->count : (uint64_t)di->count, ind, &vp, &sc, (int)ben[0], wm[0], &rw, &rh)) {   // vk_aa.c
+        if (pres_slot(P.ci[0]->serial) < 0) { if (rw == P.pw && rh == P.ph) aa_pic_mark(); else if (g_aa_npic) aa_pic_drop(P.ci[0]->serial); }
+        else if (!sh[0]->nin) { aa_run_on(P.ci[0], P.cf[0], P.cl0[0], P.cv[0], rw, rh); return; }   // the composite, before the HUD
+    } else if (g_aa_npic && P.ncolor && P.ci[0]) aa_pic_drop(P.ci[0]->serial);
     if (g_nwb >= 240) pass_end();   // the write-back list is nearly full: record the copies now
 }
 
@@ -1278,7 +1395,7 @@ static void dispatch(const p_dispatch *dp) {
         }
     }
     uint32_t ckw[16], *ckp = NULL;   // a lost device's report shows the dispatch's first constants as recorded (loop counts: D-1's word 0, D-11's words 12 and 13)
-    if (g_vk.has.checkpoints) for (int i = 0; i < cs->nb && !ckp; i++) { const p_bind_buf *u = cs->b[i].kind == VKB_CBUF && cs->b[i].reg >= 0 && cs->b[i].reg < 16 ? &S->ubo[5][cs->b[i].reg] : NULL;
+    if (g_vk.has.checkpoints || g_vk.has.buffer_marker) for (int i = 0; i < cs->nb && !ckp; i++) { const p_bind_buf *u = cs->b[i].kind == VKB_CBUF && cs->b[i].reg >= 0 && cs->b[i].reg < 16 ? &S->ubo[5][cs->b[i].reg] : NULL;
         if (u && u->addr && u->size >= 32) { memset(ckw, 0, sizeof ckw); memcpy(ckw, (const void *)(uintptr_t)u->addr, u->size < sizeof ckw ? (size_t)u->size : sizeof ckw); ckp = ckw; } }
     vk_checkpoint(cb, 'c', cs->key, g_dispatch_dim[0], g_dispatch_dim[1], g_dispatch_dim[2], dp->ind != 0, ckp);
     if (dp->ind) { VkBuffer b; VkDeviceSize o; if (!vkm_use(dp->ind, 12, &b, &o)) { RED_ONCE(70, "indirect dispatch arguments are in no memory pool"); return; } vkCmdDispatchIndirect(cb, b, o); }
@@ -1427,6 +1544,7 @@ static void copy_b2t(const p_copy_b2t *c) {
 }
 static void copy_t2b(const p_copy_b2t *c) {
     const tex_t *t = snap(c->tex); if (!t) return;
+    PD("copy ser%llu %dx%d at %d,%d -> buffer %#llx", (unsigned long long)t->serial, c->r.width, c->r.height, c->r.xoffset, c->r.yoffset, (unsigned long long)c->src);
     vkt_image *im = vkt_resolve(t); if (!im) return;
     g_st.tex_copies++;
     if (im->fi->conv != VKF_COPY) { RED_ONCE(84, "texture→buffer copy from a format the device stores converted (%s): not copied", im->fi->name); return; }
@@ -1445,9 +1563,11 @@ static void copy_t2b(const p_copy_b2t *c) {
         VkImageAspectFlags a = copy_aspect(im);
         vk_image_barrier(cb, tmp, im->aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
         VkBufferImageCopy rg[64]; VkImageBlit bl[64]; int n = 0;
+        int32_t ux0, ux1; int un = wide_unsqueeze(im, level, &c->r, &ux0, &ux1);
         for (int z = 0; z < nz; z++) {
             bl[n] = (VkImageBlit){{a, level, layer0 + c->r.zoffset + z, 1}, {px_at(im, level, c->r.xoffset, c->r.yoffset, 0), px_at(im, level, (int64_t)c->r.xoffset + c->r.width, (int64_t)c->r.yoffset + c->r.height, 1)},
                                   {a, 0, (uint32_t)z, 1}, {{0, 0, 0}, {c->r.width, c->r.height, 1}}};
+            if (un) { bl[n].srcOffsets[0].x = ux0; bl[n].srcOffsets[1].x = ux1; }
             rg[n++] = (VkBufferImageCopy){o + (VkDeviceSize)z * img, rt, ir, {a, 0, (uint32_t)z, 1}, {0, 0, 0}, {(uint32_t)c->r.width, (uint32_t)c->r.height, 1}};
         }
         VkImageLayout l = xfer_in(cb, im, 0);
@@ -1520,7 +1640,9 @@ static void copy_t2t(const p_copy_t2t *c) {
     // F-5: both rectangles in their image's own pixels (as they are when neither is drawn larger); a copy whose two sides differ there becomes a blit
     VkOffset3D s0 = px_at(s, sl, c->sr.xoffset, c->sr.yoffset, 0), s1 = px_at(s, sl, (int64_t)c->sr.xoffset + c->sr.width, (int64_t)c->sr.yoffset + c->sr.height, 1);
     VkOffset3D d0 = px_at(d, dl, c->dr.xoffset, c->dr.yoffset, 0), d1 = px_at(d, dl, (int64_t)c->dr.xoffset + c->dr.width, (int64_t)c->dr.yoffset + c->dr.height, 1);
-    int fits = s1.x - s0.x == d1.x - d0.x && s1.y - s0.y == d1.y - d0.y;
+    int32_t ux0, ux1;
+    if (!s3 && !d3 && !scaled_im(d) && wide_unsqueeze(s, sl, &c->sr, &ux0, &ux1)) { s0.x = ux0; s1.x = ux1; }   // a blit below
+    int fits =s1.x - s0.x == d1.x - d0.x && s1.y - s0.y == d1.y - d0.y;
     if ((c->flags & DM_COPY_RESOLVE) && s->samples > 1 && d->samples == 1 && s->fi->vk == d->fi->vk && !(s->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
         uint32_t rw = vkt_vlw(s, sl) < vkt_vlw(d, dl) ? vkt_vlw(s, sl) : vkt_vlw(d, dl), rh = vkt_vlh(s, sl) < vkt_vlh(d, dl) ? vkt_vlh(s, sl) : vkt_vlh(d, dl);
         VkImageResolve r = {{sa, sl, sz0, 1}, {0, 0, 0}, {da, dl, dz0, 1}, {0, 0, 0}, {rw, rh, 1}};
@@ -1592,6 +1714,7 @@ static void report_counter(uint64_t type, uint64_t addr) {
         q_post(2, 0, addr); return;
     }
     if (type != NVN_COUNTER_TYPE_TIMESTAMP && type != NVN_COUNTER_TYPE_TIMESTAMP_TOP) { static uint32_t seen; if (!(seen >> (type & 31) & 1)) { seen |= 1u << (type & 31); VKRED("counter type %llu is reported as 0 (only timestamps and samples passed are counted)", (unsigned long long)type); } }
+    else { g_ts_n++; if (g_ts_sub == g_sub_no) g_ts_same++; g_ts_sub = g_sub_no; }
     vks_post_counter(addr, (uint32_t)type);
 }
 static void reset_counter(uint64_t type) {
@@ -1784,6 +1907,12 @@ void vkr_frame(uint64_t frame) {
     if (gs > pgs) VKLOG("GPU time up to frame %llu: %.2f ms per frame (%.2f ms per submission, %.1f submissions per frame; timestamps around each submission's replay)",
                         (unsigned long long)frame, (gn - pgn) / 1e6 / (double)(frame - pf), (gn - pgn) / 1e6 / (double)(gs - pgs), (double)(gs - pgs) / (double)(frame - pf));
     pgn = gn; pgs = gs;
+    if (g_ts_n || g_vpw[1] > 0)
+        VKLOG("the game's view of the GPU up to frame %llu: %.1f timestamps a frame, %llu of them in the submission of the one before (0 ms apart); "
+              "screen-size passes drawn with viewports %.0f..%.0f x %.0f..%.0f, %.1f %% of their %.1f draws a frame below 1920x1080", (unsigned long long)frame,
+              (double)g_ts_n / (double)(frame - pf), (unsigned long long)g_ts_same, g_vpw[1] > 0 ? g_vpw[0] : 0, g_vpw[1], g_vph[1] > 0 ? g_vph[0] : 0, g_vph[1],
+              g_vp_n ? 100.0 * (double)g_vp_small / (double)g_vp_n : 0.0, (double)g_vp_n / (double)(frame - pf));
+    g_ts_n = g_ts_same = g_vp_n = g_vp_small = 0; g_vpw[0] = g_vph[0] = 1e9f; g_vpw[1] = g_vph[1] = 0;
     vkr_stats_t s = g_st; uint64_t df = frame - pf; vkp_stats_t ps; vkp_stats(&ps); uint64_t shl, shf; vksh_stats(&shl, &shf);
     VKLOG("replay up to frame %llu, per frame: %.1f draws (%.1f skipped: no shader %llu, no pipeline %llu, no target %llu, NXRT_VK_SKIP %llu in all), %.1f passes, %.1f dispatches, %.1f clears, "
           "%.1f texture copies, %.1f buffer copies / updates / fills, %.1f descriptor sets (%.1f with render scales, %.1f more reused), %.1f write-backs; %llu graphics + %llu compute pipelines (%.1f ms creating, worst %.1f ms), %llu shaders (%llu unusable)",
@@ -1793,6 +1922,7 @@ void vkr_frame(uint64_t frame) {
           (double)(s.desc_sets - prev.desc_sets) / df, (double)(s.scaled_sets - prev.scaled_sets) / df, (double)(s.sets_reused - prev.sets_reused) / df, (double)(s.writebacks - prev.writebacks) / df, (unsigned long long)ps.graphics, (unsigned long long)ps.compute,
           ps.create_ns / 1e6, ps.max_ns / 1e6, (unsigned long long)shl, (unsigned long long)shf);
     if (ps.prewarmed) VKLOG("pipelines made ahead by the prewarm up to frame %llu: %llu (%.1f ms on its threads)", (unsigned long long)frame, (unsigned long long)ps.prewarmed, ps.prewarm_ns / 1e6);
+    if (g_vk.has.buffer_marker) { uint64_t fin = 0, st = vk_markers_now(&fin); VKLOG("AMD buffer markers at frame %llu: started #%llu, everything before #%llu finished", (unsigned long long)frame, (unsigned long long)st, (unsigned long long)fin); }
     prev = s; pf = frame;
 }
 
@@ -1828,6 +1958,7 @@ int vkr_init(void) {
     return 0;
 }
 void vkr_shutdown(void) {
+    vkaa_shutdown();
     while (g_states) { rs *s = g_states; g_states = s->next; free(s); }
     S = NULL;
     for (uint32_t i = 0; i < g_progc.cap; i++) free(g_progc.vals[i]);

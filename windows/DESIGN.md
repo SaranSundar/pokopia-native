@@ -22,7 +22,7 @@ game code (the game is only ever compiled on the player's PC).
    and N64Recomp (MIT), kirikae (MIT/Apache-2.0). We keep a short provenance log of what was consulted.
 2. **MIT**, like pokopia-native and nxnative.
 3. **The Mac is the oracle.** On the Mac the game's real arm64 code runs natively under nxnative, so every part of the
-   recompiler can be checked against real hardware, one function at a time.
+   recompiler can be checked against the Mac's own run, one function at a time.
 4. **Gentle builds** on this PC until its BIOS has Intel's microcode fix (0x12B or newer): capped jobs, low priority, or
    cross-compilation on the Mac.
 

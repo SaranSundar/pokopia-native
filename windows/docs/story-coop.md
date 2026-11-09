@@ -26,6 +26,10 @@ What counts for the host when friends play in the host's town:
 So friends can help build up the host's town and follow the story, but the host still has to do the story steps themselves. Saves stay
 intact: after sessions with Story co-op on, only each save's live slot changed, and every save loaded on its own.
 
+The host's own story keeps going while the session is open (2.0.1, from 2026-11-08): without it, any Link Play session stopped the host's story
+system and turned every story talk into "Looks like they want to meet <host>! Bring <host> here to say hi!". See "The host's story during a
+session" below.
+
 ## Phase 1: what the game already does, and the smallest change
 
 | | experiment | question |
@@ -180,3 +184,26 @@ input. If it does not count, the relay (below, step 2) is the way; it needs a re
 Story co-op's talk site stays on this branch until step 2 works: on its own it lets a visitor read the story but not move it, which would
 confuse players. The installer side (the profile's gate line, the regenerated nxnative patch, a launcher row for iPhone and Mac) waits for the
 same decision.
+
+## The host's story during a session (2026-11-08)
+
+Reported by a player (hosting with Story co-op: "the characters say 'Bring HOST here'"), and the reason both co-op den tests failed. Two of the
+game's own rules stop the owner's story whenever a Link Play session is open, Story co-op or not (Interact everywhere alone showed it on 2026-11-05):
+
+- **The story system is off.** The per-frame story update (2.0.1 `main+0xba660`, the quest pump `main+0x11b600` with it) and the quest and event code
+  (28 functions) run only while permission bit 0 is set (`GameMgr+0x8c`). Alone the mask is `0x7fffffff`; every online pattern clears bit 0. Measured:
+  the quest pump runs about 60 times a second alone and not once through a whole session.
+- **Story talks are offline-only.** A Pokémon's talks are picked by conditions from a table (`main+0x34c2958`): the story and request talks carry
+  condition 0x19 "not online" (or 0x60), and their stand-in carries 0x22 "online": "Looks like they want to meet <the town's owner>! Bring <owner>
+  here to say hi!". The game means it for visitors (go and fetch the owner); the owner gets it too, because the check is only "online".
+
+With Story co-op on, the host (only the host, and only in a story area; 2.0.1) keeps bit 0, and those three conditions read IsOnline as false for it
+(coop_interact.c: sites ROLE, MASK, ALONE, ALONE8). Visitors see what the game shows them, the stand-in line included. Tested on two Windows windows
+over loopback with copies of a Level 2 save (`level2-1103`) and Story co-op on both: with Link Play open, Tangrowth's "Time to get chatty!" talk
+gave the real story ("…a house for you!… First, go get a leaf den kit from the shop!") and "Build a leaf den!" opened, before and after a visitor
+joined; buying and placing the kit ran Tangrowth's building tutorial; his talks show his normal menu with a visitor present.
+
+Not covered yet: a den finished during a session becoming the host's home (the home is assigned when the den is finished; that needs the helpers and
+the 15-minute timer), 1.0.5 (no sites yet: it keeps the old behaviour), the Mac and iPhone (their gates fire for every caller, so the 0x22 site,
+inside IsOnline, needs another place there). Still in effect during a session: the area-load quest step `main+0x11a100` (runs at the next load alone)
+and the walk to the player's home on entering the town (`main+0xb3570`).

@@ -6,6 +6,7 @@
 #include "coop.h"
 #include <stddef.h>
 #include <stdatomic.h>
+#include <math.h>
 #ifndef _WIN32
 #include <dlfcn.h>
 #include <link.h>
@@ -161,6 +162,32 @@ static void interact_hook(uint64_t pc, uint64_t *x) {
         if (g_isite[i].id == COOP_SITE_TALK && x[0] != was0 && !atomic_exchange(&said_talk, 1)) LOG("[coop] Story co-op: a visitor's talk takes the host's path");
     }
 }
+/* ---- Wide view (NXRT_VK_WIDE=1, experimental): the game builds 16:9 into its cameras (main+0x1f12368 stores the aspect at +0x14c) and every perspective
+   is built from that field (main+0x1f12114). That builder runs in the interpreter with a hook at its entry, where x0 is the camera: a 16:9 aspect becomes
+   the one the present needs (vk_present.c fills a wider window with the game's 16:9 picture and publishes it here), so the 3D view is wider (Hor+), not
+   stretched. Other aspects (square, portrait cameras) are left alone. Per main build; off when the instruction words differ ---- */
+float g_nxrt_wide_aspect;   // vk_present.c: the aspect a 16:9 camera gets now, 0 = its own
+typedef struct { const char *build; uint32_t fn, w_fn, ld, w_ld; } wide_site;
+static const wide_site g_wide_sites[] = {
+    {"76a489f3bd3642fa", 0x1f12114, 0xd503237fu, 0x1f12144, 0xbd414e68u},   // 2.0.1: pacibsp at the entry; ldr s8, [x19, #0x14c] (the aspect)
+    {"816c5358e8178d80", 0x1e225d4, 0xd503237fu, 0x1e22604, 0xbd414e68u},   // 1.0.5: the same function (found by its words; one match)
+};
+static uint64_t g_wide_pc;
+static void wide_hook(uint64_t *x) {
+    float a = g_nxrt_wide_aspect; if (!(a > 0)) return;
+    float *p = (float *)(uintptr_t)(x[0] + 0x14c);
+    if (fabsf(*p - 16.0f / 9.0f) < 1e-3f && fabsf(a - 16.0f / 9.0f) > 1e-3f) {
+        static _Atomic int said; if (!atomic_exchange(&said, 1)) LOG("wide view: a 16:9 camera gets aspect %.4f", a);
+        *p = a;
+    }
+}
+static uint64_t g_hook_lo = UINT64_MAX, g_hook_hi;
+static void site_hooks(uint64_t pc, uint64_t *x) { if (pc == g_wide_pc) wide_hook(x); if (g_nisite) interact_hook(pc, x); }
+static void site_range(uint64_t lo, uint64_t hi) {   // one callback for every site, over the range that holds them all
+    if (lo < g_hook_lo) g_hook_lo = lo;
+    if (hi > g_hook_hi) g_hook_hi = hi;
+    nxw_interp_set_site_hook(site_hooks, g_hook_lo, g_hook_hi);
+}
 static int interpret_function(uint64_t va) {
     uint64_t i = (va - rt_code_base) >> 2;
     uint32_t rva = va >= rt_code_base && i < rt_code_words ? g_table[i] : 0;
@@ -208,8 +235,23 @@ static void interact_attach(void) {
         LOG("DM_COOP_INTERACT: main+%#x (%s) runs in the interpreter with a hook at main+%#x", s[k].fn, s[k].what, s[k].off);
     }
     memcpy(g_isite, s, sizeof *s * n); g_nisite = n; g_isite_base = base;
-    nxw_interp_set_site_hook(interact_hook, lo, hi);
+    site_range(lo, hi);
     LOG("Interact everywhere: on (%d site%s)%s; every player in a session needs it", n, n == 1 ? "" : "s", ns ? ", Story co-op (experimental) too" : "");
+}
+static int wide_on(void) { const char *e = getenv("NXRT_VK_WIDE"); return e && *e == '1'; }
+static void wide_attach(void) {
+    module_t *m = NULL;
+    for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) m = &g_mod[i];
+    const wide_site *s = NULL;
+    for (size_t k = 0; m && k < sizeof g_wide_sites / sizeof *g_wide_sites; k++) if (!strncmp(m->build_id, g_wide_sites[k].build, 16)) s = &g_wide_sites[k];
+    if (!s) { LOG("[RED] NXRT_VK_WIDE: no camera site for main %.16s: the picture keeps its 16:9 view", m ? m->build_id : "?"); return; }
+    uint64_t base = (uint64_t)(uintptr_t)m->base;
+    if (*(const uint32_t *)(uintptr_t)(base + s->fn) != s->w_fn || *(const uint32_t *)(uintptr_t)(base + s->ld) != s->w_ld) {
+        LOG("[RED] NXRT_VK_WIDE: main+%#x is not the camera's projection as expected: off", s->fn); return; }
+    if (interpret_function(base + s->fn)) { LOG("[RED] NXRT_VK_WIDE: no translated function at main+%#x: off", s->fn); return; }
+    g_wide_pc = base + s->fn;
+    site_range(g_wide_pc, g_wide_pc + 4);
+    LOG("wide view (experimental): main+%#x builds every camera's projection in the interpreter; 16:9 cameras take the window's aspect", s->fn);
 }
 
 /* The game DLL (the contract in rt_abi.h): its function list fills the table */
@@ -280,6 +322,7 @@ int nxrt_attach_game_dll(const char *path) {
     LOG("game DLL %s: base %p, %.1f MB, %u functions (main %.16s), table filled in %.1f ms%s", path, (void *)h, nt->OptionalHeader.SizeOfImage / 1048576.0,
         *nfn, bid ? bid : "?", (now_ns() - t0) / 1e6, bad ? " [RED] (some outside the table)" : "");
     if (!bad && coop_interact_on()) interact_attach();
+    if (!bad && wide_on()) wide_attach();
     return bad ? -1 : 0;
 }
 #endif

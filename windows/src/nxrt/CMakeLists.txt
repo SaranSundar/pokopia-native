@@ -108,18 +108,31 @@ endif()
 if(WIN32)
   add_test(NAME scripts.play_defaults COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/scripts/test_play.ps1 -Repo ${CMAKE_SOURCE_DIR})
   set_tests_properties(scripts.play_defaults PROPERTIES SKIP_RETURN_CODE 77)
+  # Split screen: the second player's save (scripts/splitsave.ps1, docs/split-screen.md)
+  add_test(NAME scripts.split_save COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/scripts/test_splitsave.ps1 -Repo ${CMAKE_SOURCE_DIR})
 endif()
 # Co-op step 1b: the hooks route to the coop module (off: the offline answers; host / join: a node through the hooks with one made directly), one process each
 nxrt_executable(nxrt-tests-coop tests/test_coop.c)
 target_link_libraries(nxrt-tests-coop PRIVATE coop)
-foreach(m off host join)
+foreach(m off host join remake)
   add_test(NAME nxrt.coop_${m} COMMAND nxrt-tests-coop ${m})
   set_tests_properties(nxrt.coop_${m} PROPERTIES TIMEOUT 60)
 endforeach()
+# The in-game Link Play tab's words for each way of playing (front/linkplay.c) and its settings (linkplay_prefs.c: linkplay.json, the environment, when a
+# change applies): no SDL, no game
+add_executable(nxrt-tests-linkplay tests/test_linkplay.c front/linkplay.c front/linkplay_prefs.c)
+target_include_directories(nxrt-tests-linkplay PRIVATE front)
+target_link_libraries(nxrt-tests-linkplay PRIVATE coop)
+set_target_properties(nxrt-tests-linkplay PROPERTIES C_STANDARD 11)
+add_test(NAME nxrt.linkplay COMMAND nxrt-tests-linkplay)
 foreach(t nxrt.addrspace nxrt.svc nxrt.threads nxrt.adapters nxrt.dump nxrt.gamedll nxrt.boot_order nxrt.nvn nxrt.audio nxrt.save nxrt.nvn_rec nxrt.save_rt
-          nxrt.coop_off nxrt.coop_host nxrt.coop_join)
+          nxrt.coop_off nxrt.coop_host nxrt.coop_join nxrt.coop_remake)
   set_tests_properties(${t} PROPERTIES ENVIRONMENT "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs")
 endforeach()
+# The same NVN tests with submissions replayed on the replay thread (docs/replay-thread.md; the null backend replays on the game's thread by default)
+add_test(NAME nxrt.nvn_thread COMMAND nxrt-tests-nvn)
+add_test(NAME nxrt.nvn_rec_thread COMMAND nxrt-tests-nvn-rec)
+set_tests_properties(nxrt.nvn_thread nxrt.nvn_rec_thread PROPERTIES ENVIRONMENT "NXRT_LOG_DIR=${CMAKE_BINARY_DIR}/nxrt-test-logs-thread;NXRT_REPLAY_THREAD=1")
 
 # The generated files are current with nxnative's sources and the ports (skipped without the nxnative tree). Inside pokopia-native (this tree as
 # windows/ beside nxs2.py) nxnative is the installer's own checkout; in the private layout the installer is a sibling folder.

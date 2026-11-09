@@ -122,7 +122,7 @@ int main(void) {
     uint64_t handle = CALL(nvnCommandBufferEndRecording, P(cb));
     T((uint32_t)CALL(nvnSyncWait, P(sync2), 0) == 2 && (uint32_t)CALL(nvnEventGetValue, P(ev)) == 0);   /* recorded, not submitted yet */
     CALL(nvnQueueSubmitCommands, P(q), 1, P(&handle));
-    T((uint32_t)CALL(nvnSyncWait, P(sync2), 0) == 0);
+    T((uint32_t)CALL(nvnSyncWait, P(sync2), ~0ull) <= 1);   /* ALREADY_SIGNALED, or CONDITION_SATISFIED once the replay thread has replayed it */
     T((uint32_t)CALL(nvnEventGetValue, P(ev)) == 7);
     T(counter[0] == counter[1] && counter[1] != 0xababababababababull && counter[1] > 0);
     /* texture views: getters return what the setters set, and a view's offset is its level's */
@@ -143,7 +143,7 @@ int main(void) {
     for (int k = 0; k < 120; k++) {
         T(CALL(nvnWindowAcquireTexture, P(win), P(sync), P(&idx)) == 0);
         order_ok &= idx == (last + 1) % 2; last = idx;
-        T((uint32_t)CALL(nvnSyncWait, P(sync), ~0ull) == 0);
+        T((uint32_t)CALL(nvnSyncWait, P(sync), ~0ull) <= 1);
         CALL(nvnQueuePresentTexture, P(q), P(win), idx);
     }
     double secs = (now_ns() - t0) / 1e9;

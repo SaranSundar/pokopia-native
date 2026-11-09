@@ -3,6 +3,7 @@
 // queue in commit order. The ordering rule of the NVN layer (nvn_mtl.h, gfx_backend.h): every visible effect of GPU completion happens only after
 // the GPU has actually completed the submission.
 #include "vk_submit.h"
+#include "nvn_dirty.h"
 #include <process.h>
 #include <stdlib.h>
 #include <string.h>
@@ -142,6 +143,7 @@ void vks_shutdown(void) {
 }
 
 void vks_begin(void) {
+    nvn_dirty_submission();
     AcquireSRWLockExclusive(&g_lk);
     if (g_cur >= 0) VKRED("submission begun while another is being recorded");
     else { g_cur = slot_take(); g_cur_tid = GetCurrentThreadId(); }
