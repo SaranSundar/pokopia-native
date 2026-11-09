@@ -34,7 +34,7 @@ PC (our own recompiler, through LLVM) and runs on our own runtime with a Vulkan 
 - **60 fps** in the field on the test PC; mouse look written straight into the game's camera, as on the Mac;
   controllers (Xbox, PlayStation, Switch Pro) as Switch controllers, with rumble and motion; SDL3 sound.
 - **Your save**: `%APPDATA%\Pokopia Native\<version>\save`; **Import save…** (or `nxs2.py import-save`) brings yours from
-  Eden, the iPhone or the Mac. Windows saves load on the Mac and the iPhone.
+  the iPhone or the Mac. Windows saves load on the Mac and the iPhone.
 - **Run-time shaders** are recorded and translated on the spot the first time the game makes them; no refresh step.
 - **No installer, no administrator rights, no compiler**: the download brings its own tools in `windows\bin` (their
   notices in `windows\bin\THIRD-PARTY-NOTICES.txt`). It needs Windows 10/11 64-bit, an AVX2 CPU, a Vulkan 1.3 GPU,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """nxs2_gui.py: the window around nxs2.py. A walkthrough takes you from "what do you want to make" through the checks, your game files and
 the build to playing, in plain words, and remembers where you are (a refresh due after the first play, a new download to update to).
-Advanced is the one-screen view with every button. Everything is done by nxs2.py underneath (the same commands the README lists), so a
+Advanced is the one-screen view with every button. Everything is done by nxs2.py underneath (the same commands the guides in docs/ list), so a
 build started here can be continued from Terminal and the other way round.
 
 Mac: double-click "Pokopia Native Builder.app" (or: python3.12 nxs2_gui.py). Windows: "Pokopia Native Builder.cmd" (the Windows game and the iPhone app).
@@ -254,9 +254,9 @@ class App(tk.Tk):
         ttk.Button(b, text='Open build folder', command=self.open_out).pack(side='right')
         steps = ('Setup once for each new download, then Build (the first build takes a while; stopping is safe, Build again carries on). '
                  'Then Play' + (', or Sign IPA' if WIN else '') + ' for the iPhone app. Import save brings your save from Eden, the iPhone or the Mac. '
-                 'Refresh shaders finishes the iPhone app after a first play; the README explains.' if WIN else
+                 'Refresh shaders finishes the iPhone app after a first play; docs/IPHONE.md explains.' if WIN else
                  'Setup once for each new download, then Build (the first build takes a while; stopping is safe, Build again carries on). '
-                 'Sign IPA makes the iPhone app installable; Refresh shaders finishes it after a first play. The README explains each step.')
+                 'Sign IPA makes the iPhone app installable; Refresh shaders finishes it after a first play. docs/MAC.md and docs/IPHONE.md explain each step.')
         ttk.Label(f, text=steps, foreground='#666', wraplength=720, justify='left').grid(row=10, column=0, columnspan=3, sticky='w', padx=8)
 
         self.status = tk.StringVar(value='')
@@ -373,14 +373,14 @@ class App(tk.Tk):
             self.status.set(f'{self.running} done in {el}.' + (f'  {made}' if made else ''))
             if self.running == 'Build' and made:
                 nxt = ' '.join(t for k, t in (('windows', 'Press Play to start the game.'), ('app', 'The Mac app is in the build folder.'),
-                                              ('ipa', 'Sign IPA makes the iPhone app installable; the README says how to get it onto the phone.')) if k in self.result)
+                                              ('ipa', 'Sign IPA makes the iPhone app installable; docs/IPHONE.md says how to get it onto the phone.')) if k in self.result)
                 messagebox.showinfo('Done', f'Build finished in {el}.\n\n{chr(10).join(self.result.values())}\n\n{nxt or "Open the build folder for the outputs."}')
         elif rc in (130, -15, -2, 143, 1) and self.result.get('stopped'):
             self.status.set(f'{self.running} stopped after {el}. Press the button again to continue where it left off.')
         else:
             self.status.set(f'{self.running} failed after {el}: {self.result.get("fail", f"exit {rc}")}')
             messagebox.showerror(f'{self.running} failed', self.result.get('fail', f'exit code {rc}') + '\n\nThe full output of every stage is in <build folder>/logs/.'
-                                 f'\nStuck? Ask in the Discord ({DISCORD}) or check "Common problems" in the README.')
+                                 f'\nStuck? Ask in the Discord ({DISCORD}) or see Common problems in docs/TROUBLESHOOTING.md.')
         self.t0 = None
 
     def do_stop(self):

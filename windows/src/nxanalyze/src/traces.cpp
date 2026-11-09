@@ -1,4 +1,4 @@
-// Checks against what ran on real hardware (research/05): executed function starts, and the targets the Mac recorded for every
+// Checks against what ran natively on the Mac (research/05): executed function starts, and the targets the Mac recorded for every
 // executed br/blr (the first eight per site); and the spin loops against nxnative's rewriter tables.
 #include "internal.hpp"
 

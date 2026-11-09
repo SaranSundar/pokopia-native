@@ -1,6 +1,7 @@
 # What this repository contains, and what it never contains
 
-This project lets you run a game you own natively on your own Mac, iPhone or Windows PC. It ships **tools only**. It
+This project lets you run a game you own natively on your own Mac, iPhone or Windows PC, and, in open betas, on Linux
+(the Steam Deck included) and Android. It ships **tools only**. It
 does not contain, and must never be made to contain, any part of the game.
 
 ## Never in this repository, never in a release
@@ -40,7 +41,11 @@ Each release has one download per computer, made by `tools/package_release.py` f
   Visual C++ runtime files those two need. `windows/bin/MANIFEST.txt` lists every file with its checksum and origin,
   `windows/bin/THIRD-PARTY-NOTICES.txt` their licences.
 
-Neither contains anything of the game. On Windows the game's code is recompiled, and its shaders translated, on your
+The open betas have downloads of their own, released from the `linux-beta` and `android-beta` branches: **for Linux**
+(and the Steam Deck), whose tools are in `linux/bin` (`linux/bin/MANIFEST.txt` lists them, `THIRD-PARTY-NOTICES.txt`
+beside it their licences), and **for Android**, which makes the Android app on a Windows PC.
+
+None of them contains anything of the game. On Windows the game's code is recompiled, and its shaders translated, on your
 PC from your own dump, into your build folder, as the Mac and iPhone builds do.
 
 ## What the tool does not do
@@ -48,6 +53,16 @@ PC from your own dump, into your build folder, as the Mac and iPhone builds do.
 It decrypts nothing and bypasses nothing. It takes a dump that is already plain files, made by you from your own
 console with your own tools, and needs no keys, tickets or certificates. If your dump is encrypted or packaged, this
 tool cannot read it and will not try.
+
+## Free, forever
+
+Pokopia Native is free of charge, and will stay free forever. The project never charges players for anything related to it: not the
+downloads, not the builds or the apps they make, not features, early access, support or help, and nothing else.
+
+Anyone who charges for Pokopia Native, or for anything made with it, is not associated with Pokopia Native and should not be trusted:
+nobody sells anything on the project's behalf. Please don't pay them or run their files, and tell us on the
+[Discord](https://discord.gg/Aj9GqxZj8V) or in a [GitHub issue](https://github.com/xFractals/pokopia-native/issues/new/choose). The only
+official downloads are this repository's [releases](https://github.com/xFractals/pokopia-native/releases).
 
 ## Licences
 

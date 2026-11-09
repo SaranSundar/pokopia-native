@@ -74,7 +74,7 @@ main never touches FPCR or FPSR (census 04). So every game thread runs its whole
 - **On the Switch 2** it is the kernel's initial value, which this method cannot see. The SDK's C library calls 0 its default
   environment: `fesetenv(FE_DFL_ENV)` writes FPCR = 0 and FPSR = 0. The game plays correctly with 0.
 
-Confirming the hardware value once (a homebrew that reads FPCR, or a permissive reference logged in PROVENANCE) is the one
+Confirming the value from a permissive reference logged in PROVENANCE is the one
 open item.
 
 ## 2. Counter frequency

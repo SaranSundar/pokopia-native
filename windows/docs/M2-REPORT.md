@@ -32,7 +32,7 @@ Nothing from the game is in the repository: everything derived from it stays in 
 - **Spin loops:** main has 95, sdk 10, subsdk0 6. They become host yields.
 - **Host calls:** 332 imports of main go to nxnative's host replacements (1,233 call sites), and 1,078 indirect calls reach host code
   through slots filled at run time.
-- **Runtime facts from real hardware:** FPCR is 0, the counter runs at 31.25 MHz, and no exception, setjmp or longjmp runs in normal
+- **Runtime facts from the Mac's native run:** FPCR is 0, the counter runs at 31.25 MHz, and no exception, setjmp or longjmp runs in normal
   play (DESIGN §8).
 - **Both versions:** 1.0.5 and 2.0.1 share identical sdk, subsdk0 and rtld; only main differs (10.05M against 10.30M instructions).
   Both pass every check.
