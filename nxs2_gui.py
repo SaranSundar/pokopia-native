@@ -383,10 +383,10 @@ class App(tk.Tk):
         self.stop_btn = ttk.Button(b, text='Stop', command=self.do_stop, state='disabled'); self.stop_btn.pack(side='left', padx=(0, 6))
         ttk.Button(b, text='Open build folder', command=self.open_out).pack(side='right')
         steps = ('Setup once for each new download, then Build (the first build takes a while; stopping is safe, Build again carries on). '
-                 'Then Play' + (', or Sign IPA' if WIN else '') + ' for the iPhone app. Import save brings your save from Eden, the iPhone or the Mac. '
+                 'Then Play' + (', or Sign IPA' if WIN else '') + ' for the iPhone app. Import save brings your save from the iPhone, a Mac or another PC. '
                  'Refresh shaders finishes the iPhone app after a first play; docs/IPHONE.md explains.' if WIN else
-                 'Build (the first build takes a while; stopping is safe, Build again carries on), then Play. Import save brings your save from Eden, '
-                 'the iPhone or a Mac. docs/LINUX.md explains each step, and adding the game to Steam.' if LINUX else
+                 'Build (the first build takes a while; stopping is safe, Build again carries on), then Play. Import save brings your save from the '
+                 'iPhone, a Mac or another PC. docs/LINUX.md explains each step, and adding the game to Steam.' if LINUX else
                  'Setup once for each new download, then Build (the first build takes a while; stopping is safe, Build again carries on). '
                  'Sign IPA makes the iPhone app installable; Refresh shaders finishes it after a first play. docs/MAC.md and docs/IPHONE.md explain each step.')
         ttk.Label(f, text=steps, foreground='#666', wraplength=720, justify='left').grid(row=10, column=0, columnspan=3, sticky='w', padx=8)
@@ -623,15 +623,12 @@ class App(tk.Tk):
         game = 'linux' if LINUX else 'windows'
         if not b or not (b / game / 'play.json').is_file():
             return messagebox.showwarning('Import save', f'Build the {"Linux" if LINUX else "Windows"} game first: the save goes beside it.')
-        eden = messagebox.askyesnocancel('Import save', "Take the save from Eden on this PC?\n\nYes: Eden's own save of Pokopia (read, never changed).\n"
-                                         'No: choose a folder (one holding B00, G00 and S00: a phone or Mac save, or a copy).\n\n'
-                                         f'The save the {"Linux" if LINUX else "Windows"} game has now is kept beside it, not deleted.')
-        if eden is None: return
-        if eden: args = ['import-save', str(b), '--eden']
-        else:
-            d = filedialog.askdirectory(title='The save folder (B00, G00, S00 inside)')
-            if not d: return
-            args = ['import-save', str(b), d]
+        if not messagebox.askokcancel('Import save', 'Choose the save folder: one holding B00, G00 and S00 (a phone, Mac or other PC\'s save, '
+                                      f'or a copy).\n\nThe save the {"Linux" if LINUX else "Windows"} game has now is kept beside it, not deleted.'):
+            return
+        d = filedialog.askdirectory(title='The save folder (B00, G00, S00 inside)')
+        if not d: return
+        args = ['import-save', str(b), d]
         self.last_stage = 'starting'; self.start('Import save', args)
 
     # ---------------------------------------------------------------- the walkthrough: frame, pages, pieces
@@ -803,7 +800,7 @@ class App(tk.Tk):
     def play_cards(self, pg, built, primary=True):   # what to do with each thing that was made; returns the last step's number
         n, kind = 0, 'primary' if primary else 'plain'
         if 'windows' in built:
-            n += 1; self.step_card(pg, n, 'Bring your save (optional)', 'From Eden, your iPhone or a Mac, so you carry on where you were. Skip it to '
+            n += 1; self.step_card(pg, n, 'Bring your save (optional)', 'From your iPhone, a Mac or another PC, so you carry on where you were. Skip it to '
                                    'start a new game. The save the game has now is kept beside it, not deleted.', [('Bring my save', self.wiz_import, 'plain')])
             n += 1; self.step_card(pg, n, 'Your DLC (optional)', 'If you bought the game\'s DLC, give the folder your dumping tool made from it: '
                                    'the game finds it from its next start. Only your own, and never share it.', [('Add my DLC', self.wiz_dlc, 'plain')])
@@ -811,7 +808,7 @@ class App(tk.Tk):
                                    'F11 or Alt+Enter switches to full screen. "Pokopia Settings" in your build folder changes the window, the controls '
                                    'and Link Play.', [('Play', self.do_play, kind)])
         if 'linux' in built:
-            n += 1; self.step_card(pg, n, 'Bring your save (optional)', 'From Eden, your iPhone or a Mac, so you carry on where you were. Skip it to '
+            n += 1; self.step_card(pg, n, 'Bring your save (optional)', 'From your iPhone, a Mac or another PC, so you carry on where you were. Skip it to '
                                    'start a new game. The save the game has now is kept beside it, not deleted.', [('Bring my save', self.wiz_import, 'plain')])
             n += 1; self.step_card(pg, n, 'Your DLC (optional)', 'If you bought the game\'s DLC, give the folder your dumping tool made from it: '
                                    'the game finds it from its next start. Only your own, and never share it.', [('Add my DLC', self.wiz_dlc, 'plain')])

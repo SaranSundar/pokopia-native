@@ -4,7 +4,7 @@
 Everything derived from the game is made here, on your machine, from the dump you give; nothing of the
 game is in this repository (see LEGAL.md). The build goes through nxnative (the native host for Switch
 games on Apple systems, with this project's Switch 2 changes), the game's shaders through ampere-lower
-(Eden-NS2's Switch 2 shader lowering) and nxnative's Metal shader chain.
+(the Switch 2 shader lowering; where it comes from and its licence: LEGAL.md) and nxnative's Metal shader chain.
 
   nxs2.py setup [--no-ios]                  fetch nxnative at the pinned commit, apply the Switch 2 patch, build ampere-lower
   nxs2.py doctor                            check the tools this computer has (what setup and build need)
@@ -20,7 +20,7 @@ games on Apple systems, with this project's Switch 2 changes), the game's shader
   nxs2.py refresh <build dir> [DIR...]      add the shaders recorded while playing (Mac run, Mac app, iPhone) and rebuild the outputs
   nxs2.py sign <build dir> --team-id ID     archive and export the development IPA from the prepared Xcode project
   nxs2.py status <build dir>                what the build folder holds and what it still lacks
-  nxs2.py import-save <build dir> <folder>  Windows and Linux: a save from Eden, the phone or a Mac (a folder with B00, G00, S00) becomes the one the game plays
+  nxs2.py import-save <build dir> <folder>  Windows and Linux: a save from the phone, a Mac or another PC (a folder with B00, G00, S00) becomes the one the game plays
   nxs2.py import-dlc <build dir> <folder>   Windows and Linux: your own DLC, the folder your dumping tool made from add-on content you bought
 
 Needs: a Mac with Apple silicon, Xcode (27.x) with its command line tools (an iPhone build also needs the iOS
@@ -1194,7 +1194,7 @@ def st_win_play(b, t):
     cmd = b.outputs / f'Play Pokopia {b.version}.cmd'
     cmd.write_text(f'''@echo off
 rem Pokemon Pokopia {b.version} on Windows, built from your own dump by pokopia-native {TOOL_VERSION} (nxs2.py build --windows). Double-click to play.
-rem The save is in {cfg["save"]} (windows\\play.json names it; nxs2.py import-save brings one from Eden, the phone or a Mac).
+rem The save is in {cfg["save"]} (windows\\play.json names it; nxs2.py import-save brings one from the phone, a Mac or another PC).
 rem A window asks how to play first: alone, Link Play on this network, or hosting / visiting over the internet ("Don't ask again" in it;
 rem Pokopia Settings {b.version}.cmd or Shift held while starting shows it again). play.ps1's switches can follow: -Fullscreen, -Window 1600x900, -Silent,
 rem -PadCheck; -Save and -Work with other folders for a second player on this PC; -LinkPlay, -Join, -Internet, -Room and -Relay instead of the window (docs/WINDOWS.md).
@@ -1400,7 +1400,7 @@ def st_lin_play(b, t):
     sh = b.outputs / f'play-pokopia-{b.version}.sh'
     sh.write_text(f'''#!/bin/sh
 # Pokemon Pokopia {b.version} on Linux, built from your own dump by pokopia-native {TOOL_VERSION} (nxs2.py build --linux). Run it to play.
-# The save is {cfg["save"]} (linux/play.json names it; nxs2.py import-save brings one from Eden, the phone or a Mac).
+# The save is {cfg["save"]} (linux/play.json names it; nxs2.py import-save brings one from the phone, a Mac or another PC).
 # A choice comes first: alone, Link Play here, or over the internet (POKOPIA_ASK=1 brings it back after "don't ask again"). play.sh's switches can
 # follow: --fullscreen, --window 1600x900, --silent, --pad-check; --save and --work with other folders for a second player; --link-play, --join,
 # --internet, --room and --relay instead of the choice, --interact and --story with them (docs/LINUX.md). In the game, F1 changes the picture and
@@ -1441,29 +1441,15 @@ def run_linux(args):
     sys.exit(subprocess.call([str(sh)] + list(args.env)))
 
 
-def eden_saves():
-    """Eden's saves of this game, newest first (read, never written): <Eden data>\\nand\\user\\save\\0000000000000000\\<user>\\<title id>, or the title-0
-    folder Eden files it under when it cannot read the title ID from an extracted dump. EDEN_DIR names the data folder (default %APPDATA%\\eden)."""
-    default = pathlib.Path(os.environ.get('XDG_DATA_HOME') or pathlib.Path.home() / '.local/share') / 'eden' if LINUX else pathlib.Path(os.environ.get('APPDATA', '')) / 'eden'
-    root = pathlib.Path(os.environ.get('EDEN_DIR') or default) / 'nand/user/save/0000000000000000'
-    c = [d for u in sorted(root.glob('*')) if u.is_dir() for d in (u / TITLE, u / '0000000000000000')
-         if (d / 'G00' / 'CMNDAT.BIN').is_file() and (d / 'S00' / 'SYDAT.BIN').is_file()]
-    return sorted(c, key=lambda d: max(f.stat().st_mtime for f in d.rglob('*') if f.is_file()), reverse=True)
-
-
 def import_save(args):
-    """A save from elsewhere becomes the one the Windows game plays: a folder holding the game's B00, G00 and S00 (Eden's save folder, the phone's
-    Documents/save as tools/phone_pull.py brings it, a Mac's Application Support/nxnative/<title>/save) or one holding such a save/ folder; --eden finds
-    Eden's own. The source is only read. What the save folder held before (with the game's commit leftovers) is kept in <save>.before-<time>."""
+    """A save from elsewhere becomes the one the Windows game plays: a folder holding the game's B00, G00 and S00 (the phone's Documents/save as
+    tools/phone_pull.py brings it, a Mac's Application Support/nxnative/<title>/save, another PC's save) or one holding such a save/ folder. The source
+    is only read. What the save folder held before (with the game's commit leftovers) is kept in <save>.before-<time>."""
     b = Build(args.build); dst = win_save_dir(b)
-    if args.eden:
-        found = eden_saves()
-        if not found: raise Fail('no Pokopia save in Eden\'s folder (%APPDATA%\\eden\\nand\\user\\save); give the folder instead')
-        src = found[0]; say(f'Eden\'s save: {src}' + (f' (newest of {len(found)})' if len(found) > 1 else ''))
-    elif args.folder:
+    if args.folder:
         src = pathlib.Path(args.folder).expanduser().resolve()
         if not (src / 'G00').is_dir() and (src / 'save' / 'G00').is_dir(): src = src / 'save'
-    else: raise Fail('give the save folder (it holds B00, G00 and S00), or --eden')
+    else: raise Fail('give the save folder (it holds B00, G00 and S00)')
     if not ((src / 'G00').is_dir() and (src / 'S00').is_dir()): raise Fail(f'{src} holds no Pokopia save (no G00 and S00 folders)')
     if src == dst or dst in src.parents: raise Fail(f'{src} is the save the game plays already')
     if WIN and 'nxrt.exe' in subprocess.run(['tasklist', '/FI', 'IMAGENAME eq nxrt.exe'], capture_output=True, text=True).stdout and not args.force:
@@ -1809,9 +1795,9 @@ def main():
     s = sub.add_parser('run'); s.add_argument('build'); s.add_argument('--lang', default='en-US')
     s.add_argument('env', nargs='*', help='Mac: extra DM_* switches, KEY=VALUE; Windows: switches for play.ps1; Linux: switches for play.sh')
     s.set_defaults(f=run_windows if WIN else run_linux if LINUX else run_mac)
-    s = sub.add_parser('import-save', help='Windows and Linux: a save from Eden, the phone or a Mac becomes the one the game plays (the old one is kept)')
+    s = sub.add_parser('import-save', help='Windows and Linux: a save from the phone, a Mac or another PC becomes the one the game plays (the old one is kept)')
     s.add_argument('build'); s.add_argument('folder', nargs='?', help='a folder holding B00, G00 and S00 (or a save/ folder with them)')
-    s.add_argument('--eden', action='store_true', help="Eden's own save of this game (read only)"); s.add_argument('--force', action='store_true')
+    s.add_argument('--force', action='store_true')
     s.set_defaults(f=import_save)
     s = sub.add_parser('import-dlc', help='Windows and Linux: your own DLC (the folder your dumping tool made from add-on content you bought) for the game')
     s.add_argument('build'); s.add_argument('folder', nargs='?', help="your DLC's RomFS folder, as your dumping tool made it")
