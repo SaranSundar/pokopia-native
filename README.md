@@ -15,13 +15,13 @@ with you from device to device, and you can play together across them.
   <a href="https://github.com/xFractals/pokopia-native/releases/latest/download/Pokopia-Native-for-Windows.zip"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/get-windows-dark.svg"><img src="docs/assets/get-windows-light.svg" width="404" alt="Download for Windows"></picture></a>
   <a href="https://github.com/xFractals/pokopia-native/releases/latest/download/Pokopia-Native-for-Mac.zip"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/get-mac-dark.svg"><img src="docs/assets/get-mac-light.svg" width="404" alt="Download for Mac and iPhone"></picture></a>
   <br>
-  <a href="https://github.com/xFractals/pokopia-native/releases?q=linux-beta"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/get-linux-dark.svg"><img src="docs/assets/get-linux-light.svg" width="404" alt="Get the Linux and Steam Deck beta"></picture></a>
+  <a href="https://github.com/xFractals/pokopia-native/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/get-linux-dark.svg"><img src="docs/assets/get-linux-light.svg" width="404" alt="Download for Linux and Steam Deck"></picture></a>
   <a href="https://github.com/xFractals/pokopia-native/releases?q=android-beta"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/get-android-dark.svg"><img src="docs/assets/get-android-light.svg" width="404" alt="Get the Android beta"></picture></a>
 </p>
 
 **New here?** Every download has a step-by-step guide: **[Windows](docs/WINDOWS.md)** · **[Mac](docs/MAC.md)** ·
 **[iPhone](docs/IPHONE.md)** · **[Android](https://github.com/xFractals/pokopia-native/blob/android-beta/docs/ANDROID.md)** ·
-**[Linux & Steam Deck](https://github.com/xFractals/pokopia-native/blob/linux-beta/docs/LINUX.md)**. Either the Windows or the Mac download also
+**[Linux & Steam Deck](docs/LINUX.md)**. Either the Windows or the Mac download also
 builds the iPhone app. On Android, check your phone first with the device test on the
 [Android beta's page](https://github.com/xFractals/pokopia-native/releases?q=android-beta). What's new is in the
 [release notes](https://github.com/xFractals/pokopia-native/releases).
@@ -68,7 +68,7 @@ builds the iPhone app. On Android, check your phone first with the device test o
   <a href="https://github.com/xFractals/pokopia-native/blob/main/docs/IPHONE.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/guide-iphone-dark.svg"><img src="docs/assets/guide-iphone-light.svg" width="404" alt="iPhone guide: build, sign and install the app"></picture></a>
   <a href="https://github.com/xFractals/pokopia-native/blob/android-beta/docs/ANDROID.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/guide-android-dark.svg"><img src="docs/assets/guide-android-light.svg" width="404" alt="Android guide: device test, build and install"></picture></a>
   <br>
-  <a href="https://github.com/xFractals/pokopia-native/blob/linux-beta/docs/LINUX.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/guide-linux-dark.svg"><img src="docs/assets/guide-linux-light.svg" width="404" alt="Linux and Steam Deck guide"></picture></a>
+  <a href="https://github.com/xFractals/pokopia-native/blob/main/docs/LINUX.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/guide-linux-dark.svg"><img src="docs/assets/guide-linux-light.svg" width="404" alt="Linux and Steam Deck guide"></picture></a>
   <a href="https://github.com/xFractals/pokopia-native/blob/main/docs/PLAYING-TOGETHER.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/guide-together-dark.svg"><img src="docs/assets/guide-together-light.svg" width="404" alt="Playing together: Link Play, room codes and co-op"></picture></a>
 </p>
 
@@ -84,8 +84,8 @@ builds the iPhone app. On Android, check your phone first with the device test o
 - **Android (beta):** made on a Windows 10 or 11 PC with about 25 GB free, and put on the phone with a USB cable. The phone needs Android 11
   or newer, Snapdragon 8 Gen 1 or newer graphics, 8 GB of memory and about 9 GB free; the device test checks it in a few seconds.
   [Android guide](https://github.com/xFractals/pokopia-native/blob/android-beta/docs/ANDROID.md)
-- **Linux and the Steam Deck (beta):** x86-64 with AVX2 and a Vulkan 1.3 driver (SteamOS has one), about 15 GB free.
-  [Linux guide](https://github.com/xFractals/pokopia-native/blob/linux-beta/docs/LINUX.md)
+- **Linux and the Steam Deck:** x86-64 with AVX2 and a Vulkan 1.3 driver (SteamOS has one), about 15 GB free.
+  [Linux guide](docs/LINUX.md)
 
 The builder checks all of this for you and tells you what to install.
 </details>
@@ -94,16 +94,16 @@ The builder checks all of this for you and tells you what to install.
 
 |  | Windows | Mac | iPhone | Android | Linux &amp;<br>Steam Deck |
 |:--|:--:|:--:|:--:|:--:|:--:|
-| **Release** | Stable | Stable | Stable | Beta | Beta |
+| **Release** | Stable | Stable | Stable | Beta | Stable |
 | **Graphics** | Vulkan, 4K | Metal, MetalFX | Metal | Vulkan | Vulkan, 4K |
 | **In-game settings** | F1 | Soon | Soon | Back | F1 |
 | **Rebind keys** | ✓ | Soon | — | — | ✓ |
-| **Rebind controller** | ✓ | Soon | Soon | Next beta | Next beta |
+| **Rebind controller** | ✓ | Soon | Soon | Next beta | ✓ |
 | **Controllers** | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **Touch controls** | — | — | ✓ | ✓ | — |
 | **Link Play** | ✓ | ✓ | ✓ | Not yet | ✓ |
 | **Story co-op** | ✓ | ✓ | ✓ | Not yet | ✓ |
-| **Auto port forwarding** | ✓ | By hand | By hand | — | Next beta |
+| **Auto port forwarding** | ✓ | By hand | By hand | — | ✓ |
 | **Import a save** | ✓ | By hand | By hand | Not yet | ✓ |
 
 Link Play is for up to four players; Story co-op is experimental. Saves move between a PC, a Mac and an iPhone ([how](docs/SAVES.md)).
@@ -126,7 +126,7 @@ In the game: the PC in your house → **Link Play** → **Local connection**. Mo
 
 - **Setting it up?** The step-by-step guides: [Windows](docs/WINDOWS.md) · [Mac](docs/MAC.md) · [iPhone](docs/IPHONE.md) ·
   [Android](https://github.com/xFractals/pokopia-native/blob/android-beta/docs/ANDROID.md) ·
-  [Linux & Steam Deck](https://github.com/xFractals/pokopia-native/blob/linux-beta/docs/LINUX.md).
+  [Linux & Steam Deck](docs/LINUX.md).
 - **Something not working?** [Common problems](docs/TROUBLESHOOTING.md) has the usual fixes.
 - **Moving your save?** [Your saves](docs/SAVES.md) covers the PC, the Mac and the iPhone.
 - **Questions?** Ask on [Discord](https://discord.gg/Aj9GqxZj8V): install help, co-op partners and release news.

@@ -1,12 +1,12 @@
-name: Linux / Steam Deck beta report
-description: "How the Linux beta ran on your Steam Deck or Linux PC (it worked, or it didn't: both help)"
-title: "[Linux beta] <your device>: <worked / what went wrong>"
+name: Linux / Steam Deck report
+description: "How Pokopia Native runs on your Steam Deck or Linux PC (it worked, or it didn't: both help)"
+title: "[Linux] <your device>: <worked / what went wrong>"
 labels: ["linux-beta"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for testing! Fill in what you got to; "didn't get there" is a fine answer. Everything after the build is from your
+        Thanks for the report! Fill in what you got to; "didn't get there" is a fine answer. Everything after the build is from your
         first play session.
 
         **Please never attach** your save, anything from your dump or your build folder, shader files, or console keys. The report

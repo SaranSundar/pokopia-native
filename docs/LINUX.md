@@ -1,11 +1,11 @@
-# Pokopia Native on Linux and the Steam Deck (beta)
+# Pokopia Native on Linux and the Steam Deck
 
 The **"for Linux" download** builds the Linux game from your own dump: Pokopia recompiled for your computer's x86-64 CPU, played with a Vulkan
 renderer. It is the Windows build's recompiler and runtime ported to Linux, so it plays the same way (keyboard and mouse, controllers, Link Play).
 
-**Status: beta.** It was developed on Ubuntu 22.04 with a software Vulkan driver; **it has not run on a Steam Deck yet**. That is what this beta is
-for: if you have a Steam Deck (or a Linux PC with an AMD or Intel GPU), please follow the steps below, record what happens, and send back the
-report (the last section). Nothing of the game is in the download: everything made from your dump stays in your build folder.
+Linux and the Steam Deck are a full release since 1.4.0, after five public betas on Steam Decks and Linux PCs. On a Steam Deck the game starts
+in its own handheld mode, with its lighter settings. If something goes wrong, the report (the last section) tells us what happened. Nothing of
+the game is in the download: everything made from your dump stays in your build folder.
 
 ## What you need
 
@@ -64,12 +64,12 @@ On KDE, kdialog works in place of zenity. Python's modules still go into the ven
 ## Steam Deck: build in Desktop Mode
 
 Press the **Steam** button → **Power** → **Switch to Desktop**, then open **Konsole** (the terminal, in the application menu under System). Each
-step is one command; copy them as they are. Start the screen recording (the "Recording" section) before step 5 if you can.
+step is one command; copy them as they are.
 
 1. **Unzip** the download into your home folder (Dolphin: right-click → Extract → Extract archive here), or:
 
    ```bash
-   cd ~ && unzip ~/Downloads/Pokopia-Native-for-Linux-beta.zip
+   cd ~ && unzip ~/Downloads/Pokopia-Native-for-Linux.zip
    ```
 
 2. **Python's modules**, in a folder of their own (SteamOS keeps its system folders read-only, so they go into your home):
@@ -156,11 +156,11 @@ characters too) are experimental, and every player needs the same choice: the Li
 after the launcher's name. With both off, Linux plays with 1.2.x as well. They work on game versions 2.0.1 and 1.0.5; on 1.0.5 every
 player needs pokopia-native 1.3.3 or newer.
 
-## Recording (for the beta)
+## Recording a problem
 
-A recording of the build and of the first few minutes of play helps more than any description.
+When something goes wrong, a recording of it helps more than any description.
 
-- **OBS Studio** from **Discover** (the software centre) records the whole screen: start a recording, run steps 5 and "Play", stop it.
+- **OBS Studio** from **Discover** (the software centre) records the whole screen: start a recording, show what goes wrong, stop it.
 - Or **Spectacle** (the screenshot tool), if your desktop's version has screen recording (Plasma 6).
 - In Game Mode, Steam's own game recording (Steam → Settings → Game Recording) works too.
 
@@ -168,7 +168,7 @@ Please keep recordings short (a few minutes each) and do not record anything per
 
 ## The report
 
-When you are done, or when something goes wrong, open a terminal (Konsole on the Steam Deck) and run the report. With the AppImage:
+When something goes wrong, open a terminal (Konsole on the Steam Deck) and run the report. With the AppImage:
 
 ```bash
 ~/Downloads/Pokopia-Native-Builder-*.AppImage report
@@ -188,7 +188,7 @@ memory, display) into one `pokopia-report-<date>.tar.gz` in your home folder, an
 dump**, and it replaces your home folder, user name and computer name with placeholders. It lists every file and asks before it writes the archive,
 so you can read them first.
 
-Then fill in the **[Linux / Steam Deck beta report](https://github.com/xFractals/pokopia-native/issues/new?template=linux-beta-report.yml)**
+Then fill in the **[Linux / Steam Deck report](https://github.com/xFractals/pokopia-native/issues/new?template=linux-beta-report.yml)**
 form on GitHub and attach that archive: the form asks the rest (your device, the build, the title screen and the game, controls, sound,
 saves). Screenshots and short recordings help too; a recording over 10 MB goes in as a link. No GitHub account? Send me the same answers and
 the archive directly.
@@ -203,18 +203,18 @@ the archive directly.
 - **The game closes by itself, or the picture breaks up, when a new place loads**: start it once with the driver's bounds checks on and say in the
   report whether that helped: `NXRT_VK_ROBUST=1 ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`
 - **Bright sparkles on characters' edges (seen on Intel graphics)**: the picture is drawn at an uneven size for your screen (the log says
-  "resolution x1.11111", for example). Since beta 5 a 16:10 screen such as 1920x1200 gets the game's own 1920x1080 by default, which fits it
+  "resolution x1.11111", for example). A 16:10 screen such as 1920x1200 gets the game's own 1920x1080 by default, which fits it
   exactly. If you chose a size yourself, **F1 → Resolution → 1920x1080 (the game's own)** or 3840x2160 (exactly twice) avoids it. Thanks to
   Apocal for finding it.
 - **AMD or Intel graphics: the game freezes (often in conversations)**: the game's graphics programs were written for groups of 32 (NVIDIA's);
   AMD runs 64 and Intel 8 to 32. Start the game once in the 32-lane test mode and say in the report whether it helped:
   `NXRT_VK_SUBGROUP32=1 ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`. The log then says "made with 32 lanes" and for which stages.
 - **The build stops with "shorter than its own header says"**: the dump's `exefs` was copied in text mode; copy it again in binary mode.
-- **The frame rate swings (30 to 45 fps on a Steam Deck) and it feels laggy**: in the game, **F1 → Frame rate → 30 fps** gives a steady 30
-  instead. The Deck runs the game close to its processor's limit, so the frame rate does not change with the Resolution setting. Since beta 5
-  the Deck and other integrated graphics (Intel and AMD laptops) get a 4 times larger upload buffer, which removed most dips on an Intel
-  laptop; on beta 4 the same is `NXRT_VK_STAGING_MB=256` in front of the launcher. A report after 5 minutes in your town (below) shows us where
-  the time goes.
+- **The frame rate swings on a Steam Deck and it feels laggy**: in the game, **F1 → Frame rate → 30 fps** gives a steady 30 instead. Since
+  1.4.0 the Deck starts in the game's handheld mode (F1 → Console mode → Docked (TV) switches back), and our graphics work runs on a thread of
+  its own beside the game's (`NXRT_REPLAY_THREAD=0` in front of the launcher turns that off, to compare). On an OLED Deck, set the screen to
+  60 Hz in the Quick Access menu's Performance page: the game's 60 fps does not divide evenly into 90 Hz. A report after 5 minutes in your
+  town (below) shows us where the time goes.
 - **The sound crackles**: start the game once with SDL's PulseAudio driver (PipeWire answers it too, through pipewire-pulse) and say in the
   report whether that helped: `SDL_AUDIO_DRIVER=pulseaudio ~/Games/Pokopia_native/out/play-pokopia-2.0.1.sh`. The log's `audio #0 device
   callbacks` lines count the underruns.
