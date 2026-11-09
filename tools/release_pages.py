@@ -15,9 +15,10 @@ ANDROID_GUIDE = REPO + '/blob/android-beta/docs/ANDROID.md'
 
 # tag: (title, one-line summary)
 PAGES = {
-    'v1.4.0': ('Pokopia Native 1.4.0: Linux and the Steam Deck out of beta, and your own DLC',
-               'Linux and the Steam Deck as a full release, your own DLC on Windows and Linux, smoother edges, a smoother frame rate when the '
-               'processor is the limit, split-screen co-op on one PC (experimental), and a Play Pokopia program you can pin or add to Steam.'),
+    'v1.4.0': ('Pokopia Native 1.4.0: DLC support, and Linux and the Steam Deck out of beta',
+               'DLC support at last: your own DLC on Windows and Linux. Also new: Linux and the Steam Deck as a full release, anti-aliasing, '
+               'split-screen co-op on one PC (experimental), Play Pokopia as a program for the taskbar or Steam, the Story co-op fix for the '
+               'host, and a smoother frame rate when the processor is the limit.'),
     'v1.3.5': ('Pokopia Native 1.3.5: controller rebinding, Link Play in the game, automatic port forwarding',
                'Change your controller buttons and run Link Play from inside the game on Windows, with automatic port forwarding when you host, '
                'many more controllers, NVIDIA and AMD freeze fixes, and a smoother camera while walking sideways.'),
@@ -180,6 +181,29 @@ def footer(checksums):
     if checksums: out += '\n\n' + folded('Checksums (SHA-256)', f'```\n{checksums}\n```')
     return out
 
+# A release's biggest changes, first on its page, and the order of its "New in" sections (the rest keep the notes' order)
+LEAD = {'v1.4.0': '''### Highlights
+
+- **DLC support, at last.** If you bought the game's DLC, give the builder your own dump of it (**Add my DLC**) and the game on Windows
+  and Linux uses it.
+- **Linux and the Steam Deck, out of beta.** The same release and version as Windows and the Mac. The AppImage is one file with no
+  terminal steps, and a Steam Deck starts in the game's lighter handheld mode.
+- **Smoother edges: anti-aliasing.** SMAA by default, or the lighter FXAA, applied before the HUD so text stays sharp. **F1 → Graphics
+  → Anti-aliasing**.
+- **Split-screen co-op on one PC** (experimental, Windows). Two games side by side, joined by Link Play: the keyboard and controller 1
+  in one window, controller 2 in the other.
+- **Play Pokopia as a program.** `Play Pokopia <version>.exe` to pin to the taskbar or add to Steam as a non-Steam game.
+- **Story co-op, fixed for the host.** The host's story talks keep going while visitors are there (thanks **Skr**).
+- **A smoother frame rate when the processor is the limit.** The graphics work runs on a thread of its own: about 16 % more frames on
+  our test PC, and the most help on smaller processors like the Steam Deck's.
+'''}
+ORDER = {'v1.4.0': ('Your own DLC', 'Windows and Linux', 'Windows', 'Linux and the Steam Deck', 'The builder and the guides', 'Getting it')}
+
+def reorder(md, order):
+    head, *parts = re.split(r'(?m)^(?=### )', md)
+    rank = lambda p: next((i for i, o in enumerate(order) if re.match(rf'### {re.escape(o)}(?: \(|$)', p.split('\n', 1)[0])), len(order))
+    return head + ''.join(p if p.endswith('\n\n') else p.rstrip('\n') + '\n\n' for p in sorted(parts, key=rank))
+
 def page(tag, summary, cards, new_title, new_md, glance_md, more, checksums):
     parts = [f'**{summary}**']
     if cards: parts.append(cards)
@@ -231,6 +255,8 @@ def main():
         else:
             new = notes.get(f'New in {num}') or re.split(r'^## ', body, maxsplit=1, flags=re.M)[0]
             new = drop_linux_lines(new)
+            if tag in ORDER: new = reorder(new, ORDER[tag])
+            if tag in LEAD: new = LEAD[tag] + '\n' + new.lstrip('\n')
             latest = tag == newest_stable
             more = [folded('Known issues', notes.get('Known issues', '')), folded('Upgrading from an older version', notes.get('Upgrading', ''))] if latest else []
             body_md = page(tag, summary, downloads(tag, names), f"What's new in {num}", new, glance(v), more, checksums)
