@@ -64,8 +64,8 @@ NX=$P/installer/nxnative
 echo "nxnative $(git -C "$NX" rev-parse --short HEAD) with the Switch 2 patch" > "$NX/.bundled"
 rm -rf "$NX/.git" "$P/installer"/setup-*.log
 # what the Linux build never reads from nxnative: its documentation (screenshots of other games), fuzz and test inputs, its contributors' notes,
-# and the Mac translator's debug symbols (paths of the machine it was built on)
-rm -rf "$NX/docs" "$NX/dm/tools/fuzz" "$NX/dm/tools/tests" "$NX/AGENTS.md" "$NX"/dm/gfx/tools/dmsh_xlate_bin/*.pdb "$NX/dm/gfx/tools/dmsh_xlate_bin/Gommon.dll"
+# the Mac translator's debug symbols (paths of the machine it was built on), and its tools for encrypted games (setup removes them too)
+rm -rf "$NX/docs" "$NX/dm/tools/fuzz" "$NX/dm/tools/tests" "$NX/AGENTS.md" "$NX/README.md" "$NX/scripts" "$NX/dm/tools/nx_extract" "$NX"/dm/gfx/tools/dmsh_xlate_bin/*.pdb "$NX/dm/gfx/tools/dmsh_xlate_bin/Gommon.dll"
 find "$P/installer" -name __pycache__ -type d -prune -exec rm -rf {} +
 
 echo "$VER" > "$P/VERSION"
