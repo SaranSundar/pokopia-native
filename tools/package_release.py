@@ -291,12 +291,15 @@ def main():
         top = f'pokopia-native-{version}{"-beta" if a.beta and plat == "linux" else ""}-{plat}/'
         files = [n for n in names if not n.startswith(skip) and n != skip]
         entries = [(n, (HERE / n).read_bytes(), 0o755 if modes.get(n, 0o100644) & 0o111 or n.endswith('.sh') else 0o644) for n in files]
+        # every download: the translator without a debug file, its DLLs without the build machine's paths (the Mac one named its builder's home).
+        # Only the translator's: the kit's DLLs include Microsoft's signed runtime, which an edit would unsign
+        xl = lambda n: '/dmsh_xlate_bin/' in f'/{n}'
+        entries = [(n, scrub_pdb_path(d) if xl(n) and n.endswith('.dll') else d, m) for n, d, m in entries if not (xl(n) and n.endswith('.pdb'))]
         if plat == 'windows': entries += [(f'windows/bin/{n}', d, 0o644) for n, d in kit_blobs.items()]
         if plat == 'linux':
             kit_names = [n[3:] if n.startswith('../') else f'linux/bin/{n}' for n in lkit_blobs]
-            # the kit's files replace the repository's copies; the translator without its debug file, its DLLs without the build machine's paths
-            entries = [e for e in entries if not e[0].startswith('linux/bin/') and e[0] not in kit_names and not e[0].endswith('.pdb')]
-            entries = [(n, scrub_pdb_path(d) if n.endswith('.dll') else d, m) for n, d, m in entries]
+            # the kit's files replace the repository's copies
+            entries = [e for e in entries if not e[0].startswith('linux/bin/') and e[0] not in kit_names]
             entries += [(k, d, lmodes[n]) for k, (n, d) in zip(kit_names, lkit_blobs.items())]
         for n, d, _ in entries:
             if len(d) > biggest: sys.exit(f'refusing: {n} is larger than any tool ({len(d)} bytes)')
