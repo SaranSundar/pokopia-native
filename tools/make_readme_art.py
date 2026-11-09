@@ -119,7 +119,7 @@ def hero_phone(m):
 CARDS = {
     'windows': ('pc', 'Windows', 'Windows 10 and 11, 64-bit', False),
     'mac': ('mac', 'Mac &amp; iPhone', 'Apple silicon, plus the iPhone app', False),
-    'linux': ('deck', 'Linux &amp; Steam Deck', 'Desktop Linux and SteamOS', True),
+    'linux': ('deck', 'Linux &amp; Steam Deck', 'Desktop Linux and SteamOS', False),   # out of beta from 1.4.0
     'android': ('droid', 'Android', 'Phones and handhelds, made on a PC', True),
 }
 

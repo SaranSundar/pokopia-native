@@ -138,14 +138,15 @@ def assets_of(body):
 def downloads(tag, names):
     cards, extra = [], []
     order = lambda n: 0 if 'Windows' in n else 1 if 'Mac' in n else 2 if n.endswith('.AppImage') else 3   # Windows, Mac, then Linux's AppImage first
+    lx, lalt = ('linux-beta', 'Get the Linux and Steam Deck beta') if 'linux-beta' in tag else ('linux', 'Download for Linux and the Steam Deck')
     for n in sorted(names, key=order):
         url = f'{REPO}/releases/download/{tag}/{n}'
         if n == 'Pokopia-Native-for-Windows.zip': cards.append(card('windows', url, 'Download for Windows'))
         elif n == 'Pokopia-Native-for-Mac.zip': cards.append(card('mac', url, 'Download for Mac and iPhone'))
-        elif n.endswith('.AppImage') and not any('get-linux' in c for c in cards): cards.append(card('linux', url, 'Get the Linux and Steam Deck beta (AppImage)'))
+        elif n.endswith('.AppImage') and not any('get-linux' in c for c in cards): cards.append(card(lx, url, f'{lalt} (AppImage)'))
         elif 'Linux' in n and n.endswith('.zip'):
             if any('get-linux' in c for c in cards): extra.append(f"Prefer a terminal, or the AppImage won't start? Use [`{n}`]({url}) instead.")
-            else: cards.append(card('linux', url, 'Get the Linux and Steam Deck beta'))
+            else: cards.append(card(lx, url, lalt))
         elif 'Android' in n and n.endswith('.zip'): cards.append(card('android', url, 'Get the Android beta'))
         elif n.endswith('.apk'): extra.append(f'**Check your phone first:** the [device test]({url}) (`{n}`) says in seconds whether it can run the game.')
         else: extra.append(f'Also here: [`{n}`]({url})')
