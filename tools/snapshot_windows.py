@@ -11,16 +11,17 @@ c1df4dd (git's blob ids, without opening them) when --nxnative names a checkout.
 import argparse, hashlib, pathlib, re, shutil, subprocess, sys
 
 HERE = pathlib.Path(__file__).resolve().parents[1]
+WORK = re.escape(HERE.parent.name)   # this PC's work folder, the one this checkout sits in: its name is not written here
 FIXES = [   # (pattern, replacement, why)
-    (re.compile(r'[A-Za-z]:\\Users\\[^\\\s`]+\\Downloads\\Eden-NS2-work\\'), r'<work>\\', 'this PC\'s work folder'),
+    (re.compile(rf'[A-Za-z]:\\Users\\[^\\\s`]+\\Downloads\\{WORK}\\'), r'<work>\\', 'this PC\'s work folder'),
     (re.compile(r'[A-Za-z]:\\Users\\[^\\\s`]+\\Downloads\\update_exefs\\exefs'), r'<2.0.1 ExeFS>', 'this PC\'s dump path'),
     (re.compile(r'`Downloads\\base_exefs`'), r'`<another ExeFS>`', 'this PC\'s dump path'),
-    (re.compile(r'Eden-NS2-work([\\/])'), r'<work>\1', 'this PC\'s work folder'),
+    (re.compile(rf'{WORK}([\\/])'), r'<work>\1', 'this PC\'s work folder'),
     (re.compile(r'main\'s read-only data \(ro\+0x[0-9a-f]+\)'), r"main's read-only data (location not published)", 'the LDN passphrase\'s location'),
 ]
 # Built in, only what names nobody: a user folder on Windows or a Mac, this PC's work folder. The names, addresses and values that must not be
 # published are not written here (this script is published): --rules names a private file with more "never<TAB>regex" lines.
-NEVER = [re.compile(p, re.I) for p in (r'[A-Za-z]:\\Users\\', r'/c/Users/', r'/Users/[A-Za-z]', r'Eden-NS2-work')]
+NEVER = [re.compile(p, re.I) for p in (r'[A-Za-z]:\\Users\\', r'/c/Users/', r'/Users/[A-Za-z]', WORK)]
 README_OLD = 'This repository stays local and private until the game boots (milestone M4). Rules: [docs/PROVENANCE.md](docs/PROVENANCE.md).'
 README_NEW = ('Published inside [pokopia-native](../README.md) as `windows/`, from release 1.1.0 (a snapshot of the private development repository, without its '
               'history; `docs/M7-REPORT.md`). Rules: [docs/PROVENANCE.md](docs/PROVENANCE.md).')
