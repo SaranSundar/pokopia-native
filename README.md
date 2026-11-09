@@ -35,6 +35,12 @@ builds the iPhone app. On Android, check your phone first with the device test o
 > your computer from your own dump. Please never share build folders, apps, saves or shader files. Not affiliated with Nintendo,
 > The Pokémon Company, GAME FREAK or Koei Tecmo ([LEGAL.md](LEGAL.md)).
 
+> [!WARNING]
+> **Pokopia Native is free, and always will be.** It will never charge you for anything: not the downloads, the builds, an app, a
+> feature, early access, support or help. If anyone asks you to pay for Pokopia Native or for anything made with it, they have nothing to
+> do with this project: don't pay them, and don't trust their files. The only official downloads are on this page and its
+> [releases](https://github.com/xFractals/pokopia-native/releases).
+
 ## Get started
 
 <p>

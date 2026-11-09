@@ -54,6 +54,16 @@ It decrypts nothing and bypasses nothing. It takes a dump that is already plain 
 console with your own tools, and needs no keys, tickets or certificates. If your dump is encrypted or packaged, this
 tool cannot read it and will not try.
 
+## Free, forever
+
+Pokopia Native is free of charge, and will stay free forever. The project never charges players for anything related to it: not the
+downloads, not the builds or the apps they make, not features, early access, support or help, and nothing else.
+
+Anyone who charges for Pokopia Native, or for anything made with it, is not associated with Pokopia Native and should not be trusted:
+nobody sells anything on the project's behalf. Please don't pay them or run their files, and tell us on the
+[Discord](https://discord.gg/Aj9GqxZj8V) or in a [GitHub issue](https://github.com/xFractals/pokopia-native/issues/new/choose). The only
+official downloads are this repository's [releases](https://github.com/xFractals/pokopia-native/releases).
+
 ## Licences
 
 - `ampere-lower/`: GPL-3.0-or-later (Eden-NS2 code; its `LICENSE` and `NOTICE.md` are in that folder).
