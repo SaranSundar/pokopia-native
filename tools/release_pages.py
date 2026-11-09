@@ -240,7 +240,9 @@ def main():
                   "- **Controls:** touch controls on the screen, or a Bluetooth or USB controller, or a handheld's own buttons.\n"
                   '- **Settings:** Back opens them (resolution, frame rate, controls).\n'
                   '- **Not in this beta yet:** Link Play, and bringing a save over.')
-            body_md = page(tag, summary, downloads(tag, names), "What's new in Android beta 2", new, gl, more, checksums)
+            only = (f'**This is the Android download only.** Windows, Mac, iPhone, Linux and Steam Deck players: use the [latest release]({REPO}/releases/latest). '
+                    "The game on the phone runs on the 1.3.3 runtime; the builder in the zip is 1.4.0's, so it shows 1.4.0.")
+            body_md = page(tag, summary, downloads(tag, names) + '\n\n' + only, "What's new in Android beta 2", new, gl, more, checksums)
         elif 'linux-beta' in tag:
             key = next((k for k in bs if re.match(r"(?i)(what changed|what's new|new in)", k)), None)
             n = re.search(r'beta\.?(\d*)$', tag).group(1) or '1'
