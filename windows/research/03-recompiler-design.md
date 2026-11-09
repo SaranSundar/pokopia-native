@@ -435,7 +435,7 @@ own DLL.
 
 1. **Decoder cross-check:** decode all 12.5 M words with our decoder and with LLVM's AArch64 MC disassembler, which is linked in
    anyway. Any disagreement fails the build. This takes seconds.
-2. **Instruction oracle on real hardware:**
+2. **Instruction oracle on the Mac's arm64 chip:**
    - Generate random register and memory states and edge values (NaN, ±0, denormals, ±inf, saturation boundaries, TBL indices ≥ 16,
      all FPCR modes).
    - Run each instruction natively on the M4 through a tiny `MAP_JIT` harness, and through the semantics library compiled natively

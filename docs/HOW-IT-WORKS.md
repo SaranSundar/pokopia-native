@@ -48,11 +48,9 @@ phone over USB; [its guide](https://github.com/xFractals/pokopia-native/blob/and
 Shaders are the small programs a graphics card runs to draw each thing on screen. A Switch 2 game ships its shaders compiled for the
 Switch 2's graphics chip, so they have to be translated before your device can use them.
 
-- **The lowering.** Switch 2 shaders use a newer graphics instruction set than nxnative's shader chain understands. The
-  [Eden-NS2](https://github.com/0x2593/Eden-NS2) emulator has a decoder for them that lowers them to the older instruction set, and
-  `ampere-lower/` in this repository is a standalone build of exactly that piece. While getting the picture to match the console, four bugs
-  turned up in that decoder (wrong colours, missing sun and cloud shadows, a crash); the fixes went to Eden-NS2 as a pull request, and this
-  tool carries the fixed code.
+- **The lowering.** Switch 2 shaders use a newer graphics instruction set than nxnative's shader chain understands, so a lowering step
+  (`ampere-lower/` in this repository) first rewrites them in the older instruction set. Its origin and licence are in
+  [LEGAL.md](../LEGAL.md).
 - **Mac and iPhone: to Metal, ahead of time.** The rest of nxnative's chain takes over: the Ryujinx translator, SPIRV-Cross and Apple's Metal
   compiler. That translation can't happen on the fly on a Mac or a phone with this chain, so it's done during the build: the build finds
   every shader program in the game's files, 4,012 of them, and translates them all. That's the long stage of a Mac build.

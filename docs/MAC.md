@@ -229,7 +229,7 @@ The Mac app runs on its own Metal engine, so Windows' Resolution setting, Wide v
 - **Link Play** works between the Mac, Windows PCs, iPhones and the Linux beta: [Playing together](PLAYING-TOGETHER.md). You turn it on in
   the launcher. To host over the internet from a Mac, forward a port on your router by hand, or use a VPN.
 - **Your save** is in `~/Library/Application Support/nxnative/0400A3A01EE4C000/save` (Finder → Go → Go to Folder…). To bring one from
-  Eden, Windows, the iPhone or Linux, quit the app and copy the save's three folders in: [Moving your save](SAVES.md).
+  Windows, the iPhone or Linux, quit the app and copy the save's three folders in: [Moving your save](SAVES.md).
 
 ## The app icon
 

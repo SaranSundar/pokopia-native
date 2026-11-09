@@ -226,7 +226,7 @@ The "for Windows PCs" download builds **Pokopia for Windows** from your dump: th
 
 - Both game versions, **1.0.5 and 2.0.1**.
 - **60 fps** in the field on the test PC; mouse look written straight into the game's camera, as on the Mac; controllers (Xbox, PlayStation, Switch Pro) as Switch controllers, with rumble and motion; SDL3 sound.
-- **Your save**: `%APPDATA%\Pokopia Native\<version>\save`; **Import save…** (or `nxs2.py import-save`) brings yours from Eden, the iPhone or the Mac. Windows saves load on the Mac and the iPhone.
+- **Your save**: `%APPDATA%\Pokopia Native\<version>\save`; **Import save…** (or `nxs2.py import-save`) brings yours from the iPhone or the Mac. Windows saves load on the Mac and the iPhone.
 - **Run-time shaders** are recorded and translated on the spot the first time the game makes them; no refresh step.
 - **No installer, no administrator rights, no compiler**: the download brings its own tools in `windows\bin` (their notices in `windows\bin\THIRD-PARTY-NOTICES.txt`). It needs Windows 10/11 64-bit, an AVX2 CPU, a Vulkan 1.3 GPU, Python 3.12–3.14, the .NET 10 runtime and git, and about 12 GB per game version. The build took 20 minutes on the test PC (4 workers; longer on smaller PCs), at idle priority. Details: [docs/WINDOWS.md](https://github.com/xFractals/pokopia-native/blob/main/docs/WINDOWS.md).
 - The source is in `windows/` (MIT).

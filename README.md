@@ -100,7 +100,7 @@ The builder checks all of this for you and tells you what to install.
 | **Auto port forwarding** | ✓ | By hand | By hand | — | Next beta |
 | **Import a save** | ✓ | By hand | By hand | Not yet | ✓ |
 
-Link Play is for up to four players; Story co-op is experimental. Saves can come from Eden, a PC, a Mac or an iPhone ([how](docs/SAVES.md)).
+Link Play is for up to four players; Story co-op is experimental. Saves move between a PC, a Mac and an iPhone ([how](docs/SAVES.md)).
 
 **On the way:** smoother edges (anti-aliasing), and settings on the Mac and iPhone.
 
@@ -122,7 +122,7 @@ In the game: the PC in your house → **Link Play** → **Local connection**. Mo
   [Android](https://github.com/xFractals/pokopia-native/blob/android-beta/docs/ANDROID.md) ·
   [Linux & Steam Deck](https://github.com/xFractals/pokopia-native/blob/linux-beta/docs/LINUX.md).
 - **Something not working?** [Common problems](docs/TROUBLESHOOTING.md) has the usual fixes.
-- **Moving your save?** [Your saves](docs/SAVES.md) covers Eden, the PC, the Mac and the iPhone.
+- **Moving your save?** [Your saves](docs/SAVES.md) covers the PC, the Mac and the iPhone.
 - **Questions?** Ask on [Discord](https://discord.gg/Aj9GqxZj8V): install help, co-op partners and release news.
 - **Found a bug?** [Open an issue](https://github.com/xFractals/pokopia-native/issues/new/choose). The forms say which log to attach, never
   your save or game files.
@@ -130,7 +130,8 @@ In the game: the PC in your house → **Link Play** → **Local connection**. Mo
 
 ## Credits and licence
 
-**MIT licence.** Pokopia Native is written clean-room: none of its code comes from emulators or from other ports of the game.
+**MIT licence** for Pokopia Native's own code. It also carries third-party components under their own licences, all listed in
+[LEGAL.md](LEGAL.md).
 
 - **NxNative**, the host the Mac and iPhone apps run on.
 - **@Quantumenis**, for the Windows CPU work and the RTX 50 freeze fix.

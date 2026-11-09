@@ -129,8 +129,6 @@ places further on build theirs the first time you visit, once.
 The Windows game plays the save in **`%APPDATA%\Pokopia Native\<version>\save`** (the game's own `B00`, `G00` and `S00`
 folders), started empty the first time. To bring the save you already have:
 
-- **From Eden on this PC:** **Bring my save** in the builder (**Import save…** in Advanced) → Yes, or
-  `python nxs2.py import-save "<build folder>" --eden`. Eden's save is only read.
 - **From the iPhone, a Mac or anywhere else:** a folder holding `B00`, `G00` and `S00` (the iPhone's
   `Documents\save` as `tools\phone_pull.py` brings it, the Mac's `~/Library/Application Support/nxnative/0400A3A01EE4C000/save`):
   **Bring my save** (or **Import save…**) → No → choose it, or `python nxs2.py import-save "<build folder>" "<that folder>"`.
