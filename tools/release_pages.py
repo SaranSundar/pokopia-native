@@ -10,7 +10,7 @@ import argparse, json, pathlib, re
 REPO = 'https://github.com/xFractals/pokopia-native'
 ART = 'https://raw.githubusercontent.com/xFractals/pokopia-native/main/docs/assets/release'
 GUIDE = REPO + '/blob/main/docs/'
-LINUX_GUIDE = REPO + '/blob/linux-beta/docs/LINUX.md'
+LINUX_GUIDE = GUIDE + 'LINUX.md'   # on main from 1.4.0, when Linux left beta
 ANDROID_GUIDE = REPO + '/blob/android-beta/docs/ANDROID.md'
 
 # tag: (title, one-line summary)
