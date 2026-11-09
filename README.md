@@ -16,14 +16,14 @@ with you from device to device, and you can play together across them.
   <a href="https://github.com/xFractals/pokopia-native/releases/latest/download/Pokopia-Native-for-Mac.zip"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/get-mac-dark.svg"><img src="docs/assets/get-mac-light.svg" width="404" alt="Download for Mac and iPhone"></picture></a>
   <br>
   <a href="https://github.com/xFractals/pokopia-native/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/get-linux-dark.svg"><img src="docs/assets/get-linux-light.svg" width="404" alt="Download for Linux and Steam Deck"></picture></a>
-  <a href="https://github.com/xFractals/pokopia-native/releases?q=android-beta"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/get-android-dark.svg"><img src="docs/assets/get-android-light.svg" width="404" alt="Get the Android beta"></picture></a>
+  <a href="https://github.com/xFractals/pokopia-native/releases/tag/v1.3.3-android-beta.2"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/get-android-dark.svg"><img src="docs/assets/get-android-light.svg" width="404" alt="Get the Android beta"></picture></a>
 </p>
 
 **New here?** Every download has a step-by-step guide: **[Windows](docs/WINDOWS.md)** · **[Mac](docs/MAC.md)** ·
 **[iPhone](docs/IPHONE.md)** · **[Android](https://github.com/xFractals/pokopia-native/blob/android-beta/docs/ANDROID.md)** ·
 **[Linux & Steam Deck](docs/LINUX.md)**. Either the Windows or the Mac download also
 builds the iPhone app. On Android, check your phone first with the device test on the
-[Android beta's page](https://github.com/xFractals/pokopia-native/releases?q=android-beta). What's new is in the
+[Android beta's page](https://github.com/xFractals/pokopia-native/releases/tag/v1.3.3-android-beta.2). What's new is in the
 [release notes](https://github.com/xFractals/pokopia-native/releases).
 
 <p>
