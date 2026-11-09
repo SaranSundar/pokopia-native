@@ -1017,8 +1017,8 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         }
         case 0x886: { // VOTEU ballot and independent uniform predicate output.
             const u32 output = insn.Bits(81, 3), target = insn.Bits(16, 8);
-            if (target > 63 || insn.words[1] ||
-                (output > 1 && output != 7) || insn.Bits(72, 2) > 2 || native_predicate != 7)
+            // Any UP0-UP6 output lands in its mapped predicate P6-P0 like the other uniform-predicate forms (Pokopia's compute shaders write UP2).
+            if (target > 63 || insn.words[1] || insn.Bits(72, 2) > 2 || native_predicate != 7)
                 return fail(index, "native uniform vote mode");
             const u32 temporary = output == 7 ? 7 : 6 - output;
             const u32 mask = 1U << temporary;
@@ -1047,19 +1047,23 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             restore_predicate();
             break;
         }
-        case 0x89c: { // Uniform predicate AND with an optionally inverted third source.
+        case 0x89c: { // Uniform predicate AND of the three sources, each optionally inverted: any one-row truth table.
             const u32 target = insn.Bits(81, 3);
             const u32 lut = insn.Bits(64, 3) | (insn.Bits(72, 5) << 3);
+            // A table with a single true row A<<2|B<<1|C is the AND of the sources, inverting those whose row bit is 0
+            // (0x80 = A&B&C, 0x40 = A&B&!C as before; Pokopia's 0x04 = !A&B&!C with B the constant true).
             if (target == 7 || insn.Bits(84, 3) != 7 ||
-                insn.Bits(16, 8) || insn.words[1] || (lut != 0x80 && lut != 0x40))
+                insn.Bits(16, 8) || insn.words[1] || std::popcount(lut) != 1)
                 return fail(index, "native uniform predicate LUT mode");
+            const u32 minterm = static_cast<u32>(std::countr_zero(lut));
+            const u32 negate_a = (minterm & 4) ? 0U : 8U, negate_b = (minterm & 2) ? 0U : 8U, negate_c = (minterm & 1) ? 0U : 8U;
             const auto mapped = [](u32 source) { return ((source & 7) == 7 ? 7 : 6 - (source & 7)) | (source & 8); };
             emit(0x38e8000000070000ULL | 253 | (u64{255} << 8) | (u64{0x7f} << 20));
             emit(0x38f0000000070000ULL | (u64{239} << 8) | (u64{0x7f} << 20));
             // A UPn guard predicates the PSETP: when it is false the target keeps its loaded value.
             emit(0x5090000000000000ULL | (u64{mapped(native_predicate)} << 16) | (u64{6 - target} << 3) | 7 |
-                 (u64{mapped(insn.Bits(87, 4))} << 12) | (u64{mapped(insn.Bits(77, 4))} << 29) |
-                 (u64{mapped(insn.Bits(68, 4)) ^ (lut == 0x40 ? 8U : 0U)} << 39));
+                 (u64{mapped(insn.Bits(87, 4)) ^ negate_a} << 12) | (u64{mapped(insn.Bits(77, 4)) ^ negate_b} << 29) |
+                 (u64{mapped(insn.Bits(68, 4)) ^ negate_c} << 39));
             emit(0x38e8000000070000ULL | 239 | (u64{239} << 8) | (u64{1} << (26 - target)));
             emit(0x38f0000000070000ULL | (u64{253} << 8) | (u64{0x7f} << 20));
             break;
@@ -1434,20 +1438,23 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             // type 73..75, ordering 76..79, no predicate output (81..83 = PT), operation 87..90 and no
             // uniform-register addressing (bit 91). Only a zero offset and the captured ADD U32 form pass.
             const u32 address = insn.Bits(24, 8), data = insn.Bits(32, 8);
-            if (address >= 254 || (address & 1) || data == 255 || insn.Bits(40, 24) ||
+            // The 24-bit immediate offset goes into Maxwell ATOM's 20-bit signed offset (bits 28-47) when it fits (Pokopia: +16, +32 ...).
+            const s32 offset = static_cast<s32>(insn.Bits(40, 24) << 8) >> 8;
+            if (address >= 254 || (address & 1) || data == 255 || offset < -(1 << 19) || offset >= (1 << 19) ||
                 insn.words[2] != 0x001ee100)
                 return fail(index, "native global register atomic mode");
             emit(0xed00000000000000ULL | predicate | dest | (u64{address} << 8) |
-                (u64{data} << 20) | (u64{1} << 48));
+                (u64{data} << 20) | (u64{static_cast<u32>(offset) & 0xfffffU} << 28) | (u64{1} << 48));
             break;
         }
         case 0x9a8: { // ATOMG.E.ADD.STRONG.GPU U32 through a uniform pointer.
             const u32 address = uniform_register(insn.Bits(64, 6));
-            if (insn.Bits(24, 8) != 255 || insn.Bits(40, 24) ||
+            const s32 offset = static_cast<s32>(insn.Bits(40, 24) << 8) >> 8;   // into Maxwell ATOM's 20-bit signed offset, as the register form
+            if (insn.Bits(24, 8) != 255 || offset < -(1 << 19) || offset >= (1 << 19) ||
                 (insn.words[2] & ~0x3fU) != 0x081ee140 || address == ~0U || (address & 1))
                 return fail(index, "native global atomic mode");
             emit(0xed00000000000000ULL | predicate | dest | (u64{address} << 8) |
-                (u64{insn.Bits(32, 8)} << 20) | (u64{1} << 48));
+                (u64{insn.Bits(32, 8)} << 20) | (u64{static_cast<u32>(offset) & 0xfffffU} << 28) | (u64{1} << 48));
             break;
         }
         case 0xb97: { // SULD.P.2D/2D_ARRAY.IGN, direct descriptor and R, RG, or RGBA channels.
@@ -2066,11 +2073,14 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             break;
         case 0x91a: { // Native scoreboard waits; synchronous copies have no outstanding groups.
             const u32 scoreboard = insn.words[1] & ~0xfc0U;
+            // SB0 waits with a count (DEPBAR.LE SB0, n; Pokopia: n = 2) wait on variable-latency loads and samples, which the
+            // Maxwell translation completes synchronously: a no-op, or the full wait when the program has asynchronous copies.
+            const bool sb0_wait = (scoreboard & ~0x3fU) == 0x8000;
             if (insn.words[0] != 0x791a ||
-                (scoreboard != 0xd000 && insn.words[1] != 0x800e && !(uses_async_copy && scoreboard == 0x8000)) || insn.words[2]) {
+                (scoreboard != 0xd000 && insn.words[1] != 0x800e && !sb0_wait) || insn.words[2]) {
                 return fail(index, "native dependency barrier mode");
             }
-            if (scoreboard == 0x8000) emit(0xef98000000000000ULL | predicate);
+            if (sb0_wait && uses_async_copy) emit(0xef98000000000000ULL | predicate);
             break;
         }
         case 0x361: { // Scalar bindless cube sample: XY, then Z and descriptor handle.
