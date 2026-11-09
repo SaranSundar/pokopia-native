@@ -503,8 +503,10 @@ def unblock_download():
 # driver, window and guides. Pokopia Native runs none of them, so every setup removes them from its copy of nxnative (and from the cached
 # Windows port) and puts a stand-in where the pak reader was. None of them is in the shader chain's version (dmsh_chain.py FILES), so no
 # build's cache changes.
-NX_STRIP = ('dm/tools/nx_extract', 'scripts', 'docs', 'README.md', 'AGENTS.md', 'dm/tools/tests', 'dm/tools/fuzz',
+NX_STRIP = ('dm/tools/nx_extract', 'scripts', 'docs', 'README.md', 'AGENTS.md', 'dm/tools/tests', 'dm/tools/fuzz', 'dm/ios/tests/test_xcode_workflow.py',
             'win/build_ipa_windows.py', 'win/gui.pyw', 'win/README.md', 'win/TUTORIAL.md', 'win/LINUX.md')
+FORK_STRIP = ('README.md', 'README.nxnative.md', 'Build-IPA-GUI.bat')   # the Windows port's own guides and NSP-and-keys window, beside its win/ ones
+# Also every dm/games/<title>/README.md: other games' notes, whose build lines name the keys the removed NSP scripts took; nothing reads them.
 UEPAK_STUB = ("# Pokopia Native's copy of nxnative: the Unreal Engine pak reader that was here (it decrypted pak indexes with a key found in\n"
               "# the game's code) is removed. Pokopia is not an Unreal Engine game; this stand-in only lets the modules that import it load.\n"
               "def unreal_paks(*a, **k): return []\n"
@@ -515,11 +517,12 @@ def strip_nxnative():
     number of times: setup's resets bring the files back, and this removes them again."""
     fork = HERE / 'nxnativewindows-src'
     for root in (NX, fork):
-        for rel in NX_STRIP:
-            if root == fork and not rel.startswith('win/'): continue
+        for rel in NX_STRIP + (FORK_STRIP if root == fork else ()):
+            if root == fork and not rel.startswith('win/') and rel not in FORK_STRIP: continue
             p = root / rel
             if p.is_dir(): shutil.rmtree(p)
             elif p.exists(): p.unlink()
+    for p in (NX / 'dm/games').glob('*/README.md'): p.unlink()
     ue = NX / 'dm/gfx/tools/uepak.py'
     if ue.exists() and ue.read_bytes() != UEPAK_STUB.encode(): ue.write_bytes(UEPAK_STUB.encode())
     for shim in (NX / 'win/pyshim/sitecustomize.py', fork / 'win/pyshim/sitecustomize.py'):
