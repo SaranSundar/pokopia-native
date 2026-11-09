@@ -11,7 +11,7 @@
 # (default %LOCALAPPDATA%\pokopia-native). nxrt runs at below-normal priority. Nothing here names a game file: every path comes from the arguments.
 # Shaders (an installer build): -Shaders <nxshader cache> (NXRT_SHADER_CACHE), -ShaderBuild <build folder> (NXRT_SHADER_BUILD: its hand-made answers), and for the
 # run-time shaders -ShaderTool <nxshader.py> with -Python, -Installer <the installer's lowering steps> and -SpirvTools <folder> (NXRT_SHADER_TOOL, NXSHADER_TOOLS);
-# -Fonts <folder> (DM_FONT_DIR), -PipelineSeed <list> (NXRT_VK_PIPELINE_SEED).
+# -Fonts <folder> (DM_FONT_DIR), -PipelineSeed <list> (NXRT_VK_PIPELINE_SEED), -Dlc <folder> (DM_AOC_DIR: your own DLC, see below).
 # Link Play "Local connection" between our builds (docs/coop-step1c.md, docs/coop-step1d.md): -LinkPlay hosts and finds hosts on this network; -Join <IPv4>[:<port>]
 # visits one host by address instead (a home-network address; a VPN's, such as Radmin VPN's 26.x, needs -Internet); -Internet plays across the internet:
 # every player gives the host's room code (-Room), and a host without one gets a new code shown in this window; -Relay <IPv4>[:<port>] goes through a relay
@@ -50,6 +50,7 @@ param(
     [string]$SpirvTools = "",
     [string]$Fonts = "",
     [string]$PipelineSeed = "",
+    [string]$Dlc = "",
     [string]$Window = "",
     [switch]$Silent,
     [switch]$Fullscreen,
@@ -93,6 +94,7 @@ if ($Config) {
     if (-not $SpirvTools) { $SpirvTools = CfgPath $c.spirv_tools }
     if (-not $Fonts) { $Fonts = CfgPath $c.fonts }
     if (-not $PipelineSeed) { $PipelineSeed = CfgPath $c.pipeline_seed }
+    if (-not $Dlc) { $Dlc = CfgPath $c.dlc }
 }
 foreach ($n in @("ExeFS", "Dll", "RomFS", "Save")) { if (-not (Get-Variable $n -ValueOnly)) { Write-Error "-$n is needed (or -Config <play.json>)"; exit 2 } }
 # The defaults are resolved here, not in param(): some hosts leave $PSScriptRoot empty there (a script block, -Command, older shells), so -Exe was needed
@@ -688,6 +690,11 @@ if ($Shaders) {   # an installer build's shader cache (nxs_rt.c), and the run-ti
 }
 if ($Fonts) { $env:DM_FONT_DIR = $Fonts }
 if ($PipelineSeed) { $env:NXRT_VK_PIPELINE_SEED = $PipelineSeed }
+# Your own DLC: nxs2.py import-dlc copies it from your dump of the DLC you bought into the build's dlc folder, one numbered folder per add-on
+# content. Only a folder that is really there is passed on (DM_AOC_DIR, hle_misc.c and hle_fs.c); without one the game owns no add-on content.
+if ($Dlc -and (Test-Path -LiteralPath $Dlc -PathType Container) -and (Get-ChildItem -LiteralPath $Dlc -Directory | Where-Object { $_.Name -match '^[1-9][0-9]*$' })) {
+    $env:DM_AOC_DIR = $Dlc
+}
 $args_ = @((Resolve-Path -LiteralPath $ExeFS).Path, "--dll", (Resolve-Path -LiteralPath $Dll).Path, "--romfs", (Resolve-Path -LiteralPath $RomFS).Path,
            "--save", [System.IO.Path]::GetFullPath($Save), "--temp", $temp, "--log", $logs, "--gfx", "vulkan")
 if ($DryRun) {

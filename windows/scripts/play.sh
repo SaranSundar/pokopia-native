@@ -51,13 +51,13 @@ def p(v):
     return v if os.path.isabs(v) else os.path.normpath(os.path.join(d, v))
 for key, var in (('exefs', 'C_EXEFS'), ('game', 'C_GAME'), ('romfs', 'C_ROMFS'), ('save', 'C_SAVE'), ('work', 'C_WORK'), ('exe', 'C_EXE'), ('shaders', 'C_SHADERS'),
                  ('shader_build', 'C_SHADER_BUILD'), ('shader_tool', 'C_SHADER_TOOL'), ('python', 'C_PYTHON'), ('installer', 'C_INSTALLER'),
-                 ('spirv_tools', 'C_SPIRV_TOOLS'), ('fonts', 'C_FONTS'), ('pipeline_seed', 'C_SEED'), ('dotnet', 'C_DOTNET')):
+                 ('spirv_tools', 'C_SPIRV_TOOLS'), ('fonts', 'C_FONTS'), ('pipeline_seed', 'C_SEED'), ('dotnet', 'C_DOTNET'), ('dlc', 'C_DLC')):
     print(f'{var}={shlex.quote(p(c.get(key)))}')
 EOF
 )"
   : "${EXEFS:=$C_EXEFS}" "${GAME:=$C_GAME}" "${ROMFS:=$C_ROMFS}" "${WORK:=$C_WORK}" "${EXE:=$C_EXE}" "${SHADERS:=$C_SHADERS}"
   : "${SHADER_BUILD:=$C_SHADER_BUILD}" "${SHADER_TOOL:=$C_SHADER_TOOL}" "${PYTHON:=$C_PYTHON}" "${INSTALLER:=$C_INSTALLER}" "${SPIRV_TOOLS:=$C_SPIRV_TOOLS}"
-  : "${FONTS:=$C_FONTS}" "${SEED:=$C_SEED}"
+  : "${FONTS:=$C_FONTS}" "${SEED:=$C_SEED}" "${DLC:=$C_DLC}"
   [ -z "$SAVE" ] && SAVE=$C_SAVE && NEWSAVE=1
   # the .NET the build used (the AppImage's own, or ~/.dotnet): the shader translator runs on it for shaders the game makes in play
   [ -n "$C_DOTNET" ] && [ -x "$C_DOTNET/dotnet" ] && [ -z "${DOTNET_ROOT:-}" ] && export DOTNET_ROOT=$C_DOTNET PATH=$C_DOTNET:$PATH
@@ -268,6 +268,9 @@ fi
 [ -n "$SEED" ] && export NXRT_VK_PIPELINE_SEED=$SEED
 KEYS=$SETTINGS/controls.json
 [ -z "${DM_KEYMAP:-}" ] && [ -f "$KEYS" ] && export DM_KEYMAP=$KEYS   # the keyboard's keys; the game logs the map it uses
+# your own DLC: nxs2.py import-dlc copies it from your dump of the DLC you bought into the build's dlc folder, one numbered folder per add-on
+# content; only a folder that is really there is passed on (DM_AOC_DIR), and without one the game owns no add-on content
+if [ -n "${DLC:-}" ] && [ -d "$DLC" ] && ls "$DLC" 2>/dev/null | grep -qE '^[1-9][0-9]*$'; then export DM_AOC_DIR=$DLC; fi
 abs() { case $1 in /*) echo "$1" ;; *) (cd "$(dirname "$1")" && echo "$PWD/$(basename "$1")") ;; esac; }   # a new save folder need not exist yet
 ARGS=("$(abs "$EXEFS")" --dll "$(abs "$GAME")" --romfs "$(abs "$ROMFS")" --save "$(abs "$SAVE")" --temp "$TEMP" --log "$LOGS" --gfx vulkan)
 if [ -n "$DRYRUN" ]; then
