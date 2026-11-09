@@ -65,6 +65,8 @@ def shot(name, box):
 
 DAY = shot('iphone-day.png', (195, 28, 755, 343))       # crops keep the touch buttons out of frame
 NIGHT = shot('iphone-night.png', (215, 25, 765, 335))
+CLIP = IMG / 'hero-clip.gif'   # a short silent loop of play: it keeps moving inside the hero picture
+BACK = 'data:image/gif;base64,' + base64.b64encode(CLIP.read_bytes()).decode() if CLIP.is_file() else DAY
 
 def framed(x, y, w, h, href, p, uid, pad=8, r=24):
     return (f'<clipPath id="c{uid}"><rect x="{x+pad}" y="{y+pad}" width="{w-2*pad}" height="{h-2*pad}" rx="{r-pad+2}"/></clipPath>'
@@ -98,7 +100,7 @@ def hero(m):
         x = 92 + i * 258
         if i: b += f'<path d="M{x-28} 572v74" stroke="{p["line"]}" stroke-width="2"/>'
         b += text(x, 606, v, 38, p['ink'], 700, ls=-.6) + text(x, 641, l, 21, p['muted'])
-    b += framed(968, 92, 560, 315, DAY, p, 'd') + framed(840, 330, 604, 340, NIGHT, p, 'n')
+    b += framed(968, 92, 560, 315, BACK, p, 'd') + framed(840, 330, 604, 340, NIGHT, p, 'n')
     b += chip(864, 648, 'Captured on an iPhone', p)
     return svg(W, H, b, d)
 
@@ -111,7 +113,7 @@ def hero_phone(m):
     b += text(52, 282, 'on every device.', 68, p['ink'], 750, ls=-2)
     b += text(56, 350, 'Rebuilt from your own copy of the game for', 29, p['muted'])
     b += text(56, 390, 'Windows, Mac, iPhone, Android and Steam Deck.', 29, p['muted'])
-    b += framed(176, 452, 568, 320, DAY, p, 'd') + framed(56, 600, 600, 338, NIGHT, p, 'n')
+    b += framed(176, 452, 568, 320, BACK, p, 'd') + framed(56, 600, 600, 338, NIGHT, p, 'n')
     return svg(W, H, b, d)
 
 CARDS = {
