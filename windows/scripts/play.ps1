@@ -273,7 +273,7 @@ function Show-LinkPlay($pref, [string]$title, $keys, $disp, $padc) {
     }
     $flow = $pages['Link Play']
     if ($script:noSave) {   # easy to miss: without Import save the game quietly starts a new one
-        $ns = New-Label "No save here yet, so the game starts a new one. To play your save from Eden, the iPhone or the Mac, press Cancel and use Import save... in the builder first."
+        $ns = New-Label "No save here yet, so the game starts a new one. To play your save from the iPhone, a Mac or another PC, press Cancel and use Import save... in the builder first."
         $ns.ForeColor = [System.Drawing.Color]::DarkRed; $ns.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 8); $flow.Controls.Add($ns)
     }
     $flow.Controls.Add((New-Label "How do you want to play?"))

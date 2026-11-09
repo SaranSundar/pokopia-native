@@ -110,7 +110,7 @@ ask_yes() {   # title text default(yes/no) -> yes or no
 }
 choose_mode() {   # the last mode -> the new one (alone, host, join, inet-host, inet-visit) or empty (cancelled)
   local text="How do you want to play? In the game: Link Play, then Local connection."
-  [ -n "$NOSAVE" ] && text="No save here yet, so the game starts a new one. To play your save from Eden, the phone or a Mac, cancel and run"$'\n'"nxs2.py import-save first."$'\n\n'"$text"
+  [ -n "$NOSAVE" ] && text="No save here yet, so the game starts a new one. To play your save from the phone, a Mac or another PC, cancel and run"$'\n'"nxs2.py import-save first."$'\n\n'"$text"
   local last=$1 items=("alone" "Play alone" "host" "Link Play: host here (players on this network join this computer's address)"
                        "join" "Link Play: join a host on this network by its address" "inet-host" "Host over the internet (your router forwards port 47600)"
                        "inet-visit" "Visit a host over the internet")
