@@ -55,7 +55,7 @@ builds the iPhone app. On Android, check your phone first with the device test o
 1. **Download** the zip for your computer (the buttons above) and unzip it into a new folder.
 2. **Open Pokopia Native Builder.** It checks your computer, asks for your game files and builds. The first build takes 15 to 40 minutes
    (30 to 60 for Android); updates take 10 to 20.
-3. **Play.** On Windows, open **Play Pokopia** in the build's `out` folder. On a Mac, open the app the builder made. For an iPhone or an
+3. **Play.** On Windows, open **`Play Pokopia <version>.exe`** in the build's `out` folder (pin it to the taskbar, or add it to Steam). On a Mac, open the app the builder made. For an iPhone or an
    Android phone, the builder makes the app and helps you put it on the phone: see the [iPhone guide](docs/IPHONE.md) or the
    [Android guide](https://github.com/xFractals/pokopia-native/blob/android-beta/docs/ANDROID.md).
 

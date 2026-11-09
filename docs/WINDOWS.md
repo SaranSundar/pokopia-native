@@ -68,7 +68,11 @@ stops, run it again: it continues where it was. When a new pokopia-native comes 
 
 ### Play
 
-Double-click **`<build folder>\out\Play Pokopia <version>.cmd`** (or **Play** in the builder, or `python nxs2.py run "<build folder>"`).
+Double-click **`<build folder>\out\Play Pokopia <version>.exe`** (or **Play** in the builder, or `python nxs2.py run "<build folder>"`).
+Pin it to the taskbar, or add it to Steam (**Add a Game → Add a Non-Steam Game**, then **Browse** to it). Keep the file itself in the
+`out` folder: it finds the game next to it. **`Pokopia Settings <version>.exe`** opens the window before the game even after "Don't ask
+again". The `.cmd` files beside them do the same in a console window and take the terminal switches (`-Fullscreen`, `-Window 1600x900`,
+`-Silent`, `-PadCheck`); if the .exe ever says the game didn't start, the .cmd shows the same and more.
 
 Before the game starts, a small window (the launcher) asks how you want to play. It has three tabs: **Link Play** (alone
 or together, [below](#link-play-co-op-between-our-builds)), **Controls** (**Keyboard keys** and **Controller buttons**) and
@@ -80,7 +84,7 @@ or together, [below](#link-play-co-op-between-our-builds)), **Controls** (**Keyb
   press the key you want for it (a key another action had swaps over); **Reset to defaults** brings the layout above back. Keys count by
   their place on the keyboard, so the map works the same under any keyboard language. It is saved for this PC in
   `%APPDATA%\Pokopia Native\controls.json`, and the game's log lists the keys it uses. (If you ticked "Don't ask again",
-  double-click **Pokopia Settings <version>.cmd** beside the Play launcher.) Esc, F11, Alt and the Windows keys can't be used. The Mac and the iPhone keep
+  double-click **`Pokopia Settings <version>.exe`** beside the Play launcher.) Esc, F11, Alt and the Windows keys can't be used. The Mac and the iPhone keep
   their own layout for now.
 - **Controllers:** Xbox, PlayStation and Switch Pro controllers work as Switch controllers (face buttons by position),
   with rumble and motion. So does the Steam Controller, and many less common controllers through SDL's community list
@@ -175,7 +179,7 @@ town's story characters (it turns Interact everywhere on with it). Story request
 [Playing together](PLAYING-TOGETHER.md) says what does and doesn't count. Every player needs it on too. Both work on game
 versions 2.0.1 and 1.0.5 (until 1.3.2 on 2.0.1 only; on 1.0.5 every device needs 1.3.3 or newer).
 
-It remembers your choice. **Don't ask again** starts the same way every time; **`Pokopia Settings <version>.cmd`**, beside
+It remembers your choice. **Don't ask again** starts the same way every time; **`Pokopia Settings <version>.exe`**, beside
 the Play launcher in `<build folder>\out`, shows the window again (so does holding **Shift** while starting the game). The
 settings live in `%APPDATA%\Pokopia Native\linkplay.json`.
 
