@@ -257,7 +257,8 @@ def main():
 
     # the repository's files: tracked, or untracked and not ignored; the worktree's content (a release is packaged from a clean, committed tree)
     names = sorted(set(git('ls-files', '-co', '--exclude-standard', '-z').decode('utf-8').split('\0')) - {''})
-    names = [n for n in names if (HERE / n).is_file() and not n.startswith(('dist/', 'windows/bin/'))]
+    # docs/releases and its cards are the GitHub release pages: they carry these downloads' checksums, so they can't ride inside them
+    names = [n for n in names if (HERE / n).is_file() and not n.startswith(('dist/', 'windows/bin/', 'docs/releases/', 'docs/assets/release/'))]
     modes = {}
     for line in git('ls-files', '-s', '-z').decode('utf-8').split('\0'):
         if line: m, _, _, path = line.split(None, 3); modes[path] = int(m, 8)
