@@ -487,6 +487,37 @@ def unblock_download():
     if n: say(f'{n} downloaded files unblocked (Windows had marked them as from the internet)')
 
 
+# nxnative's own tools for encrypted games, and the docs and tests about them: its NSP extractor and NSP-to-app scripts (they take console
+# keys), its Unreal Engine pak reader (it finds a game's AES key in the game's code and decrypts the pak index), and the Windows port's NSP
+# driver, window and guides. Pokopia Native runs none of them, so every setup removes them from its copy of nxnative (and from the cached
+# Windows port) and puts a stand-in where the pak reader was. None of them is in the shader chain's version (dmsh_chain.py FILES), so no
+# build's cache changes.
+NX_STRIP = ('dm/tools/nx_extract', 'scripts', 'docs', 'README.md', 'AGENTS.md', 'dm/tools/tests', 'dm/tools/fuzz',
+            'win/build_ipa_windows.py', 'win/gui.pyw', 'win/README.md', 'win/TUTORIAL.md', 'win/LINUX.md')
+UEPAK_STUB = ("# Pokopia Native's copy of nxnative: the Unreal Engine pak reader that was here (it decrypted pak indexes with a key found in\n"
+              "# the game's code) is removed. Pokopia is not an Unreal Engine game; this stand-in only lets the modules that import it load.\n"
+              "def unreal_paks(*a, **k): return []\n"
+              "def __getattr__(name): raise AttributeError(f'uepak.{name}: Unreal Engine pak support is removed from this copy of nxnative')\n")
+
+def strip_nxnative():
+    """NX_STRIP removed, the pak reader replaced by UEPAK_STUB, and the AES helper taken out of the Windows port's Python shim. Safe to run any
+    number of times: setup's resets bring the files back, and this removes them again."""
+    fork = HERE / 'nxnativewindows-src'
+    for root in (NX, fork):
+        for rel in NX_STRIP:
+            if root == fork and not rel.startswith('win/'): continue
+            p = root / rel
+            if p.is_dir(): shutil.rmtree(p)
+            elif p.exists(): p.unlink()
+    ue = NX / 'dm/gfx/tools/uepak.py'
+    if ue.exists() and ue.read_bytes() != UEPAK_STUB.encode(): ue.write_bytes(UEPAK_STUB.encode())
+    for shim in (NX / 'win/pyshim/sitecustomize.py', fork / 'win/pyshim/sitecustomize.py'):
+        if not shim.is_file(): continue
+        s = shim.read_text(encoding='utf-8')
+        s2 = re.sub(r"    class _CCCrypt:\n.*?    class _LibSystem:\n        CCCrypt = _CCCrypt\(\)\n",
+                    "    class _LibSystem(_NoLib): pass   # Pokopia Native's copy: no CommonCrypto (only the removed Unreal pak reader used it)\n", s, flags=re.S)
+        if s2 != s: shim.write_bytes(s2.encode('utf-8'))
+
 def setup(args):
     """nxnative at the pinned commit with the Switch 2 patch and the rebuilt translator, and ampere-lower built."""
     unblock_download()
@@ -530,6 +561,7 @@ def setup(args):
     elif not AMPERE.is_file() or AMPERE.stat().st_mtime < (HERE / 'ampere-lower/main.cpp').stat().st_mtime:
         say('building ampere-lower (the Switch 2 shader lowering)')
         run(['sh', HERE / 'ampere-lower/build.sh'], HERE / 'setup-ampere.log')
+    strip_nxnative()   # nxnative's tools for encrypted games: never used here, so never kept
     say(f'setup done: nxnative {head()} + Switch 2 patch at {NX}, ampere-lower at {AMPERE}')
 
 
@@ -547,7 +579,7 @@ def setup_windows(patch_key):
     cur = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=src).stdout.strip()
     if cur != FORK_COMMIT: run(['git', 'fetch', 'origin', FORK_COMMIT], HERE / 'setup-fork-fetch.log', cwd=src, ok=(0, 128))
     if cur != FORK_COMMIT or not (src / 'win/build_app.py').is_file():   # a --no-checkout clone has HEAD but no files yet
-        run(['git', 'checkout', '-q', FORK_COMMIT], HERE / 'setup-fork-checkout.log', cwd=src)
+        run(['git', 'checkout', '-q', '-f', FORK_COMMIT], HERE / 'setup-fork-checkout.log', cwd=src)   # -f: strip_nxnative's removals in this cache
     if not (src / 'win/build_app.py').is_file(): raise Fail(f'the Windows port\'s win/ folder did not arrive in {src}; see {HERE / "setup-fork-checkout.log"}')
     if (NX / 'win').is_dir(): shutil.rmtree(NX / 'win')
     shutil.copytree(src / 'win', NX / 'win', ignore=shutil.ignore_patterns('__pycache__', 'build', 'sdk'))

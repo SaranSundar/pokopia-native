@@ -14,8 +14,7 @@ as glslc2_extract.py names the corpus (so the lowered code of each host key can 
 """
 import hashlib, os, pathlib, re, struct, sys
 
-_NX = pathlib.Path(os.environ.get("NXNATIVE") or pathlib.Path(__file__).resolve().parents[1] / "nxnative")   # nxnative checkout: its shader_split.py reads the archive formats
-sys.path.insert(0, str(_NX / "dm" / "gfx" / "tools")); sys.path.insert(0, str(_NX / "dm" / "tools"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))   # kt_archive.py beside this file reads the archive formats
 
 MAGIC = b"\x91\x68\x86\x19"
 CTL_MAGIC = b"\x34\x12\x76\x98"
@@ -69,7 +68,7 @@ def do_blob(path, label=None):
 
 
 def do_linkdata(idx_path, bin_path):
-    import shader_split as ss
+    import kt_archive as ss
     idx = pathlib.Path(idx_path).read_bytes()
     n = len(idx) // 32
     with open(bin_path, "rb") as f:
@@ -85,7 +84,7 @@ def do_linkdata(idx_path, bin_path):
 
 def do_rdb(paths):
     import mmap
-    import shader_split as ss
+    import kt_archive as ss
     for p in paths:
         with open(p, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as d:
             name = os.path.basename(p); n = 0
