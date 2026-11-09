@@ -3,7 +3,7 @@
 The **"for Linux" download** builds the Linux game from your own dump: Pokopia recompiled for your computer's x86-64 CPU, played with a Vulkan
 renderer. It is the Windows build's recompiler and runtime ported to Linux, so it plays the same way (keyboard and mouse, controllers, Link Play).
 
-Linux and the Steam Deck are a full release since 1.4.0, after five public betas on Steam Decks and Linux PCs. On a Steam Deck the game starts
+Linux and the Steam Deck are a full release since 1.4.0, after six public betas on Steam Decks and Linux PCs. On a Steam Deck the game starts
 in its own handheld mode, with its lighter settings. If something goes wrong, the report (the last section) tells us what happened. Nothing of
 the game is in the download: everything made from your dump stays in your build folder.
 
