@@ -36,7 +36,8 @@ TOOL_VERSION = '1.4.0'   # this tool's release (co-op compares the game build an
 TITLE = '0400A3A01EE4C000'
 NAME = 'Pokemon Pokopia'
 UPSTREAM = 'https://github.com/seedds/nxnative'
-UPSTREAM_COMMIT = 'c1df4dd'   # the nxnative commit host/nxnative-switch2.patch is made against
+UPSTREAM_COMMIT = '94a09447'   # the nxnative commit host/nxnative-switch2.patch is made against (2026-11-15 main: nxnative translates Switch 2 shaders itself, so the patch is now the pointer look and small host bits; the earlier 7,600-line patch against c1df4dd is host/nxnative-switch2.c1df4dd.patch)
+PREBUILT_XLATE = False   # the prebuilt translator in host/dmsh_xlate_bin was built for the c1df4dd chain; nxnative main's own dmsh_xlate_bin (its chain lock) is used instead
 FORK = 'https://github.com/zenvyzenshiro/NXNativeWindows'   # nxnative's Windows port: its win/ folder builds the iPhone app with LLVM, Metal Developer Tools for Windows and .NET
 FORK_COMMIT = '269d61ff974b2e8e073d7357466ae130c3f6812f'   # fetched by its full id (a sparse checkout of its win/ folder only)
 WIN = sys.platform == 'win32'
@@ -260,6 +261,10 @@ class Build:
         return r.stdout.strip().splitlines()[-1]
 
     def lib(self): return self.cache / f'b-{self.chain_version()}'
+
+
+def lib_ready(lib):   # a finished library: the folder with its stamp, or the image nxnative packs it into (dm/tools/shader_lib.py)
+    return (lib / 'inputs.tsv').is_file() or pathlib.Path(str(lib) + '.img').is_file()
 
 
 def read_game_tsv(path):
@@ -568,11 +573,11 @@ def setup(args):
         marker.write_text(want + '\n')
     bin_dst = NX / 'dm/gfx/tools/dmsh_xlate_bin'
     # Linux has the portable IL only (run with dotnet, as the Linux stages do); the Mac build has its own launcher
-    for f in sorted((HERE / ('host/windows/dmsh_xlate_bin' if WIN or LINUX else 'host/dmsh_xlate_bin')).iterdir()):
+    for f in (sorted((HERE / ('host/windows/dmsh_xlate_bin' if WIN or LINUX else 'host/dmsh_xlate_bin')).iterdir()) if PREBUILT_XLATE else []):
         dst = bin_dst / f.name
         if not dst.is_file() or dst.read_bytes() != f.read_bytes():
             shutil.copy2(f, dst); say(f'translator: {f.name} installed')
-    if not WIN and not LINUX: (bin_dst / 'dmsh_xlate').chmod(0o755)
+    if PREBUILT_XLATE and not WIN and not LINUX: (bin_dst / 'dmsh_xlate').chmod(0o755)
     if WIN and not args.no_ios: setup_windows(want)
     elif WIN: say('the iPhone toolchain is skipped (--no-ios): this setup builds the Windows game; run setup without --no-ios for the iPhone app')
     elif LINUX and AMPERE.parent.name == 'linux': say('ampere-lower: the download\'s Linux build')
@@ -829,11 +834,14 @@ def st_lower(b, jobs):
 
 
 def st_package(b):
-    """The shader package nxnative's chain reads, and the profile's shader tables (shader_map.tsv, shader_facts.tsv with the hand-made answers on top)."""
-    say('packaging the shaders (s2_pkg.py)')
+    """The shader package nxnative's chain reads (NVN2 records: the Switch 2 control block and the Ampere code as the game uploads it, s2_pkg_nvn2.py), and the profile's
+    shader tables (shader_map.tsv, shader_facts.tsv with the hand-made answers on top)."""
+    say('packaging the shaders (s2_pkg_nvn2.py)')
     for d in (b.pkg, b.tables):
-        if d.is_dir(): shutil.rmtree(d)
-    run([PY, TOOLS / 's2_pkg.py', b.ctl, b.maxwell, b.pkg, b.tables, *b.corpus_dirs()], b.logs / 's2_pkg.log', env=b.env(), show=r'records|keys|written|pkg')
+        if d.is_symlink() and d.is_dir():   # a folder moved to another volume and linked back: emptied in place (rmtree refuses a link)
+            for p in d.iterdir(): shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink()
+        elif d.is_dir(): shutil.rmtree(d)
+    run([PY, TOOLS / 's2_pkg_nvn2.py', b.ctl, b.pkg, b.tables], b.logs / 's2_pkg.log', env=b.env(), show=r'records|keys|written|pkg')
     shutil.copyfile(b.tables / 'shader_map.tsv', b.profile / 'shader_map.tsv')
     if (b.tables / 'shader_pairs.tsv').is_file(): shutil.copyfile(b.tables / 'shader_pairs.tsv', b.profile / 'shader_pairs.tsv')
     facts = {}
@@ -861,7 +869,7 @@ def st_chain(b, ios):
     """nxnative's shader chain: the lowered programs to Metal libraries for the Mac (and the iPhone), in <shader>/cache/b-<chain>/ and <shader>/ios/b-<chain>/.
     Incremental through the chain's own cache; the first run compiles everything (around half an hour on an M-series Mac, more with the iOS libraries)."""
     say('Metal libraries (nxnative chain: translate, cross-compile, metal)' + (' for the iPhone' if WIN else ' for the Mac and the iPhone' if ios else ' for the Mac'))
-    env = b.env(DMSH_S2_CS='1', DMSH_S2_CENSUS='1')
+    env = b.env()
     if ios: env['IOSOUT'] = str(b.ios)
     if WIN: env['DMSH_TARGETS'] = 'ios'   # no Mac host here: the macOS libraries are not needed (the tables are still made from the Mac-side reflection)
     b.cache.mkdir(parents=True, exist_ok=True)
@@ -873,7 +881,7 @@ def st_chain(b, ios):
         say('the shader step hit an intermittent Python regex error; running it once more (everything built so far is reused)')
         run(cmd, b.logs / 'chain.log', env=env, cwd=NX / 'dm/gfx/tools', heartbeat=60, show=r'Metal cache|compiled|reused|\[RED\]|failed|success|lock')
     lib = b.lib()
-    if not (lib / 'inputs.tsv').is_file(): raise Fail(f'the chain left no library stamp at {lib}/inputs.tsv; see {b.logs / "chain.log"}')
+    if not lib_ready(lib): raise Fail(f'the chain left no library at {lib} (folder with inputs.tsv, or {lib.name}.img); see {b.logs / "chain.log"}')
 
 
 def st_mac_app(b):
@@ -1543,12 +1551,12 @@ def status(args):
     b = Build(args.build)
     apple = not ((WIN and (b.win / 'play.json').is_file() or LINUX) and not b.patched.is_dir())   # a Windows- or Linux-game-only folder has no Apple stages to report
     for name, p in (('ExeFS', b.exefs / 'main'), ('RomFS image', b.romfs_img), ('rewritten modules', b.patched / 'main.patched.bin'), ('Mac host', b.host),
-                    ('fonts', b.font / 'nintendo_ext.ttf'), ('shader corpus', b.ctl / 'hostkeys.tsv'), ('lowered shaders', b.maxwell / 'results.tsv'),
+                    ('fonts', b.font / 'nintendo_ext.ttf'), ('shader corpus', b.ctl / 'hostkeys.tsv'),
                     ('shader package', b.pkg), ('shader map', b.profile / 'shader_map.tsv')):
         if apple or name not in ('rewritten modules', 'Mac host', 'fonts'): print(f'  {"ok     " if p.exists() else "missing"}  {name}')
     try:
         if apple:
-            lib = b.lib(); print(f'  {"ok     " if (lib / "inputs.tsv").is_file() else "missing"}  Mac shader libraries ({lib.name})')
+            lib = b.lib(); print(f'  {"ok     " if lib_ready(lib) else "missing"}  Mac shader libraries ({lib.name})')
             print(f'  {"ok     " if (b.ios / lib.name / "inputs.tsv").is_file() else "missing"}  iPhone shader libraries')
     except Fail as e: print(f'  ?        shader libraries: {e}')
     if (b.win / 'play.json').is_file():
@@ -1612,8 +1620,7 @@ def build(args):
     if apple: st_rewrite(b)
     if not WIN and not LINUX: st_host(b, jobs); st_font(b)   # the Mac host and its fonts: on Windows the iPhone app's fonts come from win/toolchain.py
     st_corpus(b, romfs, args.dumps or default_dump_dirs(b))   # the dumps refresh would take: a new version's rebuilt corpus keeps the run-time shaders
-    st_lower(b, jobs)
-    st_package(b)
+    st_package(b)   # no lowering: nxnative's chain reads the Ampere code itself (dmsh_ampere.py, translator arch sm86)
     if apple: st_chain(b, need_ios)
     if args.windows: st_windows(b, jobs)
     if args.linux: st_linux(b, jobs)
@@ -1646,7 +1653,7 @@ def refresh(args):
     if not dirs: raise Fail('no shader dumps found: give the folder(s) (DM_NVN_SHDUMP output: <key>.ctl + <key>.code files)')
     before = coverage(b)
     add_dumps(b, dirs)
-    st_lower(b, JOBS); st_package(b)
+    st_package(b)
     st_chain(b, WIN or (b.ios / b.lib().name / 'inputs.tsv').is_file())   # iPhone libraries again when the build had them
     if not WIN and (b.outputs / f'{NAME}.app').is_dir(): st_mac_app(b)
     if b.outputs.is_dir() and any(b.outputs.glob('*-unsigned.ipa')): st_ipa_windows(b) if WIN else st_ipa(b)

@@ -10,6 +10,9 @@ name	Pokemon Pokopia
 ipa	PokemonPokopia.ipa
 app_category	public.app-category.games
 
+# Link Play (hle_coop_*.c): the DNS-SD service the module advertises; pack_app.py puts it and the local network text into the app's Info.plist
+bonjour_service	_pokopia-ldn._udp
+
 # ---- Versions ----
 build	v327680	?	main=816c5358e8178d802fcec4a7ce5a741a	subsdk0=9646a69cb1024ba919fddaa4265e6bc5	sdk=cc7da00d672399efe7958790d17fae39
 build	v655360	2.0.1	main=76a489f3bd3642fa5e18bd83d32c98ba	subsdk0=9646a69cb1024ba919fddaa4265e6bc5	sdk=cc7da00d672399efe7958790d17fae39
@@ -34,6 +37,9 @@ app_pool	0x280000000
 sys_resource	0x0
 
 # ---- Shader split ----
+# shader keys: the driver rewrites control +0x20..+0x27 of some sections at run time (6 of 71 requests of the first survey differed only there), so those bytes are hashed as zeros
+# by nxnative's host and by s2_ctl_scan.py / s2_dumps.py (nxnative main with host/nxnative-switch2.patch applies the range to NVN2 sections' key bytes too)
+shader_key_skip	0x20+0x8
 shader_groups	/motor_asset_re/=motorassetre /movie_asset/=movieasset
 shader_note	Pokemon Pokopia shaders (provisional profile)
 

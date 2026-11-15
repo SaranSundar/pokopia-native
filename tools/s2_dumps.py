@@ -4,7 +4,7 @@
   s2_dumps.py <shdump dir>... --corpus <corpus out dir> --ctl <corpus-ctl dir>
 
 For every <key>.ctl + <key>.code pair: the host key recomputed with the current rule
-(sha256(control[:0xe0] with +0x20..+0x27 zeroed + code)[:8]), the corpus key (blake2b of the code
+(sha256(control[:0x48] with +0x20..+0x27 and +0x30..+0x33 zeroed + code)[:8], nxnative's NVN2 rule), the corpus key (blake2b of the code
 after the SPH, trimmed to 16 bytes), the stage (SPH word 0, or compute when the control block says
 so), the thread group and shared memory fields. Writes a corpus entry (<corpuskey>-stage<N>-<hdr>
 .program.bin + <corpuskey>.txt) when the corpus has none, the 0xe0 control block as
@@ -49,7 +49,7 @@ def main():
                     nocode += 1; continue
                 gpu_len = struct.unpack_from("<I", ctl, 0x44)[0]
                 code = code[:gpu_len]
-                keyctl = ctl[:0x20] + bytes(8) + ctl[0x28:]
+                keyctl = ctl[:0x20] + bytes(8) + ctl[0x28:0x30] + bytes(4) + ctl[0x34:0x48]   # nxnative's NVN2 key rule (hle_nvn.c keys_hash): the first 0x48 control bytes, +0x30..+0x33 as zero, and the profile's shader_key_skip 0x20+0x8 as zero (the driver rewrites those at run time)
                 hostkey = hashlib.sha256(keyctl + code).hexdigest()[:16]
                 if hostkey in seen:
                     skipped += 1; continue
@@ -65,6 +65,7 @@ def main():
                     (corpus / f"{corpuskey}.txt").write_text(f"stage {stage}\nprogram 0\nheader_bytes {hdr}\nsource_bytes {len(body)}\nsource dump:{c.name}\n")
                     have_corpus.add(corpuskey); new_corpus += 1
                 (ctl_dir / f"{hostkey}.ctl").write_bytes(ctl)
+                (ctl_dir / f"{hostkey}.code").write_bytes(code)   # the code area as uploaded, for s2_pkg_nvn2.py
                 c40, c44 = struct.unpack_from("<2I", ctl, 0x40)   # the c1 constant bank at the end of the uploaded code (s2_pkg.py reads <hostkey>.c1 first)
                 if c44 > c40 and len(code) >= c44: (ctl_dir / f"{hostkey}.c1").write_bytes(code[c40:c44])
                 insn = struct.unpack_from("<I", ctl, 0x38)[0]; gx, gy, gz = struct.unpack_from("<3I", ctl, 0x58); shared = struct.unpack_from("<I", ctl, 0xb8)[0]

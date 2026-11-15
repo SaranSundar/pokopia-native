@@ -5,7 +5,7 @@
 # (DM_COOP_STORY, windows-native docs/story-coop.md). Gate number 27 is OBS_COOP_INTERACT (dm.h, from the co-op patch); the site's id is in its upper bits
 # (COOP_SITE_MASK = 1, COOP_SITE_TALK = 2). The callback does nothing while the switch is off
 OBS_COOP_INTERACT, COOP_SITE_MASK, COOP_SITE_TALK = 27, 1, 2
-OBS = {
+OBS_LINK_PLAY = {
     '76a489f3bd3642fa5e18bd83d32c98ba': [   # 2.0.1 main
         (0xb1030, OBS_COOP_INTERACT | COOP_SITE_MASK << 8, 'f2c0002d', 'Interact everywhere: the permissions a story area gives online players'),
         (0x4c06d8, OBS_COOP_INTERACT | COOP_SITE_TALK << 8, '2a000328', 'Story co-op: a visitor talks to NPCs as the host does'),
@@ -15,3 +15,4 @@ OBS = {
         (0x4698b0, OBS_COOP_INTERACT | COOP_SITE_TALK << 8, '2a000328', 'Story co-op: a visitor talks to NPCs as the host does'),
     ],
 }
+OBS = OBS_LINK_PLAY   # the Link Play module is in this build's nxnative again (host/nxnative-switch2.patch, 2026-11-15): its gates are on

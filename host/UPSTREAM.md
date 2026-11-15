@@ -1,5 +1,14 @@
 # The host: nxnative with the Switch 2 changes
 
+**2026-11-14 (local, Saran's Mac mini): re-based on nxnative main a44ca5e7.** nxnative main now translates Switch 2 (NVN2, Ampere) shaders itself and
+carries its own Switch 2 clock, textures, display calls and NVN names, so the 7,600-line patch against c1df4dd (kept as
+`nxnative-switch2.c1df4dd.patch`) shrank to `nxnative-switch2.patch`: the pointer look (hle_hid.c, front_mac.m, the profile's look keys), text
+launcher settings, one oe call, whole-section shader dumps for NVN2, and the profile's `shader_key_skip` applied to NVN2 key bytes. Link Play (hle_coop_*) was merged back the same day (its virtual sockets sit beside nxnative main's own local-UDP emulation in hle_net.c: a
+descriptor the module owns goes to it, every other one to the host's); the lowering path (ampere-lower, the patched Ryujinx translator in `dmsh_xlate_bin/`) is not in this build: `nxs2.py` packages
+the raw NVN2 records (`tools/s2_pkg_nvn2.py`) for nxnative's own chain, keyed by nxnative's rule (`tools/s2_ctl_scan.py`, `tools/s2_dumps.py`).
+The merged checkout used here is the git worktree `~/Code/pokopia-nxnative-main` (branch `pokopia-s2-main`), pointed at with `NXNATIVE=`.
+
+
 `nxs2.py setup` fetches [nxnative](https://github.com/seedds/nxnative) (MIT) at the commit this patch set is made
 against and applies what is here. Nothing of nxnative is copied into this repository.
 

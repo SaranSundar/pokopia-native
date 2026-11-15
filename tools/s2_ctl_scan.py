@@ -8,8 +8,8 @@
 For every container (magic 0x19866891, version 0x00220015): the 0xe0 control block (magic
 0x98761234 inside the descriptor region) and the code area. Writes <out>/<hostkey>.ctl and appends
 to <out>/hostkeys.tsv: hostkey, corpuskey, stage (dump numbering), code_len, insn_bytes, group x y z,
-shared, source. hostkey = sha256(control[:0xe0] + code area without its 0xe0 trailer, control +0x44 bytes)[:8], what the host's keys_hash
-computes for a Switch 2 control block; corpuskey = blake2b(code after the SPH, trimmed to 16 bytes)
+shared, source. hostkey = sha256(control[:0x48] with +0x20..+0x27 and +0x30..+0x33 zeroed + code area without its 0xe0 trailer, control +0x44 bytes)[:8], what nxnative's
+keys_hash computes for an NVN2 control section (hle_nvn.c, shader_split.py key_ctl); corpuskey = blake2b(code after the SPH, trimmed to 16 bytes)
 as glslc2_extract.py names the corpus (so the lowered code of each host key can be found).
 """
 import hashlib, os, pathlib, re, struct, sys
@@ -46,7 +46,7 @@ def containers(d: bytes, label: str):
         if host_len != code_len:
             STATS["len_mismatch"] += 1
         gpu_len = struct.unpack_from("<I", ctl, 0x44)[0]   # what the game puts in GPU memory: instructions and padding, not the 0xe0 reflection trailer (the host hashes that length)
-        keyctl = ctl[:0x20] + bytes(8) + ctl[0x28:]   # the driver rewrites control +0x20..+0x27 at run time (6 of 71 requests differed only there): hashed as zeros, as the profile key shader_key_skip makes the host do
+        keyctl = ctl[:0x20] + bytes(8) + ctl[0x28:0x30] + bytes(4) + ctl[0x34:0x48]   # nxnative's NVN2 key rule (hle_nvn.c keys_hash): the first 0x48 control bytes, +0x30..+0x33 as zero, and the profile's shader_key_skip 0x20+0x8 as zero (the driver rewrites those at run time)
         hostkey = hashlib.sha256(keyctl + area[:gpu_len]).hexdigest()[:16]
         if hostkey in SEEN:
             STATS["dupes"] += 1; continue
@@ -59,6 +59,7 @@ def containers(d: bytes, label: str):
         gx, gy, gz = struct.unpack_from("<3I", ctl, 0x58)
         shared = struct.unpack_from("<I", ctl, 0xb8)[0]
         (OUT / f"{hostkey}.ctl").write_bytes(ctl)
+        (OUT / f"{hostkey}.code").write_bytes(area[:gpu_len])   # the code area as the game uploads it (SPH, instructions, padding, the c1 constants): s2_pkg_nvn2.py packages it unchanged
         TSV.write(f"{hostkey}\t{corpuskey}\t{stage}\t{code_len}\t{insn}\t{gx} {gy} {gz}\t{shared}\t{label}@{h:#x}\n")
         STATS["written"] += 1
 

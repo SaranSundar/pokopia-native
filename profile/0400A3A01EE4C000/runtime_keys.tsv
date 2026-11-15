@@ -1,177 +1,134 @@
 # Shaders Pokemon Pokopia builds while it runs (not in the game files): the host key (sha256 of the shader's control block and code, as the host's shader map names it), its stage,
 # and for a shader only some versions make, those versions. No code here: the player's own device records these shaders (DM_NVN_SHDUMP) and `nxs2.py refresh` adds them.
 # Seen so far in the opening, the character creator and the first area (1.0.5), and in later play on 2.0.1, which makes the ones marked 2.0.1 besides the others.
+# Keys follow nxnative main's NVN2 rule (sha256 of the first 0x48 control bytes, +0x20..+0x27 and +0x30..+0x33 as zero, then the code area), as s2_ctl_scan.py / s2_dumps.py compute since 2026-11-14;
+# 127 rows were re-keyed from the dumps recorded on this Mac. 46 shaders of the earlier list have no dump here, so their new keys are unknown; their old-rule keys:
+# 01342d97649a04bb 049d4dedd369aeeb 085af7a5347fce9d 0b7534eaf6d329a8 12c903eeba0613d3 14827bfb3dda93ce(2.0.1) 2a3a4e5c46e76afa 2c59f19e9e29f7cd(2.0.1) 2dd3c3bf97274537(2.0.1) 333708acf564c4fd 39565067767b7891 42dd62157d546cea 55bd7f3f090533b9(2.0.1) 59ab6a23f1977287 7ac9baee5b975132 7e162b9aa5e22cfd(2.0.1) 7f7b2425b2fb1836 80415888d988f4f7(2.0.1) 889498b4bc592395 894f9810a2b98e75 9633b5bbb7f78cdc 9cb1a4f5743c73cb 9ef6a30711ccf9f4 9f3e4b70e968ff57(2.0.1) a18a7f160d89f54c(2.0.1) a1f512f736d5d44a(2.0.1) a28265be31de416c(2.0.1) a5f9cfac6b3e3678(2.0.1) a687d85c93003956 adc2d929b8a582a2 b781185b4555d0e2(2.0.1) ba8bb76edc0b805a(2.0.1) ba90a84cd085efd7 bcded1bafb90c501 be78c868c748061c(2.0.1) c08229c89c3e7195(2.0.1) ccd96471526a1fac d5e7438de8145ec6(2.0.1) e39a34ff9665e408 eb646ec62a2e526f ec5ede7e4efb2d8c edd7ee464db5fb60 f28abd80c8cbfcb9 f8de4a2d5e1c8295 f8e97b5a8d26bbc1(2.0.1) ff7888edc2c93dc3
 # hostkey	stage	only in
-01342d97649a04bb	fragment
-034911e30dd2ff0e	fragment
-049d4dedd369aeeb	fragment
-085af7a5347fce9d	vertex
-0b7534eaf6d329a8	fragment
-0b88859b3df1cc60	fragment
-0b8fd09f26c4d318	fragment
-0bbefb769de2bf8d	fragment
-11d03401bce8e04d	vertex
-12c903eeba0613d3	fragment
-133114bb3cffc671	fragment
-14827bfb3dda93ce	fragment	2.0.1
-153fe3174baade17	fragment
-1619ecc4df4c2e67	fragment
-16de295265cb2f67	vertex	2.0.1
-1c666485794d3026	vertex
-219d8b07e6ce6ecd	vertex
-2202dbc75242e74e	fragment
-23b61984449c4622	fragment
-25e6661b87def9c3	fragment
-2778081e4e1a8acb	vertex	2.0.1
-27d0f1d9c7b8eb6d	vertex
-29670a30f4e16175	fragment
-299801b013b12215	vertex
-2a3a4e5c46e76afa	vertex
-2ab8258f412c1f41	fragment
-2c3dbb2dd1c55664	vertex
-2c59f19e9e29f7cd	fragment	2.0.1
-2dd3c3bf97274537	vertex	2.0.1
-31198d29a74fb9b0	vertex
-3148942d93b17081	vertex
-332a77873b912eb3	fragment	2.0.1
-333708acf564c4fd	fragment
-3592085c5e4cf813	vertex
-39565067767b7891	vertex
-4012128f855e3f82	fragment
-413fdfc6266f7012	fragment
-42dd62157d546cea	vertex
-4457e032f6f7460b	vertex
-456ac390ef00c7bf	vertex
-47bb0d7d4c4825eb	fragment
-4872caf97fddedb3	vertex
-494f225744f8bcdb	fragment	2.0.1
-4b4707a3684a7eda	fragment
-50cac6a6be1d4f6a	vertex
-523396cb3c864847	vertex
-54923a0becc190c8	fragment
-54ce1fe47e212a6a	vertex
-55bd7f3f090533b9	vertex	2.0.1
-560a0262fe47818a	compute
-587811fde33d7658	vertex
-59ab6a23f1977287	vertex
-5b3e98ce6a9a0fca	fragment	2.0.1
-5b4f6dd4c08ab1d0	fragment
-61cb9ad8aae7b738	fragment
-6317971edbe169b1	vertex
-634565ab77c61463	compute
-6529a8472c91d2e9	compute
-66e7103ccf3063c7	vertex
-6b30367d2760dc0d	vertex	2.0.1
-6cc10a0beca242ed	vertex
-6e582a8105e0c915	fragment
-71885b7a9a9816ae	vertex
-73207326f53b9679	fragment
-7404d999ffc82f01	fragment	2.0.1
-747d3b49019c3d80	fragment	2.0.1
-75dc962ea198fd58	fragment
-76acbfa8ce671c27	vertex
-782070efab621c61	vertex
-783d763da7ae1bcb	vertex
-786e93e2f18268b2	fragment
-7a0eaa8f257d2b01	fragment
-7ac9baee5b975132	compute
-7b66d04cfe1b88f9	fragment
-7c293d5dad9b51a2	fragment
-7d0f9ae797969e60	fragment
-7e162b9aa5e22cfd	fragment	2.0.1
-7e1656d728ab4d63	vertex
-7f7b2425b2fb1836	vertex
-7f84a91df11fd6b7	vertex
-80415888d988f4f7	fragment	2.0.1
-8275ba42f852876e	fragment
-851bc8553b71c7a2	vertex
-889498b4bc592395	fragment
-892533bd472e1fc1	fragment
-894f9810a2b98e75	fragment
-8af2bfedcb9abed9	vertex
-8e7a6c805897f2de	vertex
-9633b5bbb7f78cdc	fragment
-9721620f4ca74c4d	fragment
-9914d96553a19dd4	fragment
-9963b3ae24233758	vertex
-99e6c4350f5afd03	vertex
-9cb1a4f5743c73cb	vertex
-9cbfb9b6570b68f5	vertex
-9e220c61a878efc8	vertex	2.0.1
-9ef6a30711ccf9f4	vertex
-9f3e4b70e968ff57	fragment	2.0.1
-9fe037006f7afb30	fragment
-a0008f6bddc2b234	fragment
-a169ff2059a6bcd5	vertex
-a18a7f160d89f54c	fragment	2.0.1
-a1f512f736d5d44a	fragment	2.0.1
-a203679dd30ff8ea	fragment
-a28265be31de416c	vertex	2.0.1
-a3c80ebe8d24723b	vertex
-a47e6c7d79d61fe7	fragment
-a5f9cfac6b3e3678	fragment	2.0.1
-a687d85c93003956	fragment
-a7160af4aeab6465	fragment
-a7f548621efeb86e	fragment
-a829e81fecc32c07	vertex
-a983fd96ee8d0796	fragment
-adc2d929b8a582a2	fragment
-aef1230bae916041	fragment
-b1f4b2d7c3863ab0	fragment
-b3003964aa7150e6	fragment	2.0.1
-b53e8b40916f67bf	vertex
-b734c131aa1b51e4	vertex
-b7645dc9a0823d77	vertex
-b781185b4555d0e2	fragment	2.0.1
-b91951afc13477e9	fragment
-b932e57118443e4a	fragment	2.0.1
-ba8bb76edc0b805a	vertex	2.0.1
-ba90a84cd085efd7	fragment
-bb8384592894239f	fragment	2.0.1
-bc6fc39a03a46bef	fragment
-bcded1bafb90c501	fragment
-bd6bdde2a5de2bb2	fragment
-bdf486a2ff631912	vertex	2.0.1
-be78c868c748061c	vertex	2.0.1
-c081bd4cd0f33bb4	vertex
-c08229c89c3e7195	vertex	2.0.1
-c0cab4737fb4c7d9	fragment	2.0.1
-c8305a60b952f683	fragment
-c8a9a57cbc1bea45	vertex
-ccd2a481e8026fcf	vertex
-ccd96471526a1fac	fragment
-cdf6197b15e0f72c	fragment
-cf24663685b960ca	fragment
-cf68227032c6f95b	fragment
-cfd04a475ab88795	fragment
-d390364fe4207baa	vertex
-d40e8d9a1805e28d	vertex
-d57be29d61aa7a24	vertex
-d58d498fe9ae162b	fragment	2.0.1
-d5e7438de8145ec6	fragment	2.0.1
-d6850a1434643cbf	fragment
-d9a95c8db1f30e63	vertex
-df4241f5c7a0b702	vertex
-e0429e3a45ca71df	fragment
-e34f59fac6fba36b	vertex
-e39a34ff9665e408	vertex
-e3fa8a1601ddb8a0	vertex
-e63ab9db9dd4f579	fragment
-e6aea992f35f3021	vertex
-eb646ec62a2e526f	fragment
-ec5ede7e4efb2d8c	vertex
-ed893fdeaaff82de	fragment
-edd7ee464db5fb60	fragment
-eee7cd9c67cff870	fragment
-f051a300f528a90d	fragment
-f0d53ebf1a167957	fragment
-f28abd80c8cbfcb9	fragment
-f42843327c2a6256	fragment
-f47c4e1e723d4ecf	vertex
-f8de4a2d5e1c8295	vertex
-f8e97b5a8d26bbc1	fragment	2.0.1
-f937ce8c31e57144	vertex
-f9bc90a3d5110936	fragment
-fe7eb25358962466	fragment	2.0.1
-ff7888edc2c93dc3	fragment
-ffe844f3bd696388	fragment
+5ac97244fe37da78	fragment
+b97264da613b7cfb	fragment
+8f1ab1b211905c24	fragment
+661f8c796ad8f483	fragment
+6f7a6f4e8a42731b	vertex
+f04a89f2add8b9b9	fragment
+9f0207ab9e45d50f	fragment
+1d790689ca5a1abf	fragment
+1ee11690eafd586d	vertex	2.0.1
+d5cac824f5241003	vertex
+5de3fbd540df8aff	vertex
+25ce1333d89e0547	fragment
+b3a8c7660e691116	fragment
+2fef976ed7f8d894	fragment
+8c56d621ce68a158	vertex	2.0.1
+995960319f180252	vertex
+91d7f219c13dd2b6	fragment
+33f6e4d7b564baf9	vertex
+c3d11caba2e0e8cd	fragment
+e2aa492758af6507	vertex
+a32f6561e063d4eb	vertex
+d00f8527933dfd33	vertex
+0d760c39710470cd	fragment	2.0.1
+2ac3398cdd9354c1	vertex
+ec7a449064fa5a86	fragment
+90a2d5f52ff69c17	fragment
+191c9d5752062966	vertex
+dd4255316353716d	vertex
+4dfa7e5d45297fbc	fragment
+c27a1a3925002330	vertex
+9f811e0be5c7e496	fragment	2.0.1
+07dfa74fc59de912	fragment
+9d7f7e7065475e55	vertex
+007fda1df138ff7d	vertex
+bc16b1b67ec064a9	fragment
+7fee9c0eed34d50c	vertex
+3c36123c3137c3a7	compute
+e2abb1a38a8ebdfb	vertex
+16ad5af5d27cecc8	fragment	2.0.1
+1d9e15944c7c4b2f	fragment
+959794f9f44b8b9f	fragment
+d90a5f1736a4368c	vertex
+87aec1f5d55b269f	compute
+2aad7044f5f6bb3d	compute
+63e1736e4125d8de	vertex
+726d5e5ca096d36f	vertex	2.0.1
+7c269aa65329e241	vertex
+34ed7e739c969745	fragment
+26080397133f6c7d	vertex
+4488fbcd9a14e3d8	fragment
+74dc629b68d60e89	fragment	2.0.1
+847e27a527c33092	fragment	2.0.1
+8a1f3adaf539a1f7	fragment
+27aa046e3e1177c2	vertex
+bb6778db1961b416	vertex
+a13cd28be991ebc8	vertex
+1891043db7a6e8f6	fragment
+58eec050216fa3db	fragment
+67f0d22a781f1c14	fragment
+d31526a459352c38	fragment
+4fb587fdf4cf354d	fragment
+dd06274d1d41dcbf	vertex
+69bfd2ab4649cc1d	vertex
+54bc41d9bc853dcc	fragment
+02e6f2a195fbd21d	vertex
+bc0ee8e87546023e	fragment
+092d06a50486fb86	vertex
+c77cb439c4ae9e91	vertex
+b9433c214e2f833a	fragment
+6592c91a268284e3	fragment
+af16889b9f8ec3a5	vertex
+74a12dacb2878b11	vertex
+44a266d08c9026b4	vertex
+6ae813e359890eb4	vertex	2.0.1
+bd95ef4d55a36558	fragment
+9e874ff1324e6daf	fragment
+8944b64b8d4fa108	vertex
+9f28fd73ec4c172a	fragment
+fa4d31c3a9cdf0b0	vertex
+f266d772b8de9621	fragment
+6da70ff30826496d	fragment
+04c0a0e23ef441fd	fragment
+13b89e0fcc2abac3	vertex
+b10c66100e0513da	fragment
+4082a387c040b357	fragment
+3bafc105cb2d3aea	fragment
+4f5e7a0e549b3885	fragment	2.0.1
+0583ddb3331cfa06	vertex
+a58ce40aeba18962	vertex
+f57c9eda330e2664	vertex
+a36c5f49d016569d	fragment
+ff6826327228564d	fragment	2.0.1
+fd6d126744ccad37	fragment	2.0.1
+f22c8b97ba04c554	fragment
+e6fdd8b93150fc3f	fragment
+b59581e145b031fb	vertex	2.0.1
+0acafc7df5d43bf1	vertex
+12d0be61d6b6d7f1	fragment	2.0.1
+4aff3adbb900f581	fragment
+b2de99c0ca29a657	vertex
+198307b993b17ca8	vertex
+6a0b8fdf4860d0c9	fragment
+38891152a3f05e73	fragment
+1cc16a40b2e65f5a	fragment
+d5a60bf77d1aa494	fragment
+ccee93455ffa006f	vertex
+8a1c5cb1f3d69085	vertex
+4767756814c77998	vertex
+00d29d9a86a60a0a	fragment	2.0.1
+8cab9dae81f8bd32	fragment
+58800340af4d2182	vertex
+8d2f42a9878ccf1b	vertex
+600daed795ac0538	fragment
+d9bd5adaa9dd5fb7	vertex
+97147c90833b2a7b	vertex
+40501b2bffea1e46	fragment
+9b0f7c0193fa87ba	vertex
+07511127770089c1	fragment
+23d4e7d87df44104	fragment
+dc7e617a3d0b1edc	fragment
+8dd13185cae01b19	fragment
+7ddfc0303fe78401	fragment
+ea24cf5ca2104dde	vertex
+5b0f03fe453a7565	vertex
+f2f7c97c98e5ce77	fragment
+cbc7b524d62dafd0	fragment	2.0.1
+16faa121609a4ee2	fragment
